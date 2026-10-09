@@ -168,7 +168,11 @@ Single owner, passkeys only (WebAuthn, user verification required). No
 password exists to leak or phish.
 
 - **Every route is gated by default** in `src/proxy.ts`; the only public
-  paths are `/login` and `/api/auth/*`. The proxy checks the cookie's
+  paths are `/login`, `/api/auth/*`, and `/api/mcp` (which requires an API
+  token instead of a session).
+- **Production has one domain.** Requests to any other production hostname
+  (Vercel's per-deployment URLs) redirect to `WEBAUTHN_ORIGIN`, since
+  passkeys only work on the domain they were created for. The proxy checks the cookie's
   signature and expiry; pages then re-check the session row in the database
   (`requireOwner()`), which is what makes sign-out and revocation real.
 - **Sessions last 12 hours, absolute** — no sliding renewal. The cookie is
@@ -212,11 +216,12 @@ one's JSON Schema for tool-calling surfaces.
 
 Everything runs through `execute()` in `runtime.ts`, which:
 
-- validates input and the **actor** (`user`, `tally`, `import`, `rule:<id>`);
+- validates input and the **actor** (`user`, `tally`, `mcp`, `import`,
+  `rule:<id>`);
 - applies a write and its **command log** entry in one transaction, with a
   required one-line reason;
-- turns **Tally's writes into proposals** (status `proposed`, nothing
-  applied) until the owner approves or rejects them. Any actor can also ask
+- turns **Tally's and MCP clients' writes into proposals** (status
+  `proposed`, nothing applied) until the owner approves or rejects them. Any actor can also ask
   to propose. Promoting an operation to auto-apply for Tally is an explicit
   code change, not a request flag;
 - leaves reads unlogged — the log answers "who changed what", not "who
@@ -242,6 +247,37 @@ To add an operation: define it with `defineRead` / `defineWrite` next to
 its neighbours, add it to `operations` in `registry.ts`, and add any new
 table it writes to `trackedTables`. Write the description for a model as
 much as a person: it becomes Tally's and MCP's tool description.
+
+## MCP server
+
+`/api/mcp` exposes the operations registry over the Model Context Protocol,
+so Claude Code (or any MCP client) can query the ledger and propose
+changes. Tools are generated from the registry — `transactions.list`
+becomes `transactions_list` — so a new operation appears with no extra work.
+
+- **Reads** run directly.
+- **Writes** never apply. They take a required `reason` and become
+  proposals (actor `mcp`) that you approve or reject on **Activity**. There
+  is no way to promote MCP writes to auto-apply.
+- **Every request needs an API token**, including listing tools. Tokens are
+  created per client under **Settings → API tokens**, shown once, stored
+  only as a hash, and revocable.
+
+### Connecting Claude Code
+
+Create a token in Settings, then:
+
+```bash
+claude mcp add --transport http --scope user data-ledger https://data-ledger-pi.vercel.app/api/mcp --header "Authorization: Bearer dl_…"
+```
+
+Use `--scope user`, which keeps the token in your own `~/.claude.json`.
+**Never** add it with `--scope project`: that writes `.mcp.json` into this
+repository, which is public. Check it's connected with `claude mcp list`,
+then ask something like "what did I spend on coffee last month?".
+
+Claude Desktop and claude.ai connectors expect OAuth rather than a static
+token; that's a follow-up, not supported yet.
 
 ### Synthetic data
 

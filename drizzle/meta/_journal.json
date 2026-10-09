@@ -15,6 +15,13 @@
       "when": 1791575466165,
       "tag": "0001_command_log",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791576383374,
+      "tag": "0002_api_tokens",
+      "breakpoints": true
     }
   ]
 }
