@@ -9,7 +9,8 @@ deliberately independent: Data Ledger owns accounts, transactions, budgets
 and bank connections; Data Diary treats it as one more external source and
 pulls a narrow, aggregate-only feed at the very end (see "Diary bridge").
 
-> **Status:** planning. No app code yet — the founding epic and its
+> **Status:** scaffolded (#2) — auth, database and seed are in place; no
+> finance features yet. The founding epic and its
 > sub-issues on the [Data Ledger project board](https://github.com/users/boraedis/projects/4) (founding epic: #1)
 > are the build order.
 
@@ -121,4 +122,93 @@ Workflow.
    directly) before the connector sub-issue starts.
 3. Create the Vercel project and Neon project.
 
-Install / env-var / script docs land here with the scaffold sub-issue.
+4. Generate `SESSION_SECRET` and `OWNER_SETUP_TOKEN` (see `.env.example`)
+   and set them, plus `DATABASE_URL`, `WEBAUTHN_RP_ID` and `WEBAUTHN_ORIGIN`,
+   in Vercel's production environment.
+
+## Development
+
+Requires Node 20.18+ (CI uses 22).
+
+```bash
+npm install
+cp .env.example .env.local   # then fill it in
+npm run db:migrate           # apply drizzle/ to DATABASE_URL
+npm run db:seed              # synthetic data only — see below
+npm run dev
+```
+
+Open http://localhost:3000. On a database with no passkey yet, the login
+page asks for `OWNER_SETUP_TOKEN` and registers your first passkey; after
+that it's passkey sign-in only. Add a second device under Settings early.
+
+| Script | What it does |
+|---|---|
+| `dev` / `build` / `start` | Next.js |
+| `lint` | ESLint |
+| `typecheck` | `next typegen` then `tsc --noEmit` |
+| `test` | Vitest, including migrations + seed against in-process Postgres (PGlite) |
+| `db:generate` | Diff `src/db/schema.ts` into a new SQL migration in `drizzle/` |
+| `db:migrate` | Apply pending migrations to `DATABASE_URL` |
+| `db:seed` | Replace synthetic data in `DATABASE_URL` |
+| `db:studio` | Drizzle Studio |
+
+### Environment variables
+
+| Variable | Where | Purpose |
+|---|---|---|
+| `DATABASE_URL` | everywhere | Neon connection string |
+| `SESSION_SECRET` | everywhere | Signs session cookies (32+ chars) |
+| `OWNER_SETUP_TOKEN` | everywhere | Registers the first passkey on an empty database; inert afterwards (24+ chars) |
+| `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGIN` | production (required) | The domain passkeys are bound to. Elsewhere they're derived from the request, so each preview URL works |
+
+### Authentication
+
+Single owner, passkeys only (WebAuthn, user verification required). No
+password exists to leak or phish.
+
+- **Every route is gated by default** in `src/proxy.ts`; the only public
+  paths are `/login` and `/api/auth/*`. The proxy checks the cookie's
+  signature and expiry; pages then re-check the session row in the database
+  (`requireOwner()`), which is what makes sign-out and revocation real.
+- **Sessions last 12 hours, absolute** — no sliding renewal. The cookie is
+  `HttpOnly`, `SameSite=Strict`, and `Secure` outside localhost; the
+  database stores only a hash of the session ID.
+- **Challenges are single-use**, stored server-side and deleted on first
+  use.
+- **Recovery** if every passkey is lost: delete the rows in `passkeys` (and
+  `sessions`) directly in Neon, then sign in with `OWNER_SETUP_TOKEN` again.
+  Rotate the token afterwards.
+
+### Database migrations
+
+Schema lives in `src/db/schema.ts`. To change it:
+
+1. Edit the schema, then `npm run db:generate -- --name <what-changed>`.
+2. Read the generated SQL in `drizzle/` and commit it with the change — the
+   SQL is what gets reviewed and what runs.
+3. `npm run db:migrate` applies it.
+
+This is a deliberate break from Data Diary's `drizzle-kit push`. Push diffs
+live against the database and can't be reviewed ahead of time, and its
+rename-vs-drop prompt fails in CI. Committed migrations are reviewable, and
+`scripts/migrate.ts` applies all pending ones in a single transaction, so a
+failure rolls back cleanly instead of leaving the schema half-changed. CI
+applies every migration to an empty in-process Postgres on each PR.
+
+Production migrations will run from a GitHub Action on merge to `main`,
+behind a required-reviewer `production` environment, once the Neon project
+exists.
+
+### Synthetic data
+
+`npm run db:seed` writes ~6 months of invented transactions across four
+fake accounts (checking, savings, a credit card and a payment app): payroll,
+rent, subscriptions (one with a price rise), annual charges, everyday card
+spend, and shared dinners that friends pay back. Every merchant, employer,
+institution and person in it is made up (`src/lib/seed/generate.ts`).
+
+It is safe to re-run, and it **refuses to touch a database that holds any
+non-synthetic account**, so pointing it at production by mistake does
+nothing. Preview databases are created empty and seeded this way — never
+branched from production.

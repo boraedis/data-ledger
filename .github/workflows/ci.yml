@@ -1,0 +1,34 @@
+name: CI
+
+# Make "check" a required status check on main's branch protection rule so
+# nothing merges with a type error, lint failure or broken test. Also runs
+# on epic/* branches, which get the same gate long before reaching main.
+on:
+  pull_request:
+    branches: [main, "epic/**"]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      # `next typegen` writes the route types (LayoutProps etc.) that tsc
+      # needs on a fresh checkout — far cheaper than a full build.
+      - run: npm run typecheck
+      # Includes applying drizzle/ to an in-process Postgres (PGlite), so
+      # a broken migration fails here rather than on a real database.
+      - run: npm test
+      # No secrets needed: the DB client and session secret are read lazily,
+      # and every page is dynamic, so the build never touches a database.
+      - run: npm run build
