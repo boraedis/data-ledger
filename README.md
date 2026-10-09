@@ -74,11 +74,40 @@ automatic or it isn't done.
 
 ### Categorization pipeline
 
-1. User rules (deterministic, free)
-2. Merchant memory — how this merchant was categorized before
-3. LLM classifier with a confidence score
-4. Above threshold → applied (with provenance); below → review inbox
-5. Corrections offered back as rules, and kept as labeled examples for evals
+Runs after every sync (and after each correction in the inbox), only on
+uncategorized transactions in accounts that count toward budgets, and
+never overwrites a category that's already set:
+
+1. **Rules** — the owner's own, in priority order: merchant or description
+   equals / contains / starts with a pattern, optionally limited to one
+   account or an amount range. No regex (a user pattern run over every
+   transaction is a ReDoS risk, and these cover the real cases).
+2. **Merchant memory** — if this merchant's last few categorizations
+   (up to 5) all agree, repeat it; one past categorization is enough. If
+   they disagree, it only *suggests* in the inbox.
+3. **Self-hosted model** with a confidence threshold — not built yet (#6,
+   phase 3).
+4. Everything else waits in the **review inbox**.
+
+Rules and memory key on a **merchant name** derived from the raw
+description (`src/lib/categorize/merchant.ts`): processor prefixes, store
+numbers, dates, card masks and reference codes are stripped, so
+"SQ *CORNER BEAN CAFE #12 06/28" and "POS PURCHASE CORNER BEAN CAFE #7"
+are both "Corner Bean Cafe". The raw description is never modified.
+
+Each rule's results are one command (actor `rule:<id>`) and memory's are
+one command (actor `memory`), so Activity reads "Rule … categorized 23
+transactions" and each batch is undoable as a whole.
+
+**Inbox** (`/inbox`) is keyboard-first: ↑/↓ moves, typing filters
+categories, Tab cycles matches, Enter assigns, **Shift+Enter assigns and
+creates a "merchant is …" rule**. Every assignment re-runs the pipeline, so
+the rest of that merchant's transactions clear themselves. On a phone, tap
+a transaction and pick from the list that opens under it.
+
+**Categories** are the owner's tree (two levels; no bank categories), with
+rules managed on the same page (`/categories`). A category in use can't be
+deleted — recategorize or move what uses it first.
 
 Only the description, amount and date are ever sent to a model — never
 account numbers, balances or connection tokens — and that model is always
@@ -155,6 +184,23 @@ Open http://localhost:3000. On a database with no passkey yet, the login
 page asks for `OWNER_SETUP_TOKEN` and registers your first passkey; after
 that it's passkey sign-in only. Add a second device under Settings early.
 
+### Local database (no Neon needed)
+
+`npm run db:local` serves an in-process Postgres (PGlite) on
+`localhost:54329`, stored in `.pglite/` (git-ignored). Point
+`DATABASE_URL` at it and everything — app, migrations, seed — uses the
+plain `pg` driver instead of Neon's:
+
+```bash
+npm run db:local   # leave running in its own terminal
+```
+
+with `DATABASE_URL=postgresql://postgres@localhost:54329/postgres` in
+`.env.local`, then `npm run db:migrate`, `npm run db:seed`, `npm run dev`.
+PGlite is single-session, so the local pool holds one connection: run the
+seed and migrations *before* `npm run dev`, not alongside it. Any other
+local Postgres works the same way.
+
 | Script | What it does |
 |---|---|
 | `dev` / `build` / `start` | Next.js |
@@ -165,6 +211,7 @@ that it's passkey sign-in only. Add a second device under Settings early.
 | `db:migrate` | Apply pending migrations to `DATABASE_URL` |
 | `db:seed` | Replace synthetic data in `DATABASE_URL` |
 | `db:studio` | Drizzle Studio |
+| `db:local` | Local PGlite server on port 54329 (see "Local database") |
 
 ### Environment variables
 

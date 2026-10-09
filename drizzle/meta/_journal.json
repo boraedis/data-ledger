@@ -43,6 +43,13 @@
       "when": 1791579208130,
       "tag": "0005_account_kinds",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1791579611219,
+      "tag": "0006_categorization",
+      "breakpoints": true
     }
   ]
 }

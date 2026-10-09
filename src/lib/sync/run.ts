@@ -4,6 +4,7 @@ import type { Db } from "@/db/types";
 import { connectorFor as defaultConnectorFor } from "@/lib/connectors";
 import { MAX_WINDOW_DAYS } from "@/lib/connectors/simplefin";
 import { ConnectorAuthError, type Connector } from "@/lib/connectors/types";
+import { backfillMerchantsIfNeeded, runCategorization } from "@/lib/categorize/pipeline";
 import { execute } from "@/operations/runtime";
 
 // Runs one sync for one connection: checks the rate budget, fetches from
@@ -38,7 +39,7 @@ const REASONS: Record<SyncTrigger, string> = {
 };
 
 export type SyncResult =
-  | { status: "success" | "partial"; inserted: number; updated: number; removed: number }
+  | { status: "success" | "partial"; inserted: number; updated: number; removed: number; categorized: number }
   | { status: "failed" | "skipped"; error: string };
 
 export async function syncConnection(
@@ -91,17 +92,30 @@ export async function syncConnection(
     if (result.status !== "applied") throw new Error(`Import was ${result.status}, expected applied`);
     const counts = result.output as { inserted: number; updated: number; removed: number };
 
+    // Categorize what just arrived. A failure here must not fail the sync:
+    // the data is in, and anything left uncategorized waits in the inbox.
+    let categorized = 0;
+    const messages = [...snapshot.messages];
+    try {
+      await backfillMerchantsIfNeeded(db);
+      const result = await runCategorization(db);
+      categorized = result.byRules + result.byMemory;
+    } catch (error) {
+      console.error("Categorization after sync failed", error);
+      messages.push({ code: "app.categorize", message: "Automatic categorization failed this time; new transactions are in the inbox." });
+    }
+
     // Provider messages (an institution needing re-auth, a rate warning)
     // don't fail the sync — everything else still came through — but they
     // mark it partial so health surfaces them.
-    const status = snapshot.messages.length ? "partial" : "success";
+    const status = messages.length ? "partial" : "success";
     await db
       .update(syncRuns)
       .set({
         status,
         finishedAt: new Date(),
         requests: snapshot.requests,
-        messages: snapshot.messages,
+        messages,
         commandId: result.commandId,
         inserted: counts.inserted,
         updated: counts.updated,
@@ -112,7 +126,7 @@ export async function syncConnection(
       .update(connections)
       .set({ status: "active", lastSuccessAt: now, lastError: null })
       .where(eq(connections.id, connectionId));
-    return { status, inserted: counts.inserted, updated: counts.updated, removed: counts.removed };
+    return { status, inserted: counts.inserted, updated: counts.updated, removed: counts.removed, categorized };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     await db.update(syncRuns).set({ status: "failed", finishedAt: new Date(), error: message }).where(eq(syncRuns.id, run.id));

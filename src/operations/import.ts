@@ -1,6 +1,7 @@
 import { and, eq, gte, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, countsTowardBudgetsByDefault, transactions, type AccountKind } from "@/db/schema";
+import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { defineWrite } from "@/operations/define";
 
 // Applies one connector snapshot to the ledger. Runs only as actor
@@ -146,6 +147,7 @@ export const applySnapshot = defineWrite({
         payee: raw.payee,
         memo: raw.memo,
         pending: raw.pending,
+        merchant: normalizeMerchant(raw.description, raw.payee),
       };
       const existing = existingByKey.get(key);
       if (!existing) {
@@ -158,7 +160,8 @@ export const applySnapshot = defineWrite({
         existing.description !== values.description ||
         existing.payee !== values.payee ||
         existing.memo !== values.memo ||
-        existing.pending !== values.pending
+        existing.pending !== values.pending ||
+        existing.merchant !== values.merchant
       ) {
         // Fields from the bank only; categoryId and anything else the owner
         // set is left alone.

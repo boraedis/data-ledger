@@ -1,6 +1,7 @@
 import { count, eq, ne } from "drizzle-orm";
 import * as schema from "@/db/schema";
 import type { Db } from "@/db/types";
+import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { generateSeed } from "@/lib/seed/generate";
 
 const { accounts, categories, transactions } = schema;
@@ -34,7 +35,7 @@ export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Da
     await tx
       .insert(categories)
       .values(data.categories)
-      .onConflictDoNothing({ target: categories.name });
+      .onConflictDoNothing({ target: [categories.parentId, categories.name] });
 
     const inserted = await tx
       .insert(accounts)
@@ -45,7 +46,11 @@ export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Da
     );
 
     // Chunked to stay well under Postgres's 65,535 bind-parameter limit.
-    const rows = data.transactions.map(({ accountKey, ...t }) => ({ ...t, accountId: idByKey.get(accountKey)! }));
+    const rows = data.transactions.map(({ accountKey, ...t }) => ({
+      ...t,
+      accountId: idByKey.get(accountKey)!,
+      merchant: normalizeMerchant(t.description),
+    }));
     for (let i = 0; i < rows.length; i += 500) {
       await tx.insert(transactions).values(rows.slice(i, i + 500));
     }

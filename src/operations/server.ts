@@ -15,7 +15,8 @@ import {
 // The actor is fixed to "user" here — the UI never gets to claim to be
 // Tally or a rule.
 
-async function asOwner<T>(fn: Parameters<typeof withTransactionalDb<T>>[0]): Promise<T> {
+/** Runs `fn` with a transactional database, only for a signed-in owner. For actions that chain an operation with the pipeline. */
+export async function asOwner<T>(fn: Parameters<typeof withTransactionalDb<T>>[0]): Promise<T> {
   if (!(await hasValidSession())) throw new Error("Not signed in");
   return withTransactionalDb(fn);
 }

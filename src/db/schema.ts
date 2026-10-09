@@ -1,4 +1,5 @@
 import {
+  type AnyPgColumn,
   bigint,
   boolean,
   customType,
@@ -10,6 +11,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
@@ -181,14 +183,21 @@ export const accounts = pgTable("accounts", {
 
 export const categoryKind = pgEnum("category_kind", ["expense", "income", "transfer"]);
 
+// The owner's own category tree (#6) — nothing is inherited from a bank.
+// Two levels: a top-level category ("Food") and optional children
+// ("Groceries", "Dining"). Names are unique among siblings, so "Other" can
+// exist under several parents.
 export const categories = pgTable(
   "categories",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     name: text("name").notNull(),
     kind: categoryKind("kind").notNull(),
+    // Restrict, not cascade: deleting a parent must be a deliberate move of
+    // its children first, never a silent loss of categories.
+    parentId: uuid("parent_id").references((): AnyPgColumn => categories.id, { onDelete: "restrict" }),
   },
-  (t) => [uniqueIndex("categories_name_idx").on(t.name)],
+  (t) => [unique("categories_parent_name_unique").on(t.parentId, t.name).nullsNotDistinct()],
 );
 
 export const transactions = pgTable(
@@ -213,14 +222,52 @@ export const transactions = pgTable(
     // (#6). Like description, never overwritten by derived values.
     payee: text("payee"),
     memo: text("memo"),
+    // Derived: a clean merchant name from payee/description
+    // (src/lib/categorize/merchant.ts). What rules and merchant memory key
+    // on. Recomputable at any time; the raw fields above are the truth.
+    merchant: text("merchant"),
     categoryId: uuid("category_id").references(() => categories.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("transactions_posted_on_idx").on(t.postedOn),
+    index("transactions_merchant_idx").on(t.merchant),
     uniqueIndex("transactions_account_external_idx").on(t.accountId, t.externalId),
   ],
 );
+
+// ---------------------------------------------------------------------------
+// Categorization rules (#6): the owner's deterministic "this → that". Rules
+// run before merchant memory and any model, in priority order, and only
+// ever fill in an uncategorized transaction — they never overwrite.
+// ---------------------------------------------------------------------------
+
+export const ruleMatchField = pgEnum("rule_match_field", ["merchant", "description"]);
+// No regex on purpose: a user-supplied pattern run against every
+// transaction is a ReDoS waiting to happen, and these three cover the
+// real cases.
+export const ruleMatchType = pgEnum("rule_match_type", ["equals", "contains", "starts_with"]);
+
+export const rules = pgTable("rules", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  matchField: ruleMatchField("match_field").notNull(),
+  matchType: ruleMatchType("match_type").notNull(),
+  // Compared case-insensitively.
+  pattern: text("pattern").notNull(),
+  // Optional narrowing: one account, and/or an amount range on the
+  // transaction's absolute value in cents (so "over $100" reads naturally
+  // for both spending and refunds).
+  accountId: uuid("account_id").references(() => accounts.id, { onDelete: "cascade" }),
+  minAmountCents: bigint("min_amount_cents", { mode: "number" }),
+  maxAmountCents: bigint("max_amount_cents", { mode: "number" }),
+  categoryId: uuid("category_id")
+    .notNull()
+    .references(() => categories.id, { onDelete: "restrict" }),
+  // Lower runs first; ties broken by age, oldest first.
+  priority: integer("priority").notNull().default(100),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ---------------------------------------------------------------------------
 // Command log (#3). One row per write — applied, proposed, rejected or

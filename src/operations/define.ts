@@ -7,9 +7,10 @@ import type { WriteContext } from "@/operations/tracked";
 //   tally     — the assistant; its writes are proposals unless promoted
 //   import    — the nightly sync bringing in bank data
 //   rule:<id> — a categorization rule firing
-export type Actor = "user" | "tally" | "import" | `rule:${string}`;
+//   memory    — merchant memory: "categorized like this merchant was before"
+export type Actor = "user" | "tally" | "import" | "memory" | `rule:${string}`;
 
-const NAMED_ACTORS = new Set(["user", "tally", "import"]);
+const NAMED_ACTORS = new Set(["user", "tally", "import", "memory"]);
 
 export function isActor(value: string): value is Actor {
   return NAMED_ACTORS.has(value) || /^rule:[\w-]+$/.test(value);
@@ -27,8 +28,9 @@ type Base<I extends z.ZodObject> = {
   input: I;
   // Restricts who may run this operation at all. Unset means anyone. The
   // import operation, for example, is only for the sync — not something the
-  // owner or Tally should invoke with hand-made "bank data".
-  allowedActors?: Actor[];
+  // owner or Tally should invoke with hand-made "bank data". "rule:*"
+  // allows every rule actor.
+  allowedActors?: (Actor | "rule:*")[];
 };
 
 export type ReadOperation<I extends z.ZodObject = z.ZodObject, O = unknown> = Base<I> & {

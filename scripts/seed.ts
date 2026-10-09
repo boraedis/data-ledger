@@ -1,8 +1,12 @@
 import "./load-env";
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-serverless";
+import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
+import pg from "pg";
 import ws from "ws";
 import * as schema from "../src/db/schema";
+import type { Db } from "../src/db/types";
+import { isLocalDatabaseUrl } from "../src/lib/db";
 import { applySeed } from "../src/lib/seed/apply";
 
 // Fills DATABASE_URL with synthetic data. applySeed refuses if any real
@@ -17,9 +21,11 @@ async function main() {
     throw new Error("Refusing to seed with VERCEL_ENV=production");
   }
 
-  const pool = new Pool({ connectionString: url });
+  const local = isLocalDatabaseUrl(url);
+  const pool = local ? new pg.Pool({ connectionString: url, max: 1 }) : new Pool({ connectionString: url });
   try {
-    const result = await applySeed(drizzle(pool, { schema }));
+    const db = (local ? drizzlePg(pool as pg.Pool, { schema }) : drizzle(pool as Pool, { schema })) as unknown as Db;
+    const result = await applySeed(db);
     console.log(`Seeded ${result.accounts} accounts and ${result.transactions} transactions.`);
   } finally {
     await pool.end();
