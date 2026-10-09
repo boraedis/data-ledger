@@ -1,0 +1,197 @@
+import { and, eq, gte, inArray } from "drizzle-orm";
+import { z } from "zod";
+import { accounts, transactions } from "@/db/schema";
+import { defineWrite } from "@/operations/define";
+
+// Applies one connector snapshot to the ledger. Runs only as actor
+// "import", from the sync runner (src/lib/sync) — never by hand — so every
+// sync is a single logged, undoable command: undoing it removes exactly
+// what that sync added and restores what it changed.
+//
+// Idempotent by construction: rows are matched on the provider's IDs, and a
+// row whose fields haven't changed isn't written at all. Re-running the same
+// snapshot logs a command with no changes.
+
+const rawAccount = z.object({
+  externalId: z.string().min(1),
+  name: z.string(),
+  institution: z.string(),
+  institutionId: z.string(),
+  currency: z.string(),
+  balanceCents: z.number().int(),
+  availableBalanceCents: z.number().int().nullable(),
+  balanceAt: z.iso.datetime({ offset: true }),
+});
+
+const rawTransaction = z.object({
+  accountExternalId: z.string().min(1),
+  externalId: z.string().min(1),
+  postedOn: z.iso.date(),
+  amountCents: z.number().int(),
+  description: z.string(),
+  payee: z.string().nullable(),
+  memo: z.string().nullable(),
+  pending: z.boolean(),
+});
+
+/**
+ * Providers don't say what kind of account something is, so guess from the
+ * name. Only used when an account is first seen; a later sync never
+ * overwrites it, so a correction made by the owner sticks.
+ */
+export function guessAccountType(name: string): "checking" | "savings" | "credit" | "payment_app" {
+  if (/venmo|paypal|cash ?app|zelle/i.test(name)) return "payment_app";
+  if (/credit|card|visa|mastercard|amex|discover/i.test(name)) return "credit";
+  if (/saving/i.test(name)) return "savings";
+  return "checking";
+}
+
+// How far apart a pending transaction and its posted version can be dated
+// and still be treated as the same purchase.
+const PENDING_MATCH_DAYS = 5;
+
+function daysBetween(a: string, b: string): number {
+  return Math.abs(Date.parse(a) - Date.parse(b)) / 86_400_000;
+}
+
+export const applySnapshot = defineWrite({
+  name: "import.applySnapshot",
+  description: "Apply a bank sync: upsert accounts, balances and transactions from a connector snapshot.",
+  allowedActors: ["import"],
+  input: z.object({
+    connectionId: z.uuid(),
+    // The start of the fetched window. Only pending transactions inside it
+    // can be judged missing; older ones simply weren't asked for.
+    windowStart: z.iso.date(),
+    accounts: z.array(rawAccount),
+    transactions: z.array(rawTransaction),
+  }),
+  apply: async (ctx, input) => {
+    const counts = { accountsAdded: 0, inserted: 0, updated: 0, removed: 0 };
+
+    // --- Accounts -----------------------------------------------------------
+    const existingAccounts = await ctx.db.select().from(accounts).where(eq(accounts.connectionId, input.connectionId));
+    const accountIdByExternal = new Map(existingAccounts.map((a) => [a.externalId!, a.id]));
+
+    for (const raw of input.accounts) {
+      const values = {
+        name: raw.name,
+        institution: raw.institution,
+        institutionId: raw.institutionId,
+        currency: raw.currency,
+        balanceCents: raw.balanceCents,
+        availableBalanceCents: raw.availableBalanceCents,
+        balanceAt: new Date(raw.balanceAt),
+      };
+      const existing = existingAccounts.find((a) => a.externalId === raw.externalId);
+      if (!existing) {
+        const row = await ctx.insert(accounts, {
+          ...values,
+          externalId: raw.externalId,
+          connectionId: input.connectionId,
+          source: "simplefin",
+          type: guessAccountType(raw.name),
+        });
+        accountIdByExternal.set(raw.externalId, row.id);
+        counts.accountsAdded++;
+      } else if (
+        existing.name !== values.name ||
+        existing.institution !== values.institution ||
+        existing.balanceCents !== values.balanceCents ||
+        existing.availableBalanceCents !== values.availableBalanceCents ||
+        existing.balanceAt?.getTime() !== values.balanceAt.getTime()
+      ) {
+        await ctx.update(accounts, existing.id, values);
+      }
+    }
+
+    // --- Transactions -------------------------------------------------------
+    const accountIds = [...accountIdByExternal.values()];
+    const snapshotIds = input.transactions.map((t) => t.externalId);
+    const existingTxns = accountIds.length && snapshotIds.length
+      ? await ctx.db
+          .select()
+          .from(transactions)
+          .where(and(inArray(transactions.accountId, accountIds), inArray(transactions.externalId, snapshotIds)))
+      : [];
+    const existingByKey = new Map(existingTxns.map((t) => [`${t.accountId}|${t.externalId}`, t]));
+
+    const insertedPosted: { id: string; accountId: string; amountCents: number; postedOn: string }[] = [];
+    const seen = new Set<string>();
+
+    for (const raw of input.transactions) {
+      const accountId = accountIdByExternal.get(raw.accountExternalId);
+      if (!accountId) continue; // a transaction for an account not in the snapshot; skip rather than guess
+      const key = `${accountId}|${raw.externalId}`;
+      seen.add(key);
+      const values = {
+        postedOn: raw.postedOn,
+        amountCents: raw.amountCents,
+        description: raw.description,
+        payee: raw.payee,
+        memo: raw.memo,
+        pending: raw.pending,
+      };
+      const existing = existingByKey.get(key);
+      if (!existing) {
+        const row = await ctx.insert(transactions, { ...values, accountId, externalId: raw.externalId });
+        counts.inserted++;
+        if (!raw.pending) insertedPosted.push({ id: row.id, accountId, amountCents: raw.amountCents, postedOn: raw.postedOn });
+      } else if (
+        existing.postedOn !== values.postedOn ||
+        existing.amountCents !== values.amountCents ||
+        existing.description !== values.description ||
+        existing.payee !== values.payee ||
+        existing.memo !== values.memo ||
+        existing.pending !== values.pending
+      ) {
+        // Fields from the bank only; categoryId and anything else the owner
+        // set is left alone.
+        await ctx.update(transactions, existing.id, values);
+        counts.updated++;
+      }
+    }
+
+    // --- Pending → posted ---------------------------------------------------
+    // Many banks give a transaction a new ID when it posts, so the pending
+    // row just stops appearing. Any pending row inside this window that the
+    // snapshot no longer has is gone; if a newly posted transaction looks
+    // like it (same account and amount, within a few days), it inherits the
+    // pending row's category so the owner doesn't categorize it twice.
+    const snapshotAccountIds = input.accounts
+      .map((a) => accountIdByExternal.get(a.externalId))
+      .filter((id): id is string => Boolean(id));
+    const pendingInWindow = snapshotAccountIds.length
+      ? await ctx.db
+          .select()
+          .from(transactions)
+          .where(
+            and(
+              inArray(transactions.accountId, snapshotAccountIds),
+              eq(transactions.pending, true),
+              gte(transactions.postedOn, input.windowStart),
+            ),
+          )
+      : [];
+
+    for (const stale of pendingInWindow) {
+      if (seen.has(`${stale.accountId}|${stale.externalId}`)) continue;
+      if (stale.categoryId) {
+        const match = insertedPosted.find(
+          (t) =>
+            t.accountId === stale.accountId &&
+            t.amountCents === stale.amountCents &&
+            daysBetween(t.postedOn, stale.postedOn) <= PENDING_MATCH_DAYS,
+        );
+        if (match) {
+          await ctx.update(transactions, match.id, { categoryId: stale.categoryId });
+          insertedPosted.splice(insertedPosted.indexOf(match), 1);
+        }
+      }
+      await ctx.remove(transactions, stale.id);
+      counts.removed++;
+    }
+
+    return counts;
+  },
+});

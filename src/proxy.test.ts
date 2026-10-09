@@ -33,6 +33,11 @@ describe("proxy", () => {
     expect(response.headers.get("location")).toBeNull();
   });
 
+  it("lets the cron route through to its own secret check, as an exact path", () => {
+    expect(proxy(new NextRequest("http://localhost/api/cron/sync")).status).toBe(200);
+    expect(proxy(new NextRequest("http://localhost/api/cron/other")).status).toBe(401);
+  });
+
   it("lets the sign-in routes through without a session", () => {
     expect(proxy(new NextRequest("http://localhost/login")).status).toBe(200);
     expect(proxy(new NextRequest("http://localhost/api/auth/login/options")).status).toBe(200);

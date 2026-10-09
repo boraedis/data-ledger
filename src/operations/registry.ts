@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { listAccounts } from "@/operations/accounts";
+import { applySnapshot } from "@/operations/import";
 import { createCategory, listCategories, renameCategory } from "@/operations/categories";
 import type { Operation } from "@/operations/define";
 import { accounts, categories, transactions } from "@/db/schema";
@@ -15,6 +16,7 @@ export const operations: Operation[] = [
   renameCategory,
   listTransactions,
   setTransactionCategory,
+  applySnapshot,
 ] as Operation[];
 
 const byName = new Map(operations.map((op) => [op.name, op]));

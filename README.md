@@ -174,6 +174,8 @@ that it's passkey sign-in only. Add a second device under Settings early.
 | `SESSION_SECRET` | everywhere | Signs session cookies (32+ chars) |
 | `OWNER_SETUP_TOKEN` | everywhere | Registers the first passkey on an empty database; inert afterwards (24+ chars) |
 | `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGIN` | production (required) | The domain passkeys are bound to. Elsewhere they're derived from the request, so each preview URL works |
+| `CONNECTION_ENCRYPTION_KEY` | everywhere | Encrypts bank-connection credentials at rest (32 bytes, base64). Changing it orphans stored connections |
+| `CRON_SECRET` | production | Bearer token Vercel Cron sends to `/api/cron/sync` (16+ chars) |
 
 ### Authentication
 
@@ -181,7 +183,8 @@ Single owner, passkeys only (WebAuthn, user verification required). No
 password exists to leak or phish.
 
 - **Every route is gated by default** in `src/proxy.ts`; the only public
-  paths are `/login` and `/api/auth/*`.
+  paths are `/login`, `/api/auth/*`, and `/api/cron/sync` (which requires
+  `CRON_SECRET` instead of a session).
 - **Production has one domain.** Requests to any other production hostname
   (Vercel's per-deployment URLs) redirect to `WEBAUTHN_ORIGIN`, since
   passkeys only work on the domain they were created for. The proxy checks the cookie's
@@ -218,6 +221,51 @@ applies every migration to an empty in-process Postgres on each PR.
 same commit in parallel, so write migrations that are safe with both the
 old and new code: add before you use, stop using before you drop.
 
+## Bank sync
+
+Bank data arrives through **connectors** (`src/lib/connectors/`): one
+interface, `fetch(since) → { accounts with balances, transactions,
+messages }`, in the app's own shapes (integer cents, `YYYY-MM-DD`). Nothing
+past that boundary knows which provider was used. SimpleFIN Bridge is the
+only implementation today.
+
+**Connecting:** Settings → Bank connections → paste a SimpleFIN setup
+token. The server claims it (only ever against `bridge.simplefin.org` /
+`beta-bridge.simplefin.org`), stores the resulting access URL encrypted
+with AES-256-GCM, and runs the first sync right away. A token that's
+already been claimed is reported as a possible compromise, as SimpleFIN's
+spec asks.
+
+**Syncing** (`src/lib/sync/run.ts`) runs daily from Vercel Cron at 10:17
+UTC (off the hour, as Bridge asks; `vercel.json`) and on demand from
+Settings. Each run:
+
+- fetches from 5 days before the last success (Bridge's recommended
+  overlap), or 90 days back the first time;
+- splits anything longer than **45 days** into chunks with explicit end
+  dates. Bridge's docs say 90 days per request, but the live server warns
+  past 45 and slides the window on longer requests, dropping the newest
+  transactions;
+- stays under **20 requests per connection per 24 hours** (Bridge expects
+  ≤24 and disables tokens that go well past it), counted per request, so a
+  two-request backfill can't overshoot;
+- applies everything through the `import.applySnapshot` operation, which
+  only the `import` actor may run. A sync is therefore one logged, undoable
+  command. Matching is on provider IDs, unchanged rows aren't written, and
+  bank fields never overwrite the owner's category;
+- reconciles **pending → posted**: a pending transaction inside the window
+  that the bank no longer returns is removed, and a newly posted one with
+  the same account and amount within 5 days inherits its category.
+
+**Health:** a 403 or 402 marks the connection broken (only reconnecting
+fixes it); other failures just fail that night. Provider messages are kept
+per institution and always shown, as Bridge asks. An institution with no
+new data in 72 hours is flagged stale. Any of these shows a banner on every
+page.
+
+Account types aren't provided by SimpleFIN, so they're guessed from the
+account name once, when first seen, and never overwritten afterwards.
+
 ## Operations layer
 
 Every change to ledger data is an **operation** (`src/operations/`): a
@@ -228,7 +276,8 @@ one's JSON Schema for tool-calling surfaces.
 
 Everything runs through `execute()` in `runtime.ts`, which:
 
-- validates input and the **actor** (`user`, `tally`, `import`, `rule:<id>`);
+- validates input and the **actor** (`user`, `tally`, `import`, `rule:<id>`),
+  including operations restricted to certain actors (`allowedActors`);
 - applies a write and its **command log** entry in one transaction, with a
   required one-line reason;
 - turns **Tally's writes into proposals** (status `proposed`, nothing

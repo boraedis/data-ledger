@@ -60,6 +60,9 @@ async function applyWrite(tx: Db, op: WriteOperation, input: Record<string, unkn
 export async function execute(db: Db, request: ExecuteRequest): Promise<ExecuteResult> {
   if (!isActor(request.actor)) throw new OperationError(`Invalid actor "${request.actor}"`);
   const op = resolve(request.operation);
+  if (op.allowedActors && !op.allowedActors.includes(request.actor)) {
+    throw new OperationError(`${request.actor} may not run ${op.name}`);
+  }
   const input = op.input.parse(request.input);
 
   if (op.kind === "read") return { status: "read", output: await op.run(db, input) };
