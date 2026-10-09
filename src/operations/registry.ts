@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { listAccounts } from "@/operations/accounts";
+import { listAccounts, updateAccount } from "@/operations/accounts";
 import { applySnapshot } from "@/operations/import";
 import { createCategory, listCategories, renameCategory } from "@/operations/categories";
 import type { Operation } from "@/operations/define";
@@ -11,6 +11,7 @@ import { listTransactions, setTransactionCategory } from "@/operations/transacti
 // here; nothing else needs a parallel definition.
 export const operations: Operation[] = [
   listAccounts,
+  updateAccount,
   listCategories,
   createCategory,
   renameCategory,

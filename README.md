@@ -263,8 +263,21 @@ per institution and always shown, as Bridge asks. An institution with no
 new data in 72 hours is flagged stale. Any of these shows a banner on every
 page.
 
-Account types aren't provided by SimpleFIN, so they're guessed from the
-account name once, when first seen, and never overwritten afterwards.
+Account kinds aren't provided by SimpleFIN, so they're guessed from the
+account name once, when first seen: checking, savings, credit, payment
+app, brokerage, retirement, loan or other asset. The guess errs toward
+recognizing investment accounts ("IRA", "401(k)", "Brokerage"…), because it
+also decides whether a new account **counts toward budgets**: investment,
+retirement, loan and asset accounts start excluded, so a brokerage's trades
+and dividends never read as spending before you've looked at it.
+
+On the **Accounts** page you can change an account's kind, give it your own
+name, and include or exclude it from budgets, all through the
+`accounts.update` operation, so each change is logged and undoable. Syncs
+refresh the bank's own name and balance but never touch your name, kind or
+budget flag. Every spending query and budget must filter on
+`countsTowardBudgets` (`budgetAccountIds()` in `src/operations/accounts.ts`;
+`transactions.list` takes `budgetOnly`).
 
 ## Operations layer
 

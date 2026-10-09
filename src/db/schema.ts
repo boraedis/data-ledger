@@ -13,6 +13,7 @@ import {
   uniqueIndex,
   uuid,
 } from "drizzle-orm/pg-core";
+import { ACCOUNT_KINDS } from "@/lib/account-kinds";
 
 // drizzle has no built-in bytea column; passkey public keys are raw COSE
 // bytes and shouldn't round-trip through base64 text just to fit a type.
@@ -134,7 +135,11 @@ export type SyncMessage = {
   accountExternalId?: string;
 };
 
-export const accountType = pgEnum("account_type", ["checking", "savings", "credit", "payment_app"]);
+export { ACCOUNT_KINDS, countsTowardBudgetsByDefault, type AccountKind } from "@/lib/account-kinds";
+
+// Kinds and their budget defaults live in src/lib/account-kinds.ts so the
+// client can use them without importing the schema.
+export const accountType = pgEnum("account_type", ACCOUNT_KINDS);
 
 // Where a row came from. "seed" marks synthetic data, which is what lets the
 // seed script prove it never touches a database holding anything real.
@@ -142,9 +147,19 @@ export const dataSource = pgEnum("data_source", ["seed", "simplefin"]);
 
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
+  // The provider's name for the account, refreshed by every sync.
   name: text("name").notNull(),
+  // The owner's name for it, if they set one. Shown in place of `name` and
+  // never touched by a sync, the same split as raw description vs. derived
+  // merchant for transactions.
+  displayName: text("display_name"),
   institution: text("institution").notNull(),
   type: accountType("type").notNull(),
+  // Whether this account's transactions count as spending/income in budgets
+  // and spending queries (#7 must filter on it). Off for investment, loan
+  // and asset kinds by default, so a brokerage's buys and dividends never
+  // read as spending. Only the owner changes it; syncs don't.
+  countsTowardBudgets: boolean("counts_toward_budgets").notNull().default(true),
   source: dataSource("source").notNull(),
   // The connector's own ID for the account, so re-syncs update rather than
   // duplicate. Null only for seed rows.

@@ -1,6 +1,6 @@
 import { and, eq, gte, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, transactions } from "@/db/schema";
+import { accounts, countsTowardBudgetsByDefault, transactions, type AccountKind } from "@/db/schema";
 import { defineWrite } from "@/operations/define";
 
 // Applies one connector snapshot to the ledger. Runs only as actor
@@ -38,11 +38,24 @@ const rawTransaction = z.object({
  * Providers don't say what kind of account something is, so guess from the
  * name. Only used when an account is first seen; a later sync never
  * overwrites it, so a correction made by the owner sticks.
+ *
+ * The investment and loan patterns matter most: they decide whether a new
+ * account counts toward budgets before the owner has looked at it, so they
+ * err toward recognizing anything investment-like. Order matters — "Roth
+ * IRA Brokerage" is retirement, "Mortgage Savings" is a loan.
  */
-export function guessAccountType(name: string): "checking" | "savings" | "credit" | "payment_app" {
-  if (/venmo|paypal|cash ?app|zelle/i.test(name)) return "payment_app";
-  if (/credit|card|visa|mastercard|amex|discover/i.test(name)) return "credit";
-  if (/saving/i.test(name)) return "savings";
+export function guessAccountType(name: string): AccountKind {
+  const is = (pattern: RegExp) => pattern.test(name);
+  if (is(/401\s?\(?k\)?|403\s?\(?b\)?|\b457\b|\bira\b|\broth\b|\bsep\b|retire|pension|\bhsa\b/i)) return "retirement";
+  if (is(/mortgage|heloc|line of credit|\bloan\b/i)) return "loan";
+  if (is(/venmo|paypal|cash ?app|zelle/i)) return "payment_app";
+  // "Credit Union Checking" is a checking account, not a card.
+  if (is(/\bcard\b|visa|mastercard|amex|american express|discover|credit(?! union)/i)) return "credit";
+  // Explicit deposit words win over the broad brokerage words below, so
+  // "Joint Checking" stays checking.
+  if (is(/checking|share draft/i)) return "checking";
+  if (is(/saving|money market|\bcd\b|certificate/i)) return "savings";
+  if (is(/brokerage|invest|individual|joint|trading|securities|\bstocks?\b|portfolio|wealth|cash management/i)) return "brokerage";
   return "checking";
 }
 
@@ -85,12 +98,14 @@ export const applySnapshot = defineWrite({
       };
       const existing = existingAccounts.find((a) => a.externalId === raw.externalId);
       if (!existing) {
+        const kind = guessAccountType(raw.name);
         const row = await ctx.insert(accounts, {
           ...values,
           externalId: raw.externalId,
           connectionId: input.connectionId,
           source: "simplefin",
-          type: guessAccountType(raw.name),
+          type: kind,
+          countsTowardBudgets: countsTowardBudgetsByDefault(kind),
         });
         accountIdByExternal.set(raw.externalId, row.id);
         counts.accountsAdded++;
