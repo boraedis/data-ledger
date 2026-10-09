@@ -47,7 +47,9 @@ If a task seems to require real data in any of these places, stop and ask.
   nothing writes to the database around them. Name database handles `db`
   or `tx` — the lint rule that enforces this keys off those names.
 - **Every write is logged with provenance** — actor (`user`, `rule:<id>`,
-  `tally`, `import`), reason, and enough to undo it.
+  `tally`, `mcp`, `import`), reason, and enough to undo it.
+- **MCP clients only ever propose.** Their writes always wait for approval;
+  there is no auto-apply path for the `mcp` actor.
 - **Tally proposes; the user approves** writes, unless an action has been
   explicitly promoted to auto-apply.
 - **Minimal data to models.** Description, amount and date only — never

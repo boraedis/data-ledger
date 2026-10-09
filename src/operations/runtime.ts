@@ -30,10 +30,12 @@ export type ExecuteResult =
 
 // Tally proposes; the owner approves (README, decision 3). Promoting an
 // operation to auto-apply for Tally is a later, explicit change here — not a
-// flag Tally can set on a request.
+// flag Tally can set on a request. MCP clients have no such promotion path:
+// whatever is on the other end of a token, its writes wait for the owner.
 const AUTO_APPLY_FOR_TALLY = new Set<string>();
 
 function mustPropose(actor: Actor, op: WriteOperation): boolean {
+  if (actor === "mcp") return true;
   return actor === "tally" && !AUTO_APPLY_FOR_TALLY.has(op.name);
 }
 
@@ -43,7 +45,7 @@ function resolve(name: string): Operation {
   return op;
 }
 
-async function applyWrite(tx: Db, op: WriteOperation, input: unknown) {
+async function applyWrite(tx: Db, op: WriteOperation, input: Record<string, unknown>) {
   const ctx = new WriteContext(tx);
   const output = await op.apply(ctx, input);
   return { output, changes: ctx.changes };

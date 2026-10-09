@@ -2,6 +2,12 @@ import Link from "next/link";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { requireOwner } from "@/lib/auth/session";
 
+// Everything here is per-request, owner-only data; never prerender it. Without
+// this, `next build` starts rendering a page before the session check marks
+// it dynamic — and on Vercel, where DATABASE_URL is set at build time, that
+// means querying the production database during a build.
+export const dynamic = "force-dynamic";
+
 // Every page under (app) is owner-only. The proxy already turned away
 // requests without a signed cookie; this is the authoritative check against
 // the sessions table, so a signed-out or revoked session stops here.

@@ -1,10 +1,13 @@
+import { listApiTokens } from "@/lib/auth/api-tokens";
 import { listPasskeys } from "@/lib/auth/webauthn";
+import { getDb } from "@/lib/db";
 import { AddPasskey } from "./add-passkey";
+import { ApiTokens } from "./api-tokens";
 
 const dateFormat = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
 export default async function SettingsPage() {
-  const passkeys = await listPasskeys();
+  const [passkeys, tokens] = await Promise.all([listPasskeys(), listApiTokens(getDb())]);
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Settings</h1>
@@ -23,6 +26,14 @@ export default async function SettingsPage() {
           ))}
         </ul>
         <AddPasskey />
+      </section>
+      <section className="space-y-3">
+        <h2 className="text-lg font-medium">API tokens</h2>
+        <p className="text-sm text-muted-foreground">
+          For MCP clients such as Claude Code. A token can read everything in the ledger and propose changes, which
+          wait for your approval in Activity. Create one per client so each can be revoked on its own.
+        </p>
+        <ApiTokens tokens={tokens} />
       </section>
     </div>
   );

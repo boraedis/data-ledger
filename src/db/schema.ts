@@ -165,3 +165,20 @@ export const commandLog = pgTable(
   },
   (t) => [index("command_log_created_at_idx").on(t.createdAt), index("command_log_status_idx").on(t.status)],
 );
+
+// ---------------------------------------------------------------------------
+// API tokens (#5): bearer tokens for machine clients — the MCP server today.
+// One per client so each can be revoked on its own. Like sessions, only a
+// hash is stored; the token itself is shown once, at creation.
+// ---------------------------------------------------------------------------
+
+export const apiTokens = pgTable("api_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  label: text("label").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  // Revoked rather than deleted, so the settings page can still say which
+  // client a token belonged to and when it was cut off.
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+});
