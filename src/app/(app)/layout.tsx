@@ -3,6 +3,7 @@ import { SignOutButton } from "@/components/auth/sign-out-button";
 import { requireOwner } from "@/lib/auth/session";
 import { getDb } from "@/lib/db";
 import { getConnectionHealth, healthProblems } from "@/lib/sync/health";
+import { inboxCount } from "@/operations/transactions";
 
 // Everything here is per-request, owner-only data; never prerender it. Without
 // this, `next build` starts rendering a page before the session check marks
@@ -17,13 +18,22 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   await requireOwner();
   // On every page, not just Settings: a broken bank connection silently
   // stops the ledger being current, which is exactly what goes unnoticed.
-  const problems = healthProblems(await getConnectionHealth(getDb()));
+  const db = getDb();
+  const [problems, inbox] = await Promise.all([getConnectionHealth(db).then(healthProblems), inboxCount(db)]);
   return (
     <div className="flex min-h-svh flex-col">
-      <header className="flex items-center justify-between border-b px-4 py-2">
-        <nav className="flex items-center gap-4 text-sm">
-          <Link href="/" className="font-semibold">
+      {/* Wraps on phones rather than running off-screen: six links and a
+          sign-out button don't fit on one 375px line. */}
+      <header className="flex items-start justify-between gap-2 border-b px-4 py-2">
+        <nav className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+          <Link href="/" className="whitespace-nowrap font-semibold">
             Data Ledger
+          </Link>
+          <Link href="/inbox" className="text-muted-foreground hover:text-foreground">
+            Inbox{inbox ? <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">{inbox}</span> : null}
+          </Link>
+          <Link href="/categories" className="text-muted-foreground hover:text-foreground">
+            Categories
           </Link>
           <Link href="/accounts" className="text-muted-foreground hover:text-foreground">
             Accounts

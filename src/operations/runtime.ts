@@ -1,7 +1,8 @@
 import { and, desc, eq } from "drizzle-orm";
 import { commandLog, type RowChange } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { isActor, type Actor, type Operation, type WriteOperation } from "@/operations/define";
+import type { z } from "zod";
+import { isActor, type Actor, type Operation, type ReadOperation, type WriteOperation } from "@/operations/define";
 import { getOperation, trackedTables } from "@/operations/registry";
 import { WriteContext, currentRow, restoreRow, sameRow } from "@/operations/tracked";
 
@@ -37,6 +38,10 @@ function mustPropose(actor: Actor, op: WriteOperation): boolean {
   return actor === "tally" && !AUTO_APPLY_FOR_TALLY.has(op.name);
 }
 
+function actorAllowed(allowed: NonNullable<Operation["allowedActors"]>, actor: Actor): boolean {
+  return allowed.some((a) => a === actor || (a === "rule:*" && actor.startsWith("rule:")));
+}
+
 function resolve(name: string): Operation {
   const op = getOperation(name);
   if (!op) throw new OperationError(`Unknown operation "${name}"`);
@@ -60,7 +65,7 @@ async function applyWrite(tx: Db, op: WriteOperation, input: Record<string, unkn
 export async function execute(db: Db, request: ExecuteRequest): Promise<ExecuteResult> {
   if (!isActor(request.actor)) throw new OperationError(`Invalid actor "${request.actor}"`);
   const op = resolve(request.operation);
-  if (op.allowedActors && !op.allowedActors.includes(request.actor)) {
+  if (op.allowedActors && !actorAllowed(op.allowedActors, request.actor)) {
     throw new OperationError(`${request.actor} may not run ${op.name}`);
   }
   const input = op.input.parse(request.input);
@@ -86,6 +91,15 @@ export async function execute(db: Db, request: ExecuteRequest): Promise<ExecuteR
       .returning({ id: commandLog.id });
     return { status: "applied" as const, output, commandId: row.id };
   });
+}
+
+/**
+ * Typed read for server code (pages): same validation as execute(), but
+ * returns the operation's own output type instead of `unknown`. Reads
+ * aren't logged either way.
+ */
+export async function read<I extends z.ZodObject, O>(db: Db, op: ReadOperation<I, O>, input: z.input<I>): Promise<O> {
+  return op.run(db, op.input.parse(input));
 }
 
 async function lockCommand(tx: Db, commandId: string) {

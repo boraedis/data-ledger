@@ -1,6 +1,8 @@
 import { Pool, neon, neonConfig, type NeonQueryFunction } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import { drizzle as drizzleWs } from "drizzle-orm/neon-serverless";
+import { drizzle as drizzlePg } from "drizzle-orm/node-postgres";
+import pg from "pg";
 import ws from "ws";
 import * as schema from "@/db/schema";
 import type { Db } from "@/db/types";
@@ -40,8 +42,28 @@ function databaseUrl(): string {
   return url!;
 }
 
+// Local mode: a DATABASE_URL on localhost is a plain Postgres (e.g.
+// `npm run db:local`, which serves PGlite over the wire protocol), so it
+// uses node-postgres instead of Neon's HTTP/WebSocket drivers. Never used in
+// production, where the URL is always Neon's.
+export function isLocalDatabaseUrl(url: string): boolean {
+  return ["localhost", "127.0.0.1", "[::1]"].includes(new URL(url).hostname);
+}
+
+// One connection: PGlite is single-session, so two pooled connections would
+// share — and corrupt — each other's transactions. The cost is that code
+// inside withTransactionalDb must use the db it's given, never getDb();
+// the operations layer already works that way.
+let localPool: pg.Pool | undefined;
+function localDb(url: string): Db {
+  localPool ??= new pg.Pool({ connectionString: url, max: 1 });
+  return drizzlePg(localPool, { schema }) as unknown as Db;
+}
+
 export function getDb() {
-  if (!cachedSql) cachedSql = neon(databaseUrl());
+  const url = databaseUrl();
+  if (isLocalDatabaseUrl(url)) return localDb(url);
+  if (!cachedSql) cachedSql = neon(url);
   return drizzle(cachedSql, { schema });
 }
 
@@ -51,7 +73,9 @@ export function getDb() {
  * request that opened it (Neon's guidance), so it's opened and closed here.
  */
 export async function withTransactionalDb<T>(fn: (db: Db) => Promise<T>): Promise<T> {
-  const pool = new Pool({ connectionString: databaseUrl() });
+  const url = databaseUrl();
+  if (isLocalDatabaseUrl(url)) return fn(localDb(url));
+  const pool = new Pool({ connectionString: url });
   try {
     return await fn(drizzleWs(pool, { schema }) as unknown as Db);
   } finally {

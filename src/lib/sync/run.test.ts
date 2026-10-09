@@ -160,6 +160,19 @@ describe("syncConnection", () => {
     expect((await rows()).map((r) => r.externalId)).toEqual(["BEFORE"]);
   });
 
+  it("derives merchants on import and categorizes right after the sync", async () => {
+    const [coffee] = await db.insert(categories).values({ name: "Coffee", kind: "expense" }).returning();
+    await execute(db, {
+      operation: "rules.create",
+      input: { matchField: "merchant", matchType: "equals", pattern: "Corner Bean Cafe", categoryId: coffee.id },
+      actor: "user",
+      reason: "x",
+    });
+    const result = await sync();
+    expect(result).toMatchObject({ status: "success", categorized: 2 });
+    expect((await rows()).every((t) => t.merchant === "Corner Bean Cafe" && t.categoryId === coffee.id)).toBe(true);
+  });
+
   it("can be undone as a whole", async () => {
     await sync();
     const [entry] = await db.select().from(commandLog);
