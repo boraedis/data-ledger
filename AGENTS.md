@@ -43,7 +43,9 @@ If a task seems to require real data in any of these places, stop and ask.
 
 - **Every write goes through the operations layer.** UI, Tally (the
   assistant), the MCP server and the nightly pipeline all call the same
-  typed operations; nothing writes to the database around them.
+  typed operations (`src/operations/`, see README "Operations layer");
+  nothing writes to the database around them. Name database handles `db`
+  or `tx` — the lint rule that enforces this keys off those names.
 - **Every write is logged with provenance** — actor (`user`, `rule:<id>`,
   `tally`, `import`), reason, and enough to undo it.
 - **Tally proposes; the user approves** writes, unless an action has been

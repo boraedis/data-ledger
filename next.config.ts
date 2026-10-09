@@ -1,7 +1,9 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  // ws has optional native add-ons (bufferutil, utf-8-validate) that the
+  // bundler can't resolve; load it from node_modules at runtime instead.
+  serverExternalPackages: ["ws"],
 };
 
 export default nextConfig;

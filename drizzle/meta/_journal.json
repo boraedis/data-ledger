@@ -8,6 +8,13 @@
       "when": 1791571520921,
       "tag": "0000_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1791575466165,
+      "tag": "0001_command_log",
+      "breakpoints": true
     }
   ]
 }

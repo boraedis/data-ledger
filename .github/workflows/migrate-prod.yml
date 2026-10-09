@@ -1,0 +1,47 @@
+name: Migrate production database
+
+# Applies committed migrations (drizzle/) to production when they reach
+# main. Only runs when drizzle/ changed, so ordinary merges don't wait on it.
+#
+# One-time setup (Settings → Environments → New environment):
+#   - name it exactly "production"
+#   - add an environment secret DATABASE_URL: the same value as Vercel's
+#     Production DATABASE_URL
+#   - optional but recommended: "Required reviewers" → yourself, so every
+#     production migration pauses for an Approve click in the Actions tab
+#
+# Vercel deploys the same commit in parallel, so new code can briefly run
+# against the old schema (or, with a reviewer gate, for as long as approval
+# takes). Write migrations to be safe both ways: add before you use, stop
+# using before you drop — never a rename or drop in the same PR as the code
+# that stops needing the old shape.
+on:
+  push:
+    branches: [main]
+    paths: ["drizzle/**"]
+  workflow_dispatch:
+
+# Never two migrations against production at once.
+concurrency:
+  group: migrate-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # scripts/migrate.ts runs every pending migration in one transaction:
+      # a failure rolls back cleanly and fails this job.
+      - run: npm run db:migrate
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
