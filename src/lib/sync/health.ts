@@ -59,7 +59,7 @@ export async function getConnectionHealth(db: Db, now = new Date()): Promise<Con
         const entry =
           byInstitution.get(key) ??
           ({ institutionId: key, institution: a.institution, lastUpdated: null, stale: false, messages: [], accounts: [] } as InstitutionHealth);
-        entry.accounts.push({ id: a.id, name: a.name, balanceCents: a.balanceCents, balanceAt: a.balanceAt });
+        entry.accounts.push({ id: a.id, name: a.displayName ?? a.name, balanceCents: a.balanceCents, balanceAt: a.balanceAt });
         if (a.balanceAt && (!entry.lastUpdated || a.balanceAt > entry.lastUpdated)) entry.lastUpdated = a.balanceAt;
         byInstitution.set(key, entry);
       }

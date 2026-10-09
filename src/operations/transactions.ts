@@ -1,6 +1,7 @@
-import { and, desc, eq, gte, isNull, lte, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import { categories, transactions } from "@/db/schema";
+import { budgetAccountIds } from "@/operations/accounts";
 import { defineRead, defineWrite } from "@/operations/define";
 import { NotFoundError } from "@/operations/tracked";
 
@@ -10,12 +11,14 @@ export const listTransactions = defineRead({
   name: "transactions.list",
   description:
     "List transactions, newest first. Amounts are integer cents; negative means money left the account. " +
-    "Filter by date range (inclusive, YYYY-MM-DD), account, or uncategorized only.",
+    "Filter by date range (inclusive, YYYY-MM-DD), account, or uncategorized only. " +
+    "budgetOnly limits to accounts that count toward budgets (excludes investment, retirement, loan and asset accounts) — use it for anything about spending.",
   input: z.object({
     from: isoDate.optional(),
     to: isoDate.optional(),
     accountId: z.uuid().optional(),
     uncategorized: z.boolean().optional(),
+    budgetOnly: z.boolean().optional(),
     limit: z.number().int().min(1).max(500).default(100),
   }),
   run: (db, input) => {
@@ -24,6 +27,7 @@ export const listTransactions = defineRead({
     if (input.to) filters.push(lte(transactions.postedOn, input.to));
     if (input.accountId) filters.push(eq(transactions.accountId, input.accountId));
     if (input.uncategorized) filters.push(isNull(transactions.categoryId));
+    if (input.budgetOnly) filters.push(inArray(transactions.accountId, budgetAccountIds(db)));
     // Only what a model needs: no account numbers or balances exist in this
     // shape, and nothing should add them (AGENTS.md, minimal data to models).
     return db

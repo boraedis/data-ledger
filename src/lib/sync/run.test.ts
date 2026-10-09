@@ -233,6 +233,34 @@ describe("syncConnection", () => {
     expect(health.institutions[0].stale).toBe(true);
   });
 
+  it("excludes a new investment account from budgets before the owner has seen it", async () => {
+    snapshot.accounts = [account(), account({ externalId: "ACT-9", name: "Roth IRA" })];
+    await sync();
+    const [ira] = await db.select().from(accounts).where(eq(accounts.externalId, "ACT-9"));
+    expect(ira).toMatchObject({ type: "retirement", countsTowardBudgets: false });
+  });
+
+  it("never overwrites the owner's display name, kind or budget flag", async () => {
+    await sync();
+    const [acct] = await db.select().from(accounts);
+    await execute(db, {
+      operation: "accounts.update",
+      input: { accountId: acct.id, kind: "savings", displayName: "Emergency fund", countsTowardBudgets: false },
+      actor: "user",
+      reason: "x",
+    });
+    snapshot.accounts = [account({ name: "EVERYDAY CHECKING (renamed by bank)", balanceCents: 123 })];
+    await sync();
+    const [after] = await db.select().from(accounts);
+    expect(after).toMatchObject({
+      name: "EVERYDAY CHECKING (renamed by bank)",
+      balanceCents: 123,
+      displayName: "Emergency fund",
+      type: "savings",
+      countsTowardBudgets: false,
+    });
+  });
+
   it("guesses account types once and never overrides them afterwards", async () => {
     snapshot.accounts = [account(), account({ externalId: "ACT-2", name: "Rewards Visa Card" })];
     await sync();

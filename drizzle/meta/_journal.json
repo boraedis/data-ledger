@@ -36,6 +36,13 @@
       "when": 1791577693207,
       "tag": "0004_connections_and_sync",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1791579208130,
+      "tag": "0005_account_kinds",
+      "breakpoints": true
     }
   ]
 }
