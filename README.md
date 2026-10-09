@@ -36,9 +36,9 @@ zero-based).
 
 ```
                 ┌──────────────── UI (Next.js) ────────────────┐
- Connectors ──► │   Domain operations (typed, schema'd)        │ ◄── Tally (chat, tool calling)
- (SimpleFIN;    │   categorize, createRule, setTarget,         │ ◄── MCP server (Claude Code /
-  Plaid later)  │   matchReimbursement, querySpend, …          │      desktop on your own data)
+ Connectors ──► │   Domain operations (typed, schema'd)        │ ◄── Tally (chat, tool calling,
+ (SimpleFIN;    │   categorize, createRule, setTarget,         │      self-hosted open model)
+  Plaid later)  │   matchReimbursement, querySpend, …          │
                 │          ↓ every write goes through ↓         │ ◄── Nightly pipeline
                 │   Command log: actor · reason · undo          │
                 └──────────────────────────────────────────────┘
@@ -48,8 +48,8 @@ Three load-bearing decisions, made up front so agentic features aren't a
 retrofit:
 
 1. **One operations layer.** Every action is a typed function with an input
-   schema. The UI calls it, Tally calls it as a tool, the MCP server exposes
-   it. One implementation, three surfaces.
+   schema. The UI calls it, Tally calls it as a tool, the nightly pipeline
+   runs it. One implementation, every surface.
 2. **Provenance on every write.** The command log records who made a change
    (`user`, `rule:<id>`, `tally`, `import`), why, and how to undo it. An
    assistant editing money data is only trustworthy if every edit is
@@ -81,7 +81,22 @@ automatic or it isn't done.
 5. Corrections offered back as rules, and kept as labeled examples for evals
 
 Only the description, amount and date are ever sent to a model — never
-account numbers, balances or connection tokens.
+account numbers, balances or connection tokens — and that model is always
+self-hosted (see below).
+
+### AI: local models only
+
+No ledger data is sent to a hosted AI service — no Claude, OpenAI or
+Gemini APIs, no AI gateways, and no connectors that let an external
+assistant reach in. The categorization classifier (#6) and Tally (#11) run
+on an **open-source model the owner hosts**, called through an
+OpenAI-compatible endpoint (what Ollama, llama.cpp's server, vLLM and LM
+Studio all expose), so swapping models is configuration, not code.
+
+Still open, to settle when #6 starts: the app runs on Vercel, which can't
+reach a model on a home machine by itself. The options are a private
+tunnel from the home machine, hosting the app at home instead, or a small
+model running in the browser.
 
 ### Nightly pipeline
 
@@ -101,11 +116,9 @@ and finance-derived charts are never public there.
 
 Same as Data Diary, so the new learning is finance and agents rather than
 tooling: Next.js on Vercel, Neon Postgres + Drizzle, Tailwind + shadcn/ui.
-Additions: AI SDK with Claude via Vercel AI Gateway (Tally), Vercel
-Workflow + Cron (nightly pipeline), an MCP server, passkey auth with short
-sessions, and connection tokens encrypted at rest. Vercel's `eve` agent
-framework is worth a spike before committing to hand-wired AI SDK +
-Workflow.
+Additions: Vercel Workflow + Cron (nightly pipeline), passkey auth with
+short sessions, and connection tokens encrypted at rest. AI features use a
+self-hosted open-source model (see "AI: local models only").
 
 ## Environments
 
@@ -168,8 +181,7 @@ Single owner, passkeys only (WebAuthn, user verification required). No
 password exists to leak or phish.
 
 - **Every route is gated by default** in `src/proxy.ts`; the only public
-  paths are `/login`, `/api/auth/*`, and `/api/mcp` (which requires an API
-  token instead of a session).
+  paths are `/login` and `/api/auth/*`.
 - **Production has one domain.** Requests to any other production hostname
   (Vercel's per-deployment URLs) redirect to `WEBAUTHN_ORIGIN`, since
   passkeys only work on the domain they were created for. The proxy checks the cookie's
@@ -210,18 +222,17 @@ old and new code: add before you use, stop using before you drop.
 
 Every change to ledger data is an **operation** (`src/operations/`): a
 named, typed function with a zod input schema, marked read or write. The
-registry (`registry.ts`) is the single list the UI, Tally, the MCP server
-and the nightly pipeline all draw from; `describeOperations()` gives each
+registry (`registry.ts`) is the single list the UI, Tally and the nightly
+pipeline all draw from; `describeOperations()` gives each
 one's JSON Schema for tool-calling surfaces.
 
 Everything runs through `execute()` in `runtime.ts`, which:
 
-- validates input and the **actor** (`user`, `tally`, `mcp`, `import`,
-  `rule:<id>`);
+- validates input and the **actor** (`user`, `tally`, `import`, `rule:<id>`);
 - applies a write and its **command log** entry in one transaction, with a
   required one-line reason;
-- turns **Tally's and MCP clients' writes into proposals** (status
-  `proposed`, nothing applied) until the owner approves or rejects them. Any actor can also ask
+- turns **Tally's writes into proposals** (status `proposed`, nothing
+  applied) until the owner approves or rejects them. Any actor can also ask
   to propose. Promoting an operation to auto-apply for Tally is an explicit
   code change, not a request flag;
 - leaves reads unlogged — the log answers "who changed what", not "who
@@ -246,48 +257,5 @@ Undo on applied writes.
 To add an operation: define it with `defineRead` / `defineWrite` next to
 its neighbours, add it to `operations` in `registry.ts`, and add any new
 table it writes to `trackedTables`. Write the description for a model as
-much as a person: it becomes Tally's and MCP's tool description.
+much as a person: it becomes Tally's tool description.
 
-## MCP server
-
-`/api/mcp` exposes the operations registry over the Model Context Protocol,
-so Claude Code (or any MCP client) can query the ledger and propose
-changes. Tools are generated from the registry — `transactions.list`
-becomes `transactions_list` — so a new operation appears with no extra work.
-
-- **Reads** run directly.
-- **Writes** never apply. They take a required `reason` and become
-  proposals (actor `mcp`) that you approve or reject on **Activity**. There
-  is no way to promote MCP writes to auto-apply.
-- **Every request needs an API token**, including listing tools. Tokens are
-  created per client under **Settings → API tokens**, shown once, stored
-  only as a hash, and revocable.
-
-### Connecting Claude Code
-
-Create a token in Settings, then:
-
-```bash
-claude mcp add --transport http --scope user data-ledger https://data-ledger-pi.vercel.app/api/mcp --header "Authorization: Bearer dl_…"
-```
-
-Use `--scope user`, which keeps the token in your own `~/.claude.json`.
-**Never** add it with `--scope project`: that writes `.mcp.json` into this
-repository, which is public. Check it's connected with `claude mcp list`,
-then ask something like "what did I spend on coffee last month?".
-
-Claude Desktop and claude.ai connectors expect OAuth rather than a static
-token; that's a follow-up, not supported yet.
-
-### Synthetic data
-
-`npm run db:seed` writes ~6 months of invented transactions across four
-fake accounts (checking, savings, a credit card and a payment app): payroll,
-rent, subscriptions (one with a price rise), annual charges, everyday card
-spend, and shared dinners that friends pay back. Every merchant, employer,
-institution and person in it is made up (`src/lib/seed/generate.ts`).
-
-It is safe to re-run, and it **refuses to touch a database that holds any
-non-synthetic account**, so pointing it at production by mistake does
-nothing. Preview databases are created empty and seeded this way — never
-branched from production.

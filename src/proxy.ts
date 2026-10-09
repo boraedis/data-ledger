@@ -5,13 +5,7 @@ import { SESSION_COOKIE_NAME, readSessionToken } from "@/lib/auth/session-token"
 // public by accident; making one public is a deliberate edit to this list.
 // (Unlike Data Diary, there is no public site — nothing in Data Ledger is
 // meant for anyone but the owner.)
-const PUBLIC_PATHS = new Set([
-  "/login",
-  // The MCP endpoint authenticates with an API token, not the session
-  // cookie, so it can't be gated here; the route rejects any request
-  // without a valid token (src/mcp/server.ts). Exact path, not a prefix.
-  "/api/mcp",
-]);
+const PUBLIC_PATHS = new Set(["/login"]);
 const PUBLIC_PREFIXES = ["/api/auth/"];
 
 /**
@@ -32,8 +26,8 @@ function canonicalRedirect(request: NextRequest): URL | null {
 
 export function proxy(request: NextRequest) {
   const redirectTo = canonicalRedirect(request);
-  // 307 keeps the method and body, so an MCP client POSTing to the old host
-  // follows through rather than silently turning into a GET.
+  // 307 keeps the method and body, so a POST to the old host (a passkey
+  // request, a server action) follows through instead of becoming a GET.
   if (redirectTo) return NextResponse.redirect(redirectTo, 307);
 
   const { pathname } = request.nextUrl;

@@ -33,9 +33,9 @@ describe("proxy", () => {
     expect(response.headers.get("location")).toBeNull();
   });
 
-  it("lets /api/mcp through to its own token check, but only that exact path", () => {
-    expect(proxy(new NextRequest("http://localhost/api/mcp")).status).toBe(200);
-    expect(proxy(new NextRequest("http://localhost/api/mcp-other")).status).toBe(401);
+  it("lets the sign-in routes through without a session", () => {
+    expect(proxy(new NextRequest("http://localhost/login")).status).toBe(200);
+    expect(proxy(new NextRequest("http://localhost/api/auth/login/options")).status).toBe(200);
   });
 
   it("gates pages and other API routes without a session", () => {

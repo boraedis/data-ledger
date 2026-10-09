@@ -5,25 +5,24 @@ import type { WriteContext } from "@/operations/tracked";
 // Who caused a write. Recorded on every command-log row.
 //   user      — the owner, through the UI
 //   tally     — the assistant; its writes are proposals unless promoted
-//   mcp       — an MCP client (Claude Code etc.); its writes are always proposals
 //   import    — the nightly sync bringing in bank data
 //   rule:<id> — a categorization rule firing
-export type Actor = "user" | "tally" | "mcp" | "import" | `rule:${string}`;
+export type Actor = "user" | "tally" | "import" | `rule:${string}`;
 
-const NAMED_ACTORS = new Set(["user", "tally", "mcp", "import"]);
+const NAMED_ACTORS = new Set(["user", "tally", "import"]);
 
 export function isActor(value: string): value is Actor {
   return NAMED_ACTORS.has(value) || /^rule:[\w-]+$/.test(value);
 }
 
-// Inputs are always objects: tool-calling surfaces (Tally, MCP) need an
+// Inputs are always objects: tool calling (Tally) needs an
 // object schema, and named fields keep the log readable.
 type Base<I extends z.ZodObject> = {
   // Dotted noun.verb, e.g. "transactions.setCategory". Stable: it's stored
-  // in the log and becomes the tool name for Tally and MCP.
+  // in the log and becomes Tally's tool name.
   name: string;
-  // Written for a model as much as a person — this is what Tally and the
-  // MCP client see when deciding which tool to call.
+  // Written for a model as much as a person — this is what Tally sees when
+  // deciding which tool to call.
   description: string;
   input: I;
 };

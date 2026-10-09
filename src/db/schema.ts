@@ -167,9 +167,10 @@ export const commandLog = pgTable(
 );
 
 // ---------------------------------------------------------------------------
-// API tokens (#5): bearer tokens for machine clients — the MCP server today.
-// One per client so each can be revoked on its own. Like sessions, only a
-// hash is stored; the token itself is shown once, at creation.
+// API tokens: UNUSED. They authenticated the MCP server, which was removed
+// (no external AI connects to the ledger). The table is dropped in a
+// follow-up migration rather than here, so the previous deployment — which
+// still reads it — keeps working while this one rolls out.
 // ---------------------------------------------------------------------------
 
 export const apiTokens = pgTable("api_tokens", {
