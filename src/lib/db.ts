@@ -12,11 +12,27 @@ import * as schema from "@/db/schema";
 // whether to move to the WebSocket driver then.
 let cachedSql: NeonQueryFunction<false, false> | undefined;
 
+/**
+ * Says what's wrong with a DATABASE_URL without ever echoing it — the
+ * value carries the database password, and these messages land in logs.
+ * Covers the shapes a copy from Neon's console produces: a `psql '…'`
+ * command, a quoted string, stray whitespace.
+ */
+export function describeDatabaseUrlProblem(value: string | undefined): string | null {
+  if (!value) return "DATABASE_URL is not set in this environment";
+  if (value !== value.trim()) return "DATABASE_URL has leading or trailing whitespace";
+  if (/^["']/.test(value)) return "DATABASE_URL is wrapped in quotes; store the bare postgresql:// URL";
+  if (value.startsWith("psql")) return "DATABASE_URL is a psql command; store only the postgresql:// URL inside it";
+  if (!/^postgres(ql)?:\/\//.test(value)) return "DATABASE_URL must start with postgresql://";
+  return null;
+}
+
 export function getDb() {
   if (!cachedSql) {
     const url = process.env.DATABASE_URL;
-    if (!url) throw new Error("DATABASE_URL is not set");
-    cachedSql = neon(url);
+    const problem = describeDatabaseUrlProblem(url);
+    if (problem) throw new Error(problem);
+    cachedSql = neon(url!);
   }
   return drizzle(cachedSql, { schema });
 }
