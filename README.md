@@ -10,7 +10,7 @@ and bank connections; Data Diary treats it as one more external source and
 pulls a narrow, aggregate-only feed at the very end (see "Diary bridge").
 
 > **Status:** planning. No app code yet — the founding epic and its
-> sub-issues on the [Data Ledger project board](https://github.com/users/boraedis/projects)
+> sub-issues on the [Data Ledger project board](https://github.com/users/boraedis/projects/4) (founding epic: #1)
 > are the build order.
 
 ## Why this exists

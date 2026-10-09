@@ -73,7 +73,7 @@ from Data Diary's), with `Status` (Backlog → Todo → In Progress → Done),
 kept in sync manually). New issues go on the board:
 
 ```bash
-gh project item-add <project-number> --owner boraedis --url <issue-url>
+gh project item-add 4 --owner boraedis --url <issue-url>
 ```
 
 Epics and sub-issues use GitHub's native parent/sub-issue linking.
