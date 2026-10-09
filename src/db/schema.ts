@@ -165,21 +165,3 @@ export const commandLog = pgTable(
   },
   (t) => [index("command_log_created_at_idx").on(t.createdAt), index("command_log_status_idx").on(t.status)],
 );
-
-// ---------------------------------------------------------------------------
-// API tokens: UNUSED. They authenticated the MCP server, which was removed
-// (no external AI connects to the ledger). The table is dropped in a
-// follow-up migration rather than here, so the previous deployment — which
-// still reads it — keeps working while this one rolls out.
-// ---------------------------------------------------------------------------
-
-export const apiTokens = pgTable("api_tokens", {
-  id: uuid("id").primaryKey().defaultRandom(),
-  label: text("label").notNull(),
-  tokenHash: text("token_hash").notNull().unique(),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
-  // Revoked rather than deleted, so the settings page can still say which
-  // client a token belonged to and when it was cut off.
-  revokedAt: timestamp("revoked_at", { withTimezone: true }),
-});
