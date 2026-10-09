@@ -42,16 +42,18 @@ If a task seems to require real data in any of these places, stop and ask.
 ## Architecture invariants
 
 - **Every write goes through the operations layer.** UI, Tally (the
-  assistant), the MCP server and the nightly pipeline all call the same
+  assistant) and the nightly pipeline all call the same
   typed operations (`src/operations/`, see README "Operations layer");
   nothing writes to the database around them. Name database handles `db`
   or `tx` — the lint rule that enforces this keys off those names.
 - **Every write is logged with provenance** — actor (`user`, `rule:<id>`,
-  `tally`, `mcp`, `import`), reason, and enough to undo it.
-- **MCP clients only ever propose.** Their writes always wait for approval;
-  there is no auto-apply path for the `mcp` actor.
+  `tally`, `import`), reason, and enough to undo it.
 - **Tally proposes; the user approves** writes, unless an action has been
   explicitly promoted to auto-apply.
+- **No external AI.** Ledger data never goes to a hosted AI service (Claude,
+  OpenAI, Gemini, AI gateways) and no external assistant connects in (an
+  MCP server was built and removed for this reason). AI features use a
+  self-hosted open-source model through an OpenAI-compatible endpoint.
 - **Minimal data to models.** Description, amount and date only — never
   account numbers, balances or connection tokens.
 - **Connectors sit behind one interface.** Nothing downstream knows which

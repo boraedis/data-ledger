@@ -6,8 +6,7 @@ import { accounts, categories, transactions } from "@/db/schema";
 import { listTransactions, setTransactionCategory } from "@/operations/transactions";
 
 // The one list of everything that can be done to the ledger. The UI calls
-// these, Tally gets them as tools (#11), the MCP server exposes them (#5),
-// and the nightly pipeline runs them. Adding a capability means adding it
+// these, Tally gets them as tools (#11), and the nightly pipeline runs them. Adding a capability means adding it
 // here; nothing else needs a parallel definition.
 export const operations: Operation[] = [
   listAccounts,
