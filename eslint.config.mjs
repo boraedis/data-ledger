@@ -24,6 +24,11 @@ const eslintConfig = defineConfig([
       // Infrastructure rather than ledger data: sessions, passkeys and
       // WebAuthn challenges aren't user-visible changes worth undoing.
       "src/lib/auth/**",
+      // Connector credentials and sync bookkeeping (connections, sync_runs).
+      // The ledger data a sync brings in still goes through the import
+      // operation.
+      "src/lib/connectors/**",
+      "src/lib/sync/**",
       // Synthetic data loading, and tests setting up fixtures.
       "src/lib/seed/**",
       "src/lib/test-utils/**",

@@ -5,7 +5,12 @@ import { SESSION_COOKIE_NAME, readSessionToken } from "@/lib/auth/session-token"
 // public by accident; making one public is a deliberate edit to this list.
 // (Unlike Data Diary, there is no public site — nothing in Data Ledger is
 // meant for anyone but the owner.)
-const PUBLIC_PATHS = new Set(["/login"]);
+const PUBLIC_PATHS = new Set([
+  "/login",
+  // Called by Vercel Cron, which has no session. The route itself rejects
+  // anything without the CRON_SECRET bearer token.
+  "/api/cron/sync",
+]);
 const PUBLIC_PREFIXES = ["/api/auth/"];
 
 /**

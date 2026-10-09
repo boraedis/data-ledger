@@ -1,5 +1,6 @@
 import {
   bigint,
+  boolean,
   customType,
   date,
   index,
@@ -68,6 +69,71 @@ export const authChallenges = pgTable("auth_challenges", {
 // anticipates their columns.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Bank connections (#4). Infrastructure, like passkeys: credentials and sync
+// bookkeeping live here and are managed outside the operations layer. The
+// ledger data a sync brings in (accounts, transactions) goes through the
+// import operation, so it's logged and undoable like any other write.
+// ---------------------------------------------------------------------------
+
+export const connectionStatus = pgEnum("connection_status", ["active", "broken"]);
+
+export const connections = pgTable("connections", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // Which connector implementation; nothing outside src/lib/connectors
+  // branches on this.
+  provider: text("provider").notNull(),
+  label: text("label").notNull(),
+  // The connector's credential (SimpleFIN: the access URL, which embeds a
+  // password), AES-256-GCM encrypted with CONNECTION_ENCRYPTION_KEY. Never
+  // logged, never sent to a model, never shown after it's stored.
+  encryptedSecret: text("encrypted_secret").notNull(),
+  // "broken" when the provider rejects the credential outright (revoked,
+  // unpaid); per-institution trouble is in sync_runs.messages instead.
+  status: connectionStatus("status").notNull().default("active"),
+  lastError: text("last_error"),
+  lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const syncRunStatus = pgEnum("sync_run_status", ["running", "success", "partial", "failed", "skipped"]);
+
+// One row per attempt. Doubles as the request ledger for the provider's
+// rate limit, and as the history behind the health view.
+export const syncRuns = pgTable(
+  "sync_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    connectionId: uuid("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    trigger: text("trigger").notNull(), // "cron" | "manual" | "setup"
+    status: syncRunStatus("status").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    // Requests actually sent to the provider: 0 for a skipped run, more
+    // than 1 when a long window is fetched in chunks. Summed for the rate
+    // budget.
+    requests: integer("requests").notNull().default(0),
+    // Provider messages to show the owner (SimpleFIN asks that they always
+    // be shown), already reduced to safe display text.
+    messages: jsonb("messages").$type<SyncMessage[]>().notNull().default([]),
+    error: text("error"),
+    commandId: uuid("command_id"),
+    inserted: integer("inserted").notNull().default(0),
+    updated: integer("updated").notNull().default(0),
+    removed: integer("removed").notNull().default(0),
+  },
+  (t) => [index("sync_runs_connection_started_idx").on(t.connectionId, t.startedAt)],
+);
+
+export type SyncMessage = {
+  code: string;
+  message: string;
+  institutionId?: string;
+  accountExternalId?: string;
+};
+
 export const accountType = pgEnum("account_type", ["checking", "savings", "credit", "payment_app"]);
 
 // Where a row came from. "seed" marks synthetic data, which is what lets the
@@ -85,7 +151,18 @@ export const accounts = pgTable("accounts", {
   externalId: text("external_id"),
   currency: text("currency").notNull().default("USD"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-});
+  // Null for seed rows. Set null (not cascade) if a connection is removed:
+  // the account and its history stay in the ledger.
+  connectionId: uuid("connection_id").references(() => connections.id, { onDelete: "set null" }),
+  // The provider's ID for the institution behind this account — what
+  // per-institution health groups by.
+  institutionId: text("institution_id"),
+  // Balances are for display and reconciliation only; they never go to a
+  // model (AGENTS.md).
+  balanceCents: bigint("balance_cents", { mode: "number" }),
+  availableBalanceCents: bigint("available_balance_cents", { mode: "number" }),
+  balanceAt: timestamp("balance_at", { withTimezone: true }),
+}, (t) => [uniqueIndex("accounts_connection_external_idx").on(t.connectionId, t.externalId)]);
 
 export const categoryKind = pgEnum("category_kind", ["expense", "income", "transfer"]);
 
@@ -114,6 +191,13 @@ export const transactions = pgTable(
     // derived from it, never written over it.
     description: text("description").notNull(),
     externalId: text("external_id"),
+    // Pending transactions can vanish or reappear under a new ID once they
+    // post; the import operation reconciles them (src/operations/import.ts).
+    pending: boolean("pending").notNull().default(false),
+    // Extra raw fields some providers give, kept for merchant normalization
+    // (#6). Like description, never overwritten by derived values.
+    payee: text("payee"),
+    memo: text("memo"),
     categoryId: uuid("category_id").references(() => categories.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },

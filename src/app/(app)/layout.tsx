@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { SignOutButton } from "@/components/auth/sign-out-button";
 import { requireOwner } from "@/lib/auth/session";
+import { getDb } from "@/lib/db";
+import { getConnectionHealth, healthProblems } from "@/lib/sync/health";
 
 // Everything here is per-request, owner-only data; never prerender it. Without
 // this, `next build` starts rendering a page before the session check marks
@@ -13,6 +15,9 @@ export const dynamic = "force-dynamic";
 // the sessions table, so a signed-out or revoked session stops here.
 export default async function AppLayout({ children }: LayoutProps<"/">) {
   await requireOwner();
+  // On every page, not just Settings: a broken bank connection silently
+  // stops the ledger being current, which is exactly what goes unnoticed.
+  const problems = healthProblems(await getConnectionHealth(getDb()));
   return (
     <div className="flex min-h-svh flex-col">
       <header className="flex items-center justify-between border-b px-4 py-2">
@@ -29,6 +34,14 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
         </nav>
         <SignOutButton />
       </header>
+      {problems.length ? (
+        <Link
+          href="/settings"
+          className="block border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-800 dark:text-amber-200"
+        >
+          {problems.length === 1 ? problems[0] : `${problems[0]} (and ${problems.length - 1} more)`} — see Settings
+        </Link>
+      ) : null}
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-6">{children}</main>
     </div>
   );

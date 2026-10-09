@@ -25,6 +25,10 @@ type Base<I extends z.ZodObject> = {
   // deciding which tool to call.
   description: string;
   input: I;
+  // Restricts who may run this operation at all. Unset means anyone. The
+  // import operation, for example, is only for the sync — not something the
+  // owner or Tally should invoke with hand-made "bank data".
+  allowedActors?: Actor[];
 };
 
 export type ReadOperation<I extends z.ZodObject = z.ZodObject, O = unknown> = Base<I> & {
