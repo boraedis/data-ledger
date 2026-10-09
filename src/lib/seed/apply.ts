@@ -1,13 +1,9 @@
 import { count, eq, ne } from "drizzle-orm";
-import type { PgDatabase, PgQueryResultHKT } from "drizzle-orm/pg-core";
 import * as schema from "@/db/schema";
+import type { Db } from "@/db/types";
 import { generateSeed } from "@/lib/seed/generate";
 
 const { accounts, categories, transactions } = schema;
-
-// Any Postgres drizzle instance: the Neon driver in scripts/seed.ts, PGlite
-// in tests.
-type AnyDb = PgDatabase<PgQueryResultHKT, typeof schema>;
 
 export class RealDataPresentError extends Error {}
 
@@ -17,7 +13,7 @@ export class RealDataPresentError extends Error {}
  * that makes it safe to run against the wrong DATABASE_URL by mistake. It
  * never deletes or touches non-seed rows.
  */
-export async function applySeed(db: AnyDb, { endDate = new Date() }: { endDate?: Date } = {}) {
+export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Date } = {}) {
   // One transaction, so the guard's answer still holds when the deletes run
   // and a failure halfway leaves the previous seed intact.
   return db.transaction(async (tx) => {

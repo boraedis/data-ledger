@@ -4,6 +4,7 @@ import {
   date,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
   text,
@@ -120,4 +121,47 @@ export const transactions = pgTable(
     index("transactions_posted_on_idx").on(t.postedOn),
     uniqueIndex("transactions_account_external_idx").on(t.accountId, t.externalId),
   ],
+);
+
+// ---------------------------------------------------------------------------
+// Command log (#3). One row per write — applied, proposed, rejected or
+// undone — from any actor. Reads aren't logged: Tally reads constantly and
+// the log is for "who changed what", not an access trail.
+// ---------------------------------------------------------------------------
+
+export const commandStatus = pgEnum("command_status", ["proposed", "applied", "rejected", "undone"]);
+
+// One row-level change made by a write: `before` null means the row was
+// inserted, `after` null means it was deleted. Rows are Postgres's own
+// to_jsonb() of the full row, so undo can restore them with
+// jsonb_populate_record without any per-table code.
+export type RowChange = {
+  table: string;
+  id: string;
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+};
+
+export const commandLog = pgTable(
+  "command_log",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    // "user", "tally", "import" or "rule:<id>". Text rather than an enum so
+    // rule IDs fit; the runtime validates the shape.
+    actor: text("actor").notNull(),
+    operation: text("operation").notNull(),
+    input: jsonb("input").notNull(),
+    reason: text("reason").notNull(),
+    status: commandStatus("status").notNull(),
+    changes: jsonb("changes").$type<RowChange[]>().notNull().default([]),
+    // For proposals: who approved or rejected it, and when.
+    decidedBy: text("decided_by"),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+    // An undo is itself a logged command pointing at what it reversed; the
+    // reversed command points back.
+    undoOf: uuid("undo_of"),
+    undoneBy: uuid("undone_by"),
+  },
+  (t) => [index("command_log_created_at_idx").on(t.createdAt), index("command_log_status_idx").on(t.status)],
 );

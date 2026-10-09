@@ -9,8 +9,8 @@ deliberately independent: Data Ledger owns accounts, transactions, budgets
 and bank connections; Data Diary treats it as one more external source and
 pulls a narrow, aggregate-only feed at the very end (see "Diary bridge").
 
-> **Status:** scaffolded (#2) — auth, database and seed are in place; no
-> finance features yet. The founding epic and its
+> **Status:** in production — auth, database, seed and the operations
+> layer (#3) are in place; no finance features yet. The founding epic and its
 > sub-issues on the [Data Ledger project board](https://github.com/users/boraedis/projects/4) (founding epic: #1)
 > are the build order.
 
@@ -196,9 +196,52 @@ rename-vs-drop prompt fails in CI. Committed migrations are reviewable, and
 failure rolls back cleanly instead of leaving the schema half-changed. CI
 applies every migration to an empty in-process Postgres on each PR.
 
-Production migrations will run from a GitHub Action on merge to `main`,
-behind a required-reviewer `production` environment, once the Neon project
-exists.
+**Production** migrations run automatically from
+`.github/workflows/migrate-prod.yml` whenever a merge to `main` changes
+`drizzle/` (one-time setup is in that file's header). Vercel deploys the
+same commit in parallel, so write migrations that are safe with both the
+old and new code: add before you use, stop using before you drop.
+
+## Operations layer
+
+Every change to ledger data is an **operation** (`src/operations/`): a
+named, typed function with a zod input schema, marked read or write. The
+registry (`registry.ts`) is the single list the UI, Tally, the MCP server
+and the nightly pipeline all draw from; `describeOperations()` gives each
+one's JSON Schema for tool-calling surfaces.
+
+Everything runs through `execute()` in `runtime.ts`, which:
+
+- validates input and the **actor** (`user`, `tally`, `import`, `rule:<id>`);
+- applies a write and its **command log** entry in one transaction, with a
+  required one-line reason;
+- turns **Tally's writes into proposals** (status `proposed`, nothing
+  applied) until the owner approves or rejects them. Any actor can also ask
+  to propose. Promoting an operation to auto-apply for Tally is an explicit
+  code change, not a request flag;
+- leaves reads unlogged — the log answers "who changed what", not "who
+  looked".
+
+**Undo is generic.** Write handlers never touch the database directly; they
+call `ctx.insert` / `ctx.update` / `ctx.remove`, which snapshot each row
+before and after (`to_jsonb`) into the log entry. Undo restores those
+snapshots in reverse order, refuses if any row has changed since (undo the
+newer change first), and is itself logged. Database-side effects such as
+`ON DELETE SET NULL` aren't captured, so an operation that would trigger
+one makes those changes itself first.
+
+**Writing around the layer is a lint error.** ESLint flags
+`insert`/`update`/`delete`/`execute` on a `db`/`tx` handle (or `getDb()`)
+anywhere outside the runtime, auth, seed and tests. It relies on handles
+being named `db` or `tx`, so it catches accidents, not determination.
+
+The **Activity** page lists the log, with Approve/Reject on proposals and
+Undo on applied writes.
+
+To add an operation: define it with `defineRead` / `defineWrite` next to
+its neighbours, add it to `operations` in `registry.ts`, and add any new
+table it writes to `trackedTables`. Write the description for a model as
+much as a person: it becomes Tally's and MCP's tool description.
 
 ### Synthetic data
 

@@ -1,23 +1,17 @@
-import { PGlite } from "@electric-sql/pglite";
 import { count, eq } from "drizzle-orm";
-import { drizzle } from "drizzle-orm/pglite";
-import { migrate } from "drizzle-orm/pglite/migrator";
 import { beforeEach, describe, expect, it } from "vitest";
 import * as schema from "@/db/schema";
+import type { Db } from "@/db/types";
 import { RealDataPresentError, applySeed } from "@/lib/seed/apply";
+import { testDb } from "@/lib/test-utils/db";
 
-// Runs the committed migrations against an in-process Postgres, so this
-// also proves drizzle/ applies cleanly to an empty database.
-async function freshDb() {
-  const db = drizzle(new PGlite(), { schema });
-  await migrate(db, { migrationsFolder: "./drizzle" });
-  return db;
-}
+// testDb() runs the committed migrations against an in-process Postgres, so
+// this also proves drizzle/ applies cleanly to an empty database.
 
 describe("applySeed", () => {
-  let db: Awaited<ReturnType<typeof freshDb>>;
+  let db: Db;
   beforeEach(async () => {
-    db = await freshDb();
+    db = await testDb();
   });
 
   it("fills an empty database", async () => {

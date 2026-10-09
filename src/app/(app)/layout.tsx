@@ -14,6 +14,9 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           <Link href="/" className="font-semibold">
             Data Ledger
           </Link>
+          <Link href="/activity" className="text-muted-foreground hover:text-foreground">
+            Activity
+          </Link>
           <Link href="/settings" className="text-muted-foreground hover:text-foreground">
             Settings
           </Link>
