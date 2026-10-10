@@ -1,10 +1,11 @@
 import type { SyncMessage } from "@/db/schema";
-import { parseAmountCents } from "@/lib/money";
+import { normalizeDecimal, parseAmountCents } from "@/lib/money";
 import {
   ConnectorAuthError,
   type Connector,
   type ConnectorSnapshot,
   type RawAccount,
+  type RawHolding,
   type RawTransaction,
 } from "@/lib/connectors/types";
 
@@ -113,6 +114,40 @@ function displaySafe(text: unknown): string {
     .slice(0, 500);
 }
 
+const isoCurrency = (code: string | undefined, fallback: string) => (code && /^[A-Z]{3}$/.test(code) ? code : fallback);
+
+/**
+ * Holdings, normalized. A position whose share count or market value can't
+ * be read exactly is skipped rather than guessed at: holdings are display
+ * and history, and a wrong number is worse than a missing row. A cost basis
+ * of zero is treated as unknown — brokerages send 0 when they don't have it,
+ * and a real $0 basis (free shares) is rare enough that reading 0 as "no
+ * data" is the less misleading mistake.
+ */
+export function normalizeHoldings(holdings: SfHolding[], accountCurrency: string): RawHolding[] {
+  const result: RawHolding[] = [];
+  for (const h of holdings) {
+    try {
+      const symbol = displaySafe(h.symbol) || null;
+      const externalId = displaySafe(h.id) || symbol;
+      if (!externalId || h.shares === undefined || h.market_value === undefined) continue;
+      const costBasisCents = h.cost_basis ? parseAmountCents(h.cost_basis) : null;
+      result.push({
+        externalId,
+        symbol,
+        description: displaySafe(h.description) || symbol || "Unnamed holding",
+        shares: normalizeDecimal(h.shares),
+        marketValueCents: parseAmountCents(h.market_value),
+        costBasisCents: costBasisCents === 0 ? null : costBasisCents,
+        currency: isoCurrency(h.currency, accountCurrency),
+      });
+    } catch {
+      // Unparseable number: skip this position (see above).
+    }
+  }
+  return result;
+}
+
 type SfConnection = { conn_id: string; name?: string; org_name?: string; org_id?: string };
 type SfTransaction = {
   id: string;
@@ -124,6 +159,21 @@ type SfTransaction = {
   payee?: string;
   memo?: string;
 };
+// Not in the published protocol, but Bridge sends it on every account (an
+// empty list for non-investment accounts) unless balances-only is asked for,
+// which this connector never does. Numbers are decimal strings; cost_basis
+// is the position's total cost (shares × purchase_price).
+type SfHolding = {
+  id?: string;
+  created?: number;
+  symbol?: string;
+  description?: string;
+  shares?: string;
+  market_value?: string;
+  cost_basis?: string;
+  purchase_price?: string;
+  currency?: string;
+};
 type SfAccount = {
   id: string;
   name: string;
@@ -134,6 +184,7 @@ type SfAccount = {
   "available-balance"?: string;
   "balance-date": number;
   transactions?: SfTransaction[];
+  holdings?: SfHolding[];
 };
 type SfError = { code?: string; msg?: string; conn_id?: string; account_id?: string };
 type SfAccountSet = {
@@ -154,10 +205,11 @@ export function normalizeAccountSet(data: SfAccountSet, now: Date): ConnectorSna
       institution: displaySafe(connection?.name ?? connection?.org_name ?? a.org?.name ?? "Unknown institution"),
       institutionId: a.conn_id ?? a.org?.id ?? a.org?.domain ?? "unknown",
       // A custom-currency URL is possible per spec; we only budget in ISO codes.
-      currency: /^[A-Z]{3}$/.test(a.currency) ? a.currency : "XXX",
+      currency: isoCurrency(a.currency, "XXX"),
       balanceCents: parseAmountCents(a.balance),
       availableBalanceCents: a["available-balance"] ? parseAmountCents(a["available-balance"]) : null,
       balanceAt: new Date(a["balance-date"] * 1000),
+      ...(Array.isArray(a.holdings) ? { holdings: normalizeHoldings(a.holdings, isoCurrency(a.currency, "XXX")) } : {}),
     };
   });
 

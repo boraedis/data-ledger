@@ -9,6 +9,7 @@ import {
   index,
   integer,
   jsonb,
+  numeric,
   pgEnum,
   pgTable,
   text,
@@ -210,6 +211,41 @@ export const balanceSnapshots = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("balance_snapshots_account_on_idx").on(t.accountId, t.on), index("balance_snapshots_on_idx").on(t.on)],
+);
+
+// Investment positions, one row per holding per account per UTC day (#23),
+// recorded by every sync that returns them — position history, built the
+// same way as balance_snapshots and for the same reason: providers only
+// report what's held now. Display and history only: an account's value in
+// net worth is still its balance (which already includes these), so
+// holdings are never added on top. They never become transactions, never
+// count toward budgets, and never go to a model.
+export const holdingSnapshots = pgTable(
+  "holding_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    on: date("on").notNull(),
+    // The provider's ID for the position, or its symbol when it has none;
+    // what makes a same-day re-sync update rather than duplicate.
+    externalId: text("external_id").notNull(),
+    symbol: text("symbol"),
+    description: text("description").notNull(),
+    // Exact decimal, as the provider sent it: fractional shares often carry
+    // more places than any float would keep faithfully.
+    shares: numeric("shares").notNull(),
+    marketValueCents: bigint("market_value_cents", { mode: "number" }).notNull(),
+    // Total cost of the position, when the brokerage provides it.
+    costBasisCents: bigint("cost_basis_cents", { mode: "number" }),
+    currency: text("currency").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("holding_snapshots_account_on_external_idx").on(t.accountId, t.on, t.externalId),
+    index("holding_snapshots_on_idx").on(t.on),
+  ],
 );
 
 export const categoryKind = pgEnum("category_kind", ["expense", "income", "transfer"]);
