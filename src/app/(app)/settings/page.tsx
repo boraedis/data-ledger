@@ -1,5 +1,7 @@
 import { listPasskeys } from "@/lib/auth/webauthn";
 import { getDb } from "@/lib/db";
+import { autoApplyThreshold } from "@/lib/categorize/pipeline";
+import { latestEval, recommendedThreshold } from "@/lib/model/evaluate";
 import { getModelStatus } from "@/lib/model/status";
 import { getConnectionHealth } from "@/lib/sync/health";
 import { Connections } from "./connections";
@@ -8,9 +10,18 @@ import { AddPasskey } from "./add-passkey";
 
 const dateFormat = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
+// Test model and the evaluation may wait out a GPU cold start (~3.5 min).
+export const maxDuration = 300;
+
 export default async function SettingsPage() {
   const db = getDb();
-  const [passkeys, health, model] = await Promise.all([listPasskeys(), getConnectionHealth(db), getModelStatus(db)]);
+  const [passkeys, health, model, lastEval] = await Promise.all([
+    listPasskeys(),
+    getConnectionHealth(db),
+    getModelStatus(db),
+    latestEval(db),
+  ]);
+  const evaluation = lastEval ? { summary: lastEval, recommended: recommendedThreshold(lastEval.thresholds) } : null;
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Settings</h1>
@@ -24,7 +35,7 @@ export default async function SettingsPage() {
       </section>
       <section className="space-y-3">
         <h2 className="text-lg font-medium">Model</h2>
-        <ModelStatusPanel status={model} />
+        <ModelStatusPanel status={model} evaluation={evaluation} threshold={autoApplyThreshold()} />
       </section>
       <section className="space-y-3">
         <h2 className="text-lg font-medium">Passkeys</h2>

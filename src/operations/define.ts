@@ -8,9 +8,10 @@ import type { WriteContext } from "@/operations/tracked";
 //   import    — the nightly sync bringing in bank data
 //   rule:<id> — a categorization rule firing
 //   memory    — merchant memory: "categorized like this merchant was before"
-export type Actor = "user" | "tally" | "import" | "memory" | `rule:${string}`;
+//   model     — the self-hosted model's confident categorizations (#6)
+export type Actor = "user" | "tally" | "import" | "memory" | "model" | `rule:${string}`;
 
-const NAMED_ACTORS = new Set(["user", "tally", "import", "memory"]);
+const NAMED_ACTORS = new Set(["user", "tally", "import", "memory", "model"]);
 
 export function isActor(value: string): value is Actor {
   return NAMED_ACTORS.has(value) || /^rule:[\w-]+$/.test(value);

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { hasValidSession } from "@/lib/auth/session";
 import { getDb } from "@/lib/db";
 import { chat, ModelError, ModelNotConfiguredError, ModelUnavailableError } from "@/lib/model/client";
+import { evaluateModel } from "@/lib/model/evaluate";
 
 /**
  * A one-line round trip to the model. No financial data in it. May start
@@ -33,5 +34,22 @@ export async function testModel(): Promise<{ ok: true; message: string } | { err
       return { error: error.message };
     }
     return { error: "Unexpected error talking to the model" };
+  }
+}
+
+/**
+ * Scores the model on the owner's own categorized transactions. Stores
+ * only the numbers. Wakes the GPU if it's asleep, so it can take a few
+ * minutes; the Settings page allows for that (maxDuration).
+ */
+export async function evaluateOnHistory(): Promise<{ ok: true } | { error: string }> {
+  if (!(await hasValidSession())) throw new Error("Not signed in");
+  try {
+    await evaluateModel(getDb(), { deadline: Date.now() + 270_000 });
+    revalidatePath("/settings");
+    return { ok: true };
+  } catch (error) {
+    revalidatePath("/settings");
+    return { error: error instanceof Error ? error.message : "Evaluation failed" };
   }
 }

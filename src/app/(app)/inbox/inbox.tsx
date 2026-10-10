@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { filterOptions, type CategoryOption } from "@/lib/categorize/labels";
 import { formatCents } from "@/lib/money";
-import { categorize, createMerchantRule } from "./actions";
+import { askModel, categorize, createMerchantRule } from "./actions";
 
 export type InboxRow = {
   id: string;
@@ -18,6 +18,8 @@ export type InboxRow = {
   accountName: string;
   pending: boolean;
   suggestedCategoryId: string | null;
+  suggestionSource: "memory" | "model" | null;
+  suggestionConfidence: number | null;
 };
 
 const MAX_VISIBLE_OPTIONS = 8;
@@ -29,7 +31,39 @@ const MAX_VISIBLE_OPTIONS = 8;
 //   Enter        assign the highlighted category
 //   Shift+Enter  assign it AND create a rule for this merchant
 //   Esc          clear the filter
-export function Inbox({ rows: serverRows, options }: { rows: InboxRow[]; options: CategoryOption[] }) {
+function suggestionLabel(row: InboxRow, label: string | undefined) {
+  if (!label) return null;
+  if (row.suggestionSource === "model") return `Model suggests: ${label} (${Math.round((row.suggestionConfidence ?? 0) * 100)}%)`;
+  return `From your history: ${label}`;
+}
+
+function AskModel() {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const [result, setResult] = useState<Awaited<ReturnType<typeof askModel>> | null>(null);
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-sm">
+      <Button
+        size="sm"
+        variant="outline"
+        disabled={pending}
+        onClick={() =>
+          startTransition(async () => {
+            setResult(await askModel());
+            router.refresh();
+          })
+        }
+      >
+        {pending ? "Asking the model… (can take a few minutes to wake)" : "Ask the model"}
+      </Button>
+      {result ? (
+        "error" in result ? <span className="text-destructive">{result.error}</span> : <span className="text-muted-foreground">{result.message}</span>
+      ) : null}
+    </div>
+  );
+}
+
+export function Inbox({ rows: serverRows, options, modelConfigured }: { rows: InboxRow[]; options: CategoryOption[]; modelConfigured: boolean }) {
   const router = useRouter();
   // Rows are the server's list minus ones categorized optimistically here.
   // Derived rather than copied into state, so a refresh (after memory
@@ -221,44 +255,47 @@ export function Inbox({ rows: serverRows, options }: { rows: InboxRow[]; options
   );
 
   return (
-    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_18rem]">
-      {/* min-w-0: long raw descriptions must truncate, not widen the page. */}
-      <ul className="min-w-0 divide-y rounded-lg border" aria-label="Uncategorized transactions">
-        {rows.map((row, i) => (
-          <li key={row.id}>
-            <button
-              type="button"
-              onClick={() => {
-                select(i);
-                // Desktop: straight to typing. On phones the inline picker
-                // appears under the row instead; no keyboard pop-up.
-                if (window.matchMedia("(min-width: 768px)").matches) inputRef.current?.focus();
-              }}
-              className={`flex w-full min-w-0 items-start justify-between gap-3 px-3 py-2 text-left text-sm ${i === selected ? "bg-accent" : ""}`}
-              aria-current={i === selected}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{row.merchant ?? row.description}</span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {row.postedOn} · {row.accountName}
-                  {row.pending ? " · pending" : ""} · {row.description}
-                </span>
-                {row.suggestedCategoryId ? (
+    <div className="space-y-3">
+      {modelConfigured ? <AskModel /> : null}
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_18rem]">
+        {/* min-w-0: long raw descriptions must truncate, not widen the page. */}
+        <ul className="min-w-0 divide-y rounded-lg border" aria-label="Uncategorized transactions">
+          {rows.map((row, i) => (
+            <li key={row.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  select(i);
+                  // Desktop: straight to typing. On phones the inline picker
+                  // appears under the row instead; no keyboard pop-up.
+                  if (window.matchMedia("(min-width: 768px)").matches) inputRef.current?.focus();
+                }}
+                className={`flex w-full min-w-0 items-start justify-between gap-3 px-3 py-2 text-left text-sm ${i === selected ? "bg-accent" : ""}`}
+                aria-current={i === selected}
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{row.merchant ?? row.description}</span>
                   <span className="block truncate text-xs text-muted-foreground">
-                    Suggested: {labelOf.get(row.suggestedCategoryId)}
+                    {row.postedOn} · {row.accountName}
+                    {row.pending ? " · pending" : ""} · {row.description}
                   </span>
-                ) : null}
-              </span>
-              <span className={`shrink-0 tabular-nums ${row.amountCents > 0 ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
-                {formatCents(row.amountCents)}
-              </span>
-            </button>
-            {i === selected ? <div className="border-t bg-accent/40 p-3 md:hidden">{picker("inline")}</div> : null}
-          </li>
-        ))}
-      </ul>
+                  {row.suggestedCategoryId ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {suggestionLabel(row, labelOf.get(row.suggestedCategoryId))}
+                    </span>
+                  ) : null}
+                </span>
+                <span className={`shrink-0 tabular-nums ${row.amountCents > 0 ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
+                  {formatCents(row.amountCents)}
+                </span>
+              </button>
+              {i === selected ? <div className="border-t bg-accent/40 p-3 md:hidden">{picker("inline")}</div> : null}
+            </li>
+          ))}
+        </ul>
 
-      <div className="hidden md:sticky md:top-4 md:block md:self-start">{picker("panel")}</div>
+        <div className="hidden md:sticky md:top-4 md:block md:self-start">{picker("panel")}</div>
+      </div>
     </div>
   );
 }

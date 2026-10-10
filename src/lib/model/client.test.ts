@@ -119,3 +119,4 @@ describe("chat", () => {
     expect(await db.select().from(modelCalls)).toHaveLength(0);
   });
 });
+

@@ -11,6 +11,9 @@ export type ModelStatus = {
   // The host only (never the key), so the owner can see which deployment.
   host: string | null;
   recent: { calls: number; failures: number; medianLatencyMs: number | null; coldStarts: number; lastAt: Date | null };
+  // The most recent failure among those calls, so "1 failed" comes with a
+  // reason (it's our own short description, never server output).
+  lastFailure: { at: Date; feature: string; error: string } | null;
 };
 
 export async function getModelStatus(db: Db): Promise<ModelStatus> {
@@ -26,6 +29,7 @@ export async function getModelStatus(db: Db): Promise<ModelStatus> {
   }
   const rows = await db.select().from(modelCalls).orderBy(desc(modelCalls.startedAt)).limit(50);
   const ok = rows.filter((r) => r.status === "ok").map((r) => r.latencyMs).sort((a, b) => a - b);
+  const failed = rows.find((r) => r.status !== "ok");
   return {
     configured,
     host,
@@ -36,5 +40,6 @@ export async function getModelStatus(db: Db): Promise<ModelStatus> {
       coldStarts: rows.filter((r) => r.coldStartRetries > 0).length,
       lastAt: rows[0]?.startedAt ?? null,
     },
+    lastFailure: failed ? { at: failed.startedAt, feature: failed.feature, error: failed.error ?? failed.status } : null,
   };
 }

@@ -64,7 +64,17 @@ vllm_image = (
     # which predates Gemma 4, and vLLM dies at startup ("Transformers does
     # not recognize this architecture"). Bump these together, deliberately.
     .uv_pip_install("vllm==0.21.0", "transformers==5.8.1", "xgrammar==0.2.1")
-    .env({"HF_XET_HIGH_PERFORMANCE": "1"})
+    .env(
+        {
+            "HF_XET_HIGH_PERFORMANCE": "1",
+            # vLLM has no tuned fused-MoE config for this model on an A100,
+            # so Triton JIT-compiles those kernels during startup — ~2¼
+            # minutes (measured Oct 2026). Its default cache (~/.triton) is
+            # on the container's throwaway disk, so that happened on every
+            # cold start; on the persistent volume it happens once.
+            "TRITON_CACHE_DIR": "/root/.cache/vllm/triton",
+        }
+    )
 )
 
 # Weights and compiled artifacts persist across cold starts, so only the

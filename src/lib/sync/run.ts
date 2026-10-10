@@ -92,8 +92,10 @@ export async function syncConnection(
     if (result.status !== "applied") throw new Error(`Import was ${result.status}, expected applied`);
     const counts = result.output as { inserted: number; updated: number; removed: number };
 
-    // Categorize what just arrived. A failure here must not fail the sync:
-    // the data is in, and anything left uncategorized waits in the inbox.
+    // Categorize what just arrived with rules and memory. The model isn't
+    // part of a sync — it runs from its own cron a few minutes later
+    // (/api/cron/classify), after the sync has woken it. A failure here
+    // must not fail the sync: the data is in, and the rest waits in the inbox.
     let categorized = 0;
     const messages = [...snapshot.messages];
     try {

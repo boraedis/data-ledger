@@ -5,6 +5,7 @@ import {
   boolean,
   customType,
   date,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -407,3 +408,48 @@ export const modelCalls = pgTable(
   },
   (t) => [index("model_calls_started_idx").on(t.startedAt)],
 );
+
+// ---------------------------------------------------------------------------
+// Model categorization (#6 phase 3).
+// ---------------------------------------------------------------------------
+
+// The model's opinion of an uncategorized transaction. Kept separately from
+// the transaction (not as columns on it) so writing a suggestion never
+// touches the transaction row — and so never blocks undoing the owner's own
+// edits to it. A row with a null category means "the model looked and had
+// no answer"; either way the transaction isn't sent to the model again.
+export const categorySuggestions = pgTable(
+  "category_suggestions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    transactionId: uuid("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    // Set null rather than restrict: a stale suggestion must never stop the
+    // owner deleting a category.
+    categoryId: uuid("category_id").references(() => categories.id, { onDelete: "set null" }),
+    confidence: doublePrecision("confidence").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("category_suggestions_transaction_idx").on(t.transactionId)],
+);
+
+// Results of evaluating the model on the owner's own categorized history.
+// Numbers only — which transactions were sampled, and what the model said
+// about them, are never stored (AGENTS.md: evals from real history stay in
+// the database, and even here only as aggregates).
+export type ThresholdStat = { threshold: number; applied: number; correct: number };
+
+export const modelEvals = pgTable("model_evals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  sampleSize: integer("sample_size").notNull(),
+  // At any confidence: the model's top answer was right / wrong / it said "none".
+  correct: integer("correct").notNull(),
+  wrong: integer("wrong").notNull(),
+  abstained: integer("abstained").notNull(),
+  // How many would be auto-applied at each threshold, and how many of those
+  // would be right.
+  thresholds: jsonb("thresholds").$type<ThresholdStat[]>().notNull(),
+  latencyMs: integer("latency_ms").notNull(),
+});

@@ -148,6 +148,7 @@ const NOUNS: Record<string, string> = {
   transaction_splits: "split part",
   tags: "tag",
   transaction_tags: "tag",
+  category_suggestions: "suggestion",
 };
 
 /**
