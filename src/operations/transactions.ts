@@ -1,6 +1,6 @@
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, categories, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { accounts, categories, categorySuggestions, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { merchantMemory } from "@/lib/categorize/match";
 import type { Db } from "@/db/types";
@@ -265,11 +265,13 @@ export const spendingLines = defineRead({
 
 export const applyCategories = defineWrite({
   name: "transactions.applyCategories",
-  description: "Pipeline only: categorize a batch of uncategorized transactions (one rule's or merchant memory's results).",
-  // The categorization pipeline runs this once per rule (as rule:<id>) and
-  // once for merchant memory, so Activity shows "Rule X categorized 23
-  // transactions" as one undoable entry rather than 23.
-  allowedActors: ["rule:*", "memory"],
+  description:
+    "Pipeline only: categorize a batch of uncategorized transactions (one rule's, merchant memory's or the model's results).",
+  // The categorization pipeline runs this once per rule (as rule:<id>), once
+  // for merchant memory and once for the model's confident answers, so
+  // Activity shows "Rule X categorized 23 transactions" as one undoable
+  // entry rather than 23.
+  allowedActors: ["rule:*", "memory", "model"],
   input: z.object({
     assignments: z.array(z.object({ transactionId: z.uuid(), categoryId: z.uuid() })).min(1).max(5000),
   }),
@@ -288,6 +290,31 @@ export const applyCategories = defineWrite({
       applied++;
     }
     return { applied };
+  },
+});
+
+export const recordSuggestions = defineWrite({
+  name: "transactions.recordSuggestions",
+  description: "Pipeline only: record the model's category suggestions (or that it had none) for transactions.",
+  allowedActors: ["model"],
+  input: z.object({
+    suggestions: z
+      .array(z.object({ transactionId: z.uuid(), categoryId: z.uuid().nullable(), confidence: z.number().min(0).max(1) }))
+      .min(1)
+      .max(1000),
+  }),
+  apply: async (ctx, { suggestions }) => {
+    const existing = await ctx.db
+      .select({ id: categorySuggestions.id, transactionId: categorySuggestions.transactionId })
+      .from(categorySuggestions)
+      .where(inArray(categorySuggestions.transactionId, suggestions.map((s) => s.transactionId)));
+    const byTxn = new Map(existing.map((e) => [e.transactionId, e.id]));
+    for (const s of suggestions) {
+      const id = byTxn.get(s.transactionId);
+      if (id) await ctx.update(categorySuggestions, id, { categoryId: s.categoryId, confidence: s.confidence, createdAt: new Date() });
+      else await ctx.insert(categorySuggestions, s);
+    }
+    return { recorded: suggestions.length };
   },
 });
 
@@ -315,7 +342,7 @@ export const listInbox = defineRead({
   name: "transactions.inbox",
   description:
     "Uncategorized transactions in accounts that count toward budgets, newest first, each with a suggested " +
-    "category from merchant memory when the merchant's history is mixed.",
+    "category: from merchant memory when the merchant's history is mixed, else from the model when it had one.",
   input: z.object({ limit: z.number().int().min(1).max(500).default(100) }),
   run: async (db, { limit }) => {
     const rows = await db
@@ -346,9 +373,25 @@ export const listInbox = defineRead({
     const byMerchant = new Map<string, string[]>();
     for (const h of history) byMerchant.set(h.merchant!, [...(byMerchant.get(h.merchant!) ?? []), h.categoryId!]);
 
+    const modelRows = rows.length
+      ? await db
+          .select({ transactionId: categorySuggestions.transactionId, categoryId: categorySuggestions.categoryId, confidence: categorySuggestions.confidence })
+          .from(categorySuggestions)
+          .where(inArray(categorySuggestions.transactionId, rows.map((r) => r.id)))
+      : [];
+    const modelByTxn = new Map(modelRows.map((m) => [m.transactionId, m]));
+
     return rows.map((row) => {
+      // The owner's own history beats the model's guess.
       const verdict = row.merchant ? merchantMemory(byMerchant.get(row.merchant) ?? []) : { kind: "none" as const };
-      return { ...row, suggestedCategoryId: verdict.kind === "none" ? null : verdict.categoryId };
+      if (verdict.kind !== "none") {
+        return { ...row, suggestedCategoryId: verdict.categoryId, suggestionSource: "memory" as const, suggestionConfidence: null };
+      }
+      const model = modelByTxn.get(row.id);
+      if (model?.categoryId) {
+        return { ...row, suggestedCategoryId: model.categoryId, suggestionSource: "model" as const, suggestionConfidence: model.confidence };
+      }
+      return { ...row, suggestedCategoryId: null, suggestionSource: null, suggestionConfidence: null };
     });
   },
 });

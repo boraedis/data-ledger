@@ -64,6 +64,13 @@
       "when": 1791593509181,
       "tag": "0008_model_calls",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1791644928419,
+      "tag": "0009_model_classifier",
+      "breakpoints": true
     }
   ]
 }

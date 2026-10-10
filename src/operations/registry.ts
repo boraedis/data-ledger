@@ -5,12 +5,13 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { accounts, categories, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { accounts, categories, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
   getTransaction,
   listInbox,
+  recordSuggestions,
   listTransactions,
   setExperienceDate,
   setTransactionCategory,
@@ -45,6 +46,7 @@ export const operations: Operation[] = [
   renameTag,
   deleteTag,
   applyCategories,
+  recordSuggestions,
   backfillMerchants,
   applySnapshot,
 ] as Operation[];
@@ -76,4 +78,5 @@ export const trackedTables = {
   transaction_splits: transactionSplits,
   tags,
   transaction_tags: transactionTags,
+  category_suggestions: categorySuggestions,
 } as const;

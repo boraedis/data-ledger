@@ -47,7 +47,7 @@ If a task seems to require real data in any of these places, stop and ask.
   nothing writes to the database around them. Name database handles `db`
   or `tx` — the lint rule that enforces this keys off those names.
 - **Every write is logged with provenance** — actor (`user`, `rule:<id>`,
-  `memory`, `tally`, `import`), reason, and enough to undo it.
+  `memory`, `model`, `tally`, `import`), reason, and enough to undo it.
 - **Tally proposes; the user approves** writes, unless an action has been
   explicitly promoted to auto-apply.
 - **One self-hosted model, no AI companies.** Every AI feature goes

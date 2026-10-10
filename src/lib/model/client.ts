@@ -30,6 +30,10 @@ export type ChatRequest = {
   temperature?: number;
   maxTokens?: number;
   mode?: "background" | "interactive";
+  // Epoch ms by which the call must be over, whatever the mode's budget —
+  // for callers inside a time-limited function (the nightly cron) that
+  // must stop in time to record what they did.
+  deadline?: number;
 };
 
 export type ChatResult = {
@@ -79,7 +83,10 @@ export async function chat(request: ChatRequest, deps: ClientDeps = {}): Promise
   const fetchImpl = deps.fetch ?? fetch;
   const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const now = deps.now ?? Date.now;
-  const budget = BUDGETS[request.mode ?? "background"];
+  const base = BUDGETS[request.mode ?? "background"];
+  const remaining = request.deadline ? request.deadline - (deps.now ?? Date.now)() : Infinity;
+  if (remaining <= 0) throw new ModelUnavailableError("No time left before the deadline");
+  const budget = { coldStartMs: Math.min(base.coldStartMs, remaining), requestMs: Math.min(base.requestMs, remaining) };
 
   const body = JSON.stringify({
     model: config.model,

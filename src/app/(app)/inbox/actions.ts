@@ -55,3 +55,24 @@ export async function createMerchantRule(merchant: string, categoryId: string): 
     return failure(error);
   }
 }
+
+/**
+ * Sends what rules and memory couldn't handle to the model, as many
+ * batches as fit in this request's time (a cold start alone is ~3.5 min).
+ * Confident answers are applied; the rest come back as suggestions.
+ */
+export async function askModel(): Promise<{ error: string } | { ok: true; message: string }> {
+  try {
+    const result = await asOwner((db) =>
+      runCategorization(db, { model: { mode: "interactive", deadline: Date.now() + 270_000, limit: 120 } }),
+    );
+    revalidatePath("/inbox");
+    if (result.modelError && result.modelSeen === 0) return { error: result.modelError };
+    const parts = [`The model looked at ${result.modelSeen}`, `categorized ${result.byModel} confidently`];
+    if (result.modelSeen > result.byModel) parts.push(`left ${result.modelSeen - result.byModel} as suggestions`);
+    if (result.modelError) parts.push(`stopped early: ${result.modelError}`);
+    return { ok: true, message: parts.join(", ") + "." };
+  } catch (error) {
+    return failure(error);
+  }
+}

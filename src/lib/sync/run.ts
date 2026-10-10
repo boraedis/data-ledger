@@ -4,7 +4,7 @@ import type { Db } from "@/db/types";
 import { connectorFor as defaultConnectorFor } from "@/lib/connectors";
 import { MAX_WINDOW_DAYS } from "@/lib/connectors/simplefin";
 import { ConnectorAuthError, type Connector } from "@/lib/connectors/types";
-import { backfillMerchantsIfNeeded, runCategorization } from "@/lib/categorize/pipeline";
+import { backfillMerchantsIfNeeded, runCategorization, type ModelStepOptions } from "@/lib/categorize/pipeline";
 import { execute } from "@/operations/runtime";
 
 // Runs one sync for one connection: checks the rate budget, fetches from
@@ -49,7 +49,15 @@ export async function syncConnection(
     trigger,
     now = new Date(),
     connectorFor = defaultConnectorFor,
-  }: { trigger: SyncTrigger; now?: Date; connectorFor?: (c: typeof connections.$inferSelect) => Connector },
+    model,
+  }: {
+    trigger: SyncTrigger;
+    now?: Date;
+    connectorFor?: (c: typeof connections.$inferSelect) => Connector;
+    // The model step's options; only the nightly cron passes them, so a
+    // "Sync now" click never waits on a GPU cold start.
+    model?: ModelStepOptions;
+  },
 ): Promise<SyncResult> {
   const [connection] = await db.select().from(connections).where(eq(connections.id, connectionId));
   if (!connection) throw new Error(`Connection ${connectionId} not found`);
@@ -98,8 +106,11 @@ export async function syncConnection(
     const messages = [...snapshot.messages];
     try {
       await backfillMerchantsIfNeeded(db);
-      const result = await runCategorization(db);
-      categorized = result.byRules + result.byMemory;
+      const result = await runCategorization(db, { model: model ?? false });
+      categorized = result.byRules + result.byMemory + result.byModel;
+      if (result.modelError) {
+        messages.push({ code: "app.model", message: `The model didn't finish categorizing (${result.modelError}); the rest are in the inbox.` });
+      }
     } catch (error) {
       console.error("Categorization after sync failed", error);
       messages.push({ code: "app.categorize", message: "Automatic categorization failed this time; new transactions are in the inbox." });
@@ -140,11 +151,11 @@ export async function syncConnection(
   }
 }
 
-export async function syncAllConnections(db: Db, trigger: SyncTrigger) {
+export async function syncAllConnections(db: Db, trigger: SyncTrigger, { model }: { model?: ModelStepOptions } = {}) {
   const all = await db.select({ id: connections.id }).from(connections);
   const results: Record<string, SyncResult> = {};
   // Sequential: a handful of connections at most, and one at a time keeps
   // the database pool to a single connection.
-  for (const { id } of all) results[id] = await syncConnection(db, id, { trigger });
+  for (const { id } of all) results[id] = await syncConnection(db, id, { trigger, model });
   return results;
 }

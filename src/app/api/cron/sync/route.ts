@@ -20,7 +20,11 @@ function authorized(request: Request): boolean {
 
 export async function GET(request: Request) {
   if (!authorized(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  const results = await withTransactionalDb((db) => syncAllConnections(db, "cron"));
+  // The model step works against this function's own time limit: a cold
+  // start alone takes ~3.5 minutes, so it does what fits and leaves the
+  // rest for the inbox (and tomorrow).
+  const deadline = Date.now() + (maxDuration - 20) * 1000;
+  const results = await withTransactionalDb((db) => syncAllConnections(db, "cron", { model: { deadline } }));
   // Statuses and counts only; errors stay in sync_runs, not in Vercel's
   // request logs.
   return Response.json({

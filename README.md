@@ -85,9 +85,29 @@ never overwrites a category that's already set:
 2. **Merchant memory** — if this merchant's last few categorizations
    (up to 5) all agree, repeat it; one past categorization is enough. If
    they disagree, it only *suggests* in the inbox.
-3. **Self-hosted model** with a confidence threshold — not built yet (#6,
-   phase 3).
+3. **The model** (see "Model service"), only for what rules and memory
+   left — and memory's mixed-history cases stay the owner's call. Answers
+   at or above `MODEL_AUTO_APPLY_THRESHOLD` (default 90%) are applied as
+   actor `model`, one undoable batch; the rest become **suggestions**,
+   pre-selected in the inbox with the model's confidence. Each transaction
+   goes to the model once (even "don't know" is recorded), so it's never
+   paid for twice.
 4. Everything else waits in the **review inbox**.
+
+The model step runs only when asked: from the **nightly sync**, within the
+cron function's own time limit (a cold start is part of that, so it does
+what fits and leaves the rest for tomorrow), and from the inbox's **Ask
+the model** button. Inbox corrections and "Sync now" never wake the GPU.
+If the model is unreachable or out of time, nothing breaks — those
+transactions stay in the inbox and are tried next time.
+
+**How good is it on *your* data?** Settings → Model → **Evaluate on my
+history** asks the model about up to 30 transactions you've already
+categorized (that it has never seen), hiding the answer, and stores only
+the scores: right / wrong / "don't know", and for each threshold how many
+would be auto-applied and how many of those would be right. It also names
+the lowest threshold with no wrong auto-applied answer, to set
+`MODEL_AUTO_APPLY_THRESHOLD` from.
 
 Rules and memory key on a **merchant name** derived from the raw
 description (`src/lib/categorize/merchant.ts`): processor prefixes, store
@@ -244,6 +264,7 @@ local Postgres works the same way.
 | `MODEL_BASE_URL` | optional | The model's OpenAI-compatible base URL, ending in `/v1`. Unset = no AI features; everything else works |
 | `MODEL_API_KEY` | with the above | The key the model server requires (same value as its `VLLM_API_KEY`) |
 | `MODEL_NAME` | optional | Model name to request; defaults to `ledger`, the name `model/serve.py` serves under |
+| `MODEL_AUTO_APPLY_THRESHOLD` | optional | Confidence (0–1) at or above which the model's category is applied rather than suggested; default 0.9 |
 
 ### Authentication
 
