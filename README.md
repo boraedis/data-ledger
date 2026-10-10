@@ -397,7 +397,7 @@ behind an OpenAI-compatible API, in a Modal container that scales to zero
 enforces it; the server refuses to start without one). Model weights and
 compiled kernels live on Modal volumes, so only the first-ever boot
 downloads them. The first request after idle meets a **cold start** —
-typically tens of seconds to a couple of minutes while the GPU boots.
+about 3½ minutes on the A100 with weights cached (measured Oct 2026).
 
 **Owner setup:**
 
@@ -425,7 +425,7 @@ just a different `MODEL_BASE_URL`.
 own HTTP client.
 
 - **Cold starts are expected:** 502/503/504 are retried with backoff — up
-  to 10 minutes for background work, 2½ for interactive — then reported as
+  to 10 minutes for background work, 5 for interactive — then reported as
   "still starting up".
 - **Minimal data is enforced here, not per feature:** transactions reach
   the model only through `modelTransaction()` (description, amount, date),

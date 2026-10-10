@@ -38,9 +38,13 @@ REASONING_PARSER = "gemma4"
 # What the app sends as `model`, independent of which weights are behind it.
 SERVED_NAME = "ledger"
 
-# 26B parameters in bf16 is ~52 GB of weights; an 80 GB card leaves room
-# for the KV cache at the context length below.
-GPU = "H100"
+# 26B parameters in bf16 is ~48 GiB of weights, so it needs an 80 GB card
+# for weights plus KV cache. A100-80GB rather than H100: $2.50 vs $3.95 an
+# hour on Modal (Oct 2026), same weights and precision, so no quality
+# change — the GPU is slower per token, which barely matters at one user's
+# volume. The next step down (L40S, 48 GB, $1.95) would need an FP8-
+# quantized model: a real model change, to be re-evaluated first.
+GPU = "A100-80GB"
 MAX_MODEL_LEN = 32768
 
 MINUTES = 60  # seconds
