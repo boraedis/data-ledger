@@ -1,6 +1,13 @@
 import { and, eq, gte, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, countsTowardBudgetsByDefault, transactions, type AccountKind } from "@/db/schema";
+import {
+  accounts,
+  countsTowardBudgetsByDefault,
+  transactionSplits,
+  transactionTags,
+  transactions,
+  type AccountKind,
+} from "@/db/schema";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { defineWrite } from "@/operations/define";
 
@@ -175,7 +182,8 @@ export const applySnapshot = defineWrite({
     // row just stops appearing. Any pending row inside this window that the
     // snapshot no longer has is gone; if a newly posted transaction looks
     // like it (same account and amount, within a few days), it inherits the
-    // pending row's category so the owner doesn't categorize it twice.
+    // pending row's category, split, tags and experience date, so the owner
+    // doesn't redo any of it.
     const snapshotAccountIds = input.accounts
       .map((a) => accountIdByExternal.get(a.externalId))
       .filter((id): id is string => Boolean(id));
@@ -194,18 +202,44 @@ export const applySnapshot = defineWrite({
 
     for (const stale of pendingInWindow) {
       if (seen.has(`${stale.accountId}|${stale.externalId}`)) continue;
-      if (stale.categoryId) {
-        const match = insertedPosted.find(
-          (t) =>
-            t.accountId === stale.accountId &&
-            t.amountCents === stale.amountCents &&
-            daysBetween(t.postedOn, stale.postedOn) <= PENDING_MATCH_DAYS,
-        );
-        if (match) {
-          await ctx.update(transactions, match.id, { categoryId: stale.categoryId });
-          insertedPosted.splice(insertedPosted.indexOf(match), 1);
+      const [parts, links] = await Promise.all([
+        ctx.db.select().from(transactionSplits).where(eq(transactionSplits.transactionId, stale.id)).orderBy(transactionSplits.position),
+        ctx.db.select().from(transactionTags).where(eq(transactionTags.transactionId, stale.id)),
+      ]);
+      const ownerWork = stale.categoryId || stale.isSplit || stale.experiencedOn || links.length;
+      const match = ownerWork
+        ? insertedPosted.find(
+            (t) =>
+              t.accountId === stale.accountId &&
+              t.amountCents === stale.amountCents &&
+              daysBetween(t.postedOn, stale.postedOn) <= PENDING_MATCH_DAYS,
+          )
+        : undefined;
+      if (match) {
+        // Everything the owner did to the pending row moves to its posted
+        // version: category or split, experience date, and tags.
+        await ctx.update(transactions, match.id, {
+          categoryId: stale.categoryId,
+          isSplit: stale.isSplit,
+          experiencedOn: stale.experiencedOn,
+        });
+        for (const part of parts) {
+          await ctx.insert(transactionSplits, {
+            transactionId: match.id,
+            amountCents: part.amountCents,
+            categoryId: part.categoryId,
+            note: part.note,
+            position: part.position,
+          });
         }
+        for (const link of links) await ctx.insert(transactionTags, { transactionId: match.id, tagId: link.tagId });
+        insertedPosted.splice(insertedPosted.indexOf(match), 1);
       }
+      // Remove dependents through tracked writes before the row itself:
+      // the FK cascade would delete them invisibly, and undoing this sync
+      // couldn't bring them back.
+      for (const part of parts) await ctx.remove(transactionSplits, part.id);
+      for (const link of links) await ctx.remove(transactionTags, link.id);
       await ctx.remove(transactions, stale.id);
       counts.removed++;
     }

@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import {
   type AnyPgColumn,
   bigint,
@@ -226,6 +227,14 @@ export const transactions = pgTable(
     // (src/lib/categorize/merchant.ts). What rules and merchant memory key
     // on. Recomputable at any time; the raw fields above are the truth.
     merchant: text("merchant"),
+    // True when the transaction is divided into transaction_splits, each
+    // with its own category; categoryId is then null. A split transaction
+    // counts as categorized (it's out of the inbox and the pipeline).
+    isSplit: boolean("is_split").notNull().default(false),
+    // When the spending actually "happened" for budgeting, if not when it
+    // posted: concert tickets bought in March for a show in July. Budgets
+    // use experiencedOn ?? postedOn.
+    experiencedOn: date("experienced_on"),
     categoryId: uuid("category_id").references(() => categories.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -233,6 +242,63 @@ export const transactions = pgTable(
     index("transactions_posted_on_idx").on(t.postedOn),
     index("transactions_merchant_idx").on(t.merchant),
     uniqueIndex("transactions_account_external_idx").on(t.accountId, t.externalId),
+  ],
+);
+
+// ---------------------------------------------------------------------------
+// Splits and tags (#6, phase 2).
+// ---------------------------------------------------------------------------
+
+// The parts of a split transaction. They always sum exactly to the
+// transaction's amount, with the same sign (enforced by transactions.split).
+export const transactionSplits = pgTable(
+  "transaction_splits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Cascade is a backstop only: every code path that removes a
+    // transaction removes its splits first, through tracked writes, so
+    // undo can restore them.
+    transactionId: uuid("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+    categoryId: uuid("category_id")
+      .notNull()
+      .references(() => categories.id, { onDelete: "restrict" }),
+    note: text("note"),
+    position: integer("position").notNull().default(0),
+  },
+  (t) => [index("transaction_splits_transaction_idx").on(t.transactionId)],
+);
+
+// Free-form labels, orthogonal to categories ("vacation-2026",
+// "tax-deductible", "for Alex"). Unique ignoring case.
+export const tags = pgTable(
+  "tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("tags_name_lower_idx").on(sql`lower(${t.name})`)],
+);
+
+// A plain id primary key (not a composite) because tracked writes, and so
+// undo, need one; the unique index is the real identity.
+export const transactionTags = pgTable(
+  "transaction_tags",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    transactionId: uuid("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    uniqueIndex("transaction_tags_unique_idx").on(t.transactionId, t.tagId),
+    index("transaction_tags_tag_idx").on(t.tagId),
   ],
 );
 

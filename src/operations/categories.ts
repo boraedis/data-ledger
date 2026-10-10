@@ -1,6 +1,6 @@
 import { and, count, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { categories, rules, transactions } from "@/db/schema";
+import { categories, rules, transactionSplits, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { defineRead, defineWrite } from "@/operations/define";
 
@@ -104,11 +104,13 @@ export const deleteCategory = defineWrite({
       ctx.db.select({ value: count() }).from(transactions).where(eq(transactions.categoryId, categoryId)),
       ctx.db.select({ value: count() }).from(rules).where(eq(rules.categoryId, categoryId)),
       ctx.db.select({ value: count() }).from(categories).where(eq(categories.parentId, categoryId)),
+      ctx.db.select({ value: count() }).from(transactionSplits).where(eq(transactionSplits.categoryId, categoryId)),
     ]);
-    const [txns, ruleCount, children] = usage.map(([{ value }]) => value);
-    if (txns || ruleCount || children) {
+    const [txns, ruleCount, children, splitParts] = usage.map(([{ value }]) => value);
+    if (txns || ruleCount || children || splitParts) {
       throw new Error(
-        `Still in use: ${txns} transactions, ${ruleCount} rules, ${children} subcategories. Recategorize or move them first.`,
+        `Still in use: ${txns} transactions, ${splitParts} split parts, ${ruleCount} rules, ${children} subcategories. ` +
+          "Recategorize or move them first.",
       );
     }
     await ctx.remove(categories, categoryId);

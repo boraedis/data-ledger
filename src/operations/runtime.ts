@@ -140,6 +140,16 @@ export async function rejectProposal(db: Db, commandId: string, decidedBy: Actor
 
 export class UndoConflictError extends OperationError {}
 
+const NOUNS: Record<string, string> = {
+  transactions: "transaction",
+  accounts: "account",
+  categories: "category",
+  rules: "rule",
+  transaction_splits: "split part",
+  tags: "tag",
+  transaction_tags: "tag",
+};
+
 /**
  * Reverses an applied write by restoring every row it touched, in reverse
  * order. Refuses if any of those rows has changed since — undoing over a
@@ -158,9 +168,18 @@ export async function undoCommand(db: Db, commandId: string, { actor = "user", r
       return table;
     };
 
-    for (const change of row.changes) {
+    // Compare each row with its *final* state in this command. One command
+    // can touch a row more than once (the sync inserts a posted transaction,
+    // then updates it with a pending row's split), and only the last
+    // change's `after` is what the row should look like now.
+    const finalState = new Map<string, RowChange>();
+    for (const change of row.changes) finalState.set(`${change.table}|${change.id}`, change);
+    for (const change of finalState.values()) {
       if (!sameRow(await currentRow(tx, tableFor(change), change.id), change.after)) {
-        throw new UndoConflictError(`${change.table} ${change.id} has changed since this command; undo it from the newest change first`);
+        // Shown on the Activity page, so in words rather than a table name
+        // and a uuid.
+        const noun = NOUNS[change.table] ?? "record";
+        throw new UndoConflictError(`A ${noun} this changed has been edited since. Undo the newer change to it first.`);
       }
     }
 

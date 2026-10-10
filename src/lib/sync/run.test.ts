@@ -1,7 +1,16 @@
 import { randomBytes } from "crypto";
-import { count, eq } from "drizzle-orm";
+import { count, desc, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { accounts, categories, commandLog, connections, syncRuns, transactions } from "@/db/schema";
+import {
+  accounts,
+  categories,
+  commandLog,
+  connections,
+  syncRuns,
+  transactionSplits,
+  transactionTags,
+  transactions,
+} from "@/db/schema";
 import type { Db } from "@/db/types";
 import { encryptSecret } from "@/lib/crypto";
 import { ConnectorAuthError, type ConnectorSnapshot } from "@/lib/connectors/types";
@@ -143,6 +152,40 @@ describe("syncConnection", () => {
     const all = await rows();
     expect(all).toHaveLength(1);
     expect(all[0]).toMatchObject({ externalId: "X9", pending: false, categoryId: cat.id });
+  });
+
+  it("carries a pending row's split, tags and experience date to its posted version, undoably", async () => {
+    snapshot.transactions = [txn("P1", { pending: true, postedOn: "2026-06-27", amountCents: -1000 })];
+    await sync();
+    const [food] = await db.insert(categories).values({ name: "Food", kind: "expense" }).returning();
+    const [fun] = await db.insert(categories).values({ name: "Fun", kind: "expense" }).returning();
+    const [pending] = await rows();
+    const as = (operation: string, input: Record<string, unknown>) =>
+      execute(db, { operation, input: { transactionId: pending.id, ...input }, actor: "user", reason: "x" });
+    await as("transactions.split", {
+      parts: [
+        { amountCents: -600, categoryId: food.id },
+        { amountCents: -400, categoryId: fun.id, note: "arcade" },
+      ],
+    });
+    await as("transactions.setTags", { tags: ["trip"] });
+    await as("transactions.setExperienceDate", { experiencedOn: "2026-07-04" });
+
+    snapshot.transactions = [txn("X9", { postedOn: "2026-06-29", amountCents: -1000 })];
+    await sync(new Date(now.getTime() + 86_400_000));
+    const [posted] = await rows();
+    expect(posted).toMatchObject({ externalId: "X9", isSplit: true, experiencedOn: "2026-07-04" });
+    const parts = await db.select().from(transactionSplits).where(eq(transactionSplits.transactionId, posted.id));
+    expect(parts.map((p) => [p.amountCents, p.note])).toEqual([[-600, null], [-400, "arcade"]]);
+    expect(await db.select().from(transactionTags).where(eq(transactionTags.transactionId, posted.id))).toHaveLength(1);
+
+    // Undoing that sync brings the pending row back with everything on it.
+    const [syncEntry] = await db.select().from(commandLog).where(eq(commandLog.operation, "import.applySnapshot")).orderBy(desc(commandLog.createdAt)).limit(1);
+    await undoCommand(db, syncEntry.id);
+    const restored = await rows();
+    expect(restored.map((r) => r.externalId)).toEqual(["P1"]);
+    expect(await db.select().from(transactionSplits).where(eq(transactionSplits.transactionId, pending.id))).toHaveLength(2);
+    expect(await db.select().from(transactionTags).where(eq(transactionTags.transactionId, pending.id))).toHaveLength(1);
   });
 
   it("only judges pending transactions inside the fetched window", async () => {

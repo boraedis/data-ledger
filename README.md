@@ -109,6 +109,23 @@ a transaction and pick from the list that opens under it.
 rules managed on the same page (`/categories`). A category in use can't be
 deleted — recategorize or move what uses it first.
 
+**Splits, tags and experience dates** live on each transaction's page
+(`/transactions/<id>`, reached from the Transactions list or the inbox):
+
+- **Split** a transaction into 2–20 parts, each with its own category and
+  note. Parts are integer cents with the transaction's sign and must add
+  up exactly. A split counts as categorized; choosing a single category
+  replaces it.
+- **Tags** are free-form labels alongside categories ("vacation-2026",
+  "tax-deductible"), matched ignoring case, created as you type them.
+- **Experience date** is when a purchase was actually *for* — tickets
+  bought in March for July. Budgets use it instead of the posted date.
+
+All three carry over when a pending transaction posts under a new ID. The
+definition budgets build on is `transactions.spendingLines`: one line per
+categorized transaction or split part, dated by experience date when set,
+budget accounts only by default.
+
 Only the description, amount and date are ever sent to a model — never
 account numbers, balances or connection tokens — and that model is always
 self-hosted (see below).
