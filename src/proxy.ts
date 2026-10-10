@@ -10,6 +10,7 @@ const PUBLIC_PATHS = new Set([
   // Called by Vercel Cron, which has no session. The route itself rejects
   // anything without the CRON_SECRET bearer token.
   "/api/cron/sync",
+  "/api/cron/classify",
 ]);
 const PUBLIC_PREFIXES = ["/api/auth/"];
 
@@ -24,6 +25,9 @@ const PUBLIC_PREFIXES = ["/api/auth/"];
 function canonicalRedirect(request: NextRequest): URL | null {
   const origin = process.env.WEBAUTHN_ORIGIN;
   if (process.env.VERCEL_ENV !== "production" || !origin) return null;
+  // Cron and chain calls carry their own secret and may arrive on a
+  // deployment URL; a redirect there could mean the nightly job never runs.
+  if (request.nextUrl.pathname.startsWith("/api/cron/")) return null;
   const canonical = new URL(origin);
   if (request.nextUrl.host === canonical.host) return null;
   return new URL(request.nextUrl.pathname + request.nextUrl.search, canonical);

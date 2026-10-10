@@ -67,7 +67,11 @@ export async function askModel(): Promise<{ error: string } | { ok: true; messag
       runCategorization(db, { model: { mode: "interactive", deadline: Date.now() + 270_000, limit: 120 } }),
     );
     revalidatePath("/inbox");
-    if (result.modelError && result.modelSeen === 0) return { error: result.modelError };
+    if (result.modelError && result.modelSeen === 0) {
+      // The boot carries on after this request gives up, so a second try in
+      // a minute or two usually finds the model awake.
+      return { error: `${result.modelError}. It keeps waking up in the background — try again in a minute or two.` };
+    }
     const parts = [`The model looked at ${result.modelSeen}`, `categorized ${result.byModel} confidently`];
     if (result.modelSeen > result.byModel) parts.push(`left ${result.modelSeen - result.byModel} as suggestions`);
     if (result.modelError) parts.push(`stopped early: ${result.modelError}`);

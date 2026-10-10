@@ -94,10 +94,22 @@ never overwrites a category that's already set:
    paid for twice.
 4. Everything else waits in the **review inbox**.
 
-The model step runs only when asked: from the **nightly sync**, within the
-cron function's own time limit (a cold start is part of that, so it does
-what fits and leaves the rest for tomorrow), and from the inbox's **Ask
-the model** button. Inbox corrections and "Sync now" never wake the GPU.
+The model step runs only when asked: **nightly**, and from the inbox's
+**Ask the model** button. A cold start takes ~2½–4½ minutes (measured on
+the A100; most of it is vLLM's startup profiling, not something a cache
+fixes) and a function gets 5 — and on Vercel's Hobby plan a daily cron can
+fire anywhere in its hour — so the nightly model work is a
+**self-continuing job**: when the sync cron finishes it triggers
+`/api/cron/classify`, which answers 202 at once and works after
+responding until just before its own deadline (its first call is what
+wakes the GPU). If there's work left, or the model was still booting, it
+triggers itself again and the next run finds the model warm; it stops
+when nothing is left for the model, and never goes past 6 links.
+
+Merchant memory treats the model's confident answers like any other
+categorization history, so a merchant the model files once is then
+handled by memory. Undoing a model batch doesn't undo memory batches
+that followed from it. Inbox corrections and "Sync now" never wake the GPU.
 If the model is unreachable or out of time, nothing breaks — those
 transactions stay in the inbox and are tried next time.
 
@@ -326,7 +338,8 @@ already been claimed is reported as a possible compromise, as SimpleFIN's
 spec asks.
 
 **Syncing** (`src/lib/sync/run.ts`) runs daily from Vercel Cron at 10:17
-UTC (off the hour, as Bridge asks; `vercel.json`) and on demand from
+UTC (off the hour, as Bridge asks; `vercel.json`) — with model
+categorization chained after it — and on demand from
 Settings. Each run:
 
 - fetches from 5 days before the last success (Bridge's recommended

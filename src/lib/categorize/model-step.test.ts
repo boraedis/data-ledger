@@ -102,6 +102,7 @@ describe("model step", () => {
     };
     const result = await runCategorization(db, { model: { classify: failing } });
     expect(result).toMatchObject({ byModel: 0, modelSeen: 0, modelError: "The model is still starting up; try again in a minute" });
+    expect(result.modelPending).toBeGreaterThan(0);
     expect(await db.select().from(categorySuggestions)).toHaveLength(0);
     expect((await runCategorization(db, { model: { classify: fakeModel(), limit: 500 } })).modelSeen).toBeGreaterThan(0);
   });
@@ -110,9 +111,12 @@ describe("model step", () => {
     const calls = { count: 0, inputs: [] as unknown[] };
     expect(await runCategorization(db, { model: { classify: fakeModel(calls), deadline: Date.now() + 5_000 } })).toMatchObject({ modelSeen: 0 });
     expect(calls.count).toBe(0);
-    // Enough for the first batch only: one call, then no more.
-    await runCategorization(db, { model: { classify: fakeModel(calls), deadline: Date.now() + 60_000, limit: 500 } });
+    // Enough for the first batch only: one call, then no more — and the
+    // rest is reported as pending, for the next link of the chain.
+    const partial = await runCategorization(db, { model: { classify: fakeModel(calls), deadline: Date.now() + 60_000, limit: 500 } });
     expect(calls.count).toBe(1);
+    expect(partial.modelSeen).toBe(30);
+    expect(partial.modelPending).toBeGreaterThan(0);
   });
 
   it("respects a configured threshold, and the model's batch is undoable", async () => {

@@ -36,6 +36,9 @@ export type CategorizationResult = {
   byModel: number;
   // Transactions the model looked at this run (applied or suggested).
   modelSeen: number;
+  // Transactions still waiting for the model after this run (it ran out of
+  // time or hit its limit). Zero when there's nothing left for it.
+  modelPending: number;
   remaining: number;
   // Set when the model step was attempted but couldn't finish (unreachable,
   // still starting, out of time). Everything it didn't reach stays in the
@@ -120,7 +123,7 @@ export async function runCategorization(
     .where(
       and(isNull(transactions.categoryId), eq(transactions.isSplit, false), inArray(transactions.accountId, budgetAccountIds(db))),
     );
-  if (candidates.length === 0) return { byRules: 0, byMemory: 0, byModel: 0, modelSeen: 0, remaining: 0 };
+  if (candidates.length === 0) return { byRules: 0, byMemory: 0, byModel: 0, modelSeen: 0, modelPending: 0, remaining: 0 };
 
   // 1. Rules.
   const activeRules = await db
@@ -171,13 +174,14 @@ export async function runCategorization(
     : 0;
 
   // 3. The model, only if asked for and configured.
-  const modelResult = model && modelIsConfigured() ? await modelStep(db, forModel, model) : { byModel: 0, seen: 0 };
+  const modelResult = model && modelIsConfigured() ? await modelStep(db, forModel, model) : { byModel: 0, seen: 0, pending: 0 };
 
   return {
     byRules,
     byMemory,
     byModel: modelResult.byModel,
     modelSeen: modelResult.seen,
+    modelPending: modelResult.pending,
     remaining: candidates.length - byRules - byMemory - modelResult.byModel,
     ...("error" in modelResult ? { modelError: modelResult.error } : {}),
   };
@@ -187,7 +191,7 @@ async function modelStep(
   db: Db,
   txns: { id: string; description: string; amountCents: number; postedOn: string; experiencedOn: string | null }[],
   options: ModelStepOptions,
-): Promise<{ byModel: number; seen: number; error?: string }> {
+): Promise<{ byModel: number; seen: number; pending: number; error?: string }> {
   // The model sees each transaction once: whatever it said is recorded as a
   // suggestion (even "none"), and those aren't sent again.
   const asked = txns.length
@@ -197,21 +201,19 @@ async function modelStep(
         .where(inArray(categorySuggestions.transactionId, txns.map((t) => t.id)))
     : [];
   const askedIds = new Set(asked.map((a) => a.id));
-  const queue = txns
-    .filter((t) => !askedIds.has(t.id))
-    .sort((a, b) => b.postedOn.localeCompare(a.postedOn))
-    .slice(0, options.limit ?? 200);
-  if (queue.length === 0) return { byModel: 0, seen: 0 };
+  const unasked = txns.filter((t) => !askedIds.has(t.id)).sort((a, b) => b.postedOn.localeCompare(a.postedOn));
+  const queue = unasked.slice(0, options.limit ?? 200);
+  if (queue.length === 0) return { byModel: 0, seen: 0, pending: 0 };
   // Too little time left even to wait for an answer: skip quietly and let
   // the next run (or the inbox button) pick these up.
-  if (options.deadline && options.deadline - Date.now() < 30_000) return { byModel: 0, seen: 0 };
+  if (options.deadline && options.deadline - Date.now() < 30_000) return { byModel: 0, seen: 0, pending: unasked.length };
 
   const cats: ClassifierCategory[] = categoryOptions(await db.select().from(categories)).map((o) => ({
     id: o.id,
     label: o.label,
     kind: o.kind,
   }));
-  if (cats.length === 0) return { byModel: 0, seen: 0 };
+  if (cats.length === 0) return { byModel: 0, seen: 0, pending: 0 };
 
   const classify = options.classify ?? classifyWithModel;
   const mode = options.mode ?? "background";
@@ -230,7 +232,7 @@ async function modelStep(
       break;
     }
   }
-  if (results.length === 0) return { byModel: 0, seen: 0, ...(error ? { error } : {}) };
+  if (results.length === 0) return { byModel: 0, seen: 0, pending: unasked.length, ...(error ? { error } : {}) };
 
   const threshold = autoApplyThreshold();
   const confident = results
@@ -245,7 +247,7 @@ async function modelStep(
     reason: "Model suggestions for the inbox",
     input: { suggestions: results },
   });
-  return { byModel, seen: results.length, ...(error ? { error } : {}) };
+  return { byModel, seen: results.length, pending: unasked.length - results.length, ...(error ? { error } : {}) };
 }
 
 /** Fills in merchant names for older transactions, if any lack one. Logged only when there's work. */

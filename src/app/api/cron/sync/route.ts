@@ -1,5 +1,7 @@
 import { timingSafeEqual } from "crypto";
 import { withTransactionalDb } from "@/lib/db";
+import { chainUrl, triggerClassify } from "@/lib/categorize/classify-chain";
+import { modelIsConfigured } from "@/lib/model/client";
 import { syncAllConnections } from "@/lib/sync/run";
 
 // The nightly sync, triggered by Vercel Cron (vercel.json). Vercel sends
@@ -20,11 +22,10 @@ function authorized(request: Request): boolean {
 
 export async function GET(request: Request) {
   if (!authorized(request)) return Response.json({ error: "Unauthorized" }, { status: 401 });
-  // The model step works against this function's own time limit: a cold
-  // start alone takes ~3.5 minutes, so it does what fits and leaves the
-  // rest for the inbox (and tomorrow).
-  const deadline = Date.now() + (maxDuration - 20) * 1000;
-  const results = await withTransactionalDb((db) => syncAllConnections(db, "cron", { model: { deadline } }));
+  const results = await withTransactionalDb((db) => syncAllConnections(db, "cron"));
+  // Then hand whatever rules and memory left to the model, as its own job
+  // (a cold start alone can take most of a function's 5 minutes).
+  if (modelIsConfigured()) await triggerClassify(chainUrl(request.url), 0);
   // Statuses and counts only; errors stay in sync_runs, not in Vercel's
   // request logs.
   return Response.json({

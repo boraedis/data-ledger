@@ -20,6 +20,12 @@ describe("proxy", () => {
     expect(response.headers.get("location")).toBe("https://ledger.example.test/activity?x=1");
   });
 
+  it("never redirects cron routes, which may arrive on a deployment URL", () => {
+    production();
+    const response = proxy(new NextRequest("https://ledger-abc123-someone.vercel.app/api/cron/sync"));
+    expect(response.headers.get("location")).toBeNull();
+  });
+
   it("leaves the canonical domain alone", () => {
     production();
     const response = proxy(new NextRequest("https://ledger.example.test/login"));
@@ -35,6 +41,7 @@ describe("proxy", () => {
 
   it("lets the cron route through to its own secret check, as an exact path", () => {
     expect(proxy(new NextRequest("http://localhost/api/cron/sync")).status).toBe(200);
+    expect(proxy(new NextRequest("http://localhost/api/cron/classify")).status).toBe(200);
     expect(proxy(new NextRequest("http://localhost/api/cron/other")).status).toBe(401);
   });
 
