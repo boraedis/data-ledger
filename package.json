@@ -14,7 +14,8 @@
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts",
     "db:studio": "drizzle-kit studio",
-    "db:local": "pglite-server --db=.pglite --port=54329"
+    "db:local": "pglite-server --db=.pglite --port=54329",
+    "model:eval": "tsx scripts/model-eval.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.9.0",

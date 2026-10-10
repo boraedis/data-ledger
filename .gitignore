@@ -11,3 +11,4 @@ coverage/
 next-env.d.ts
 *.pem
 .pglite/
+__pycache__/

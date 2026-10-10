@@ -377,3 +377,33 @@ export const commandLog = pgTable(
   },
   (t) => [index("command_log_created_at_idx").on(t.createdAt), index("command_log_status_idx").on(t.status)],
 );
+
+// ---------------------------------------------------------------------------
+// Model calls (#39): one row per request to the self-hosted model, for cost
+// and reliability — and deliberately nothing else. No prompt, no response,
+// no transaction text: the call log must never become a second copy of
+// the data the model saw.
+// ---------------------------------------------------------------------------
+
+export const modelCallStatus = pgEnum("model_call_status", ["ok", "error", "unavailable"]);
+
+export const modelCalls = pgTable(
+  "model_calls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Which part of the app asked: "categorize", "tally", "digest", "test"…
+    feature: text("feature").notNull(),
+    status: modelCallStatus("status").notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    latencyMs: integer("latency_ms").notNull(),
+    // Retries while the GPU was cold-starting (503s). Tells cold-start
+    // cost apart from a slow model.
+    coldStartRetries: integer("cold_start_retries").notNull().default(0),
+    promptTokens: integer("prompt_tokens"),
+    completionTokens: integer("completion_tokens"),
+    // Our own short description (HTTP status, timeout), never the server's
+    // response body, which could echo the prompt.
+    error: text("error"),
+  },
+  (t) => [index("model_calls_started_idx").on(t.startedAt)],
+);
