@@ -29,6 +29,8 @@ const eslintConfig = defineConfig([
       // operation.
       "src/lib/connectors/**",
       "src/lib/sync/**",
+      // The model call log (content-free bookkeeping, like sync_runs).
+      "src/lib/model/**",
       // Synthetic data loading, and tests setting up fixtures.
       "src/lib/seed/**",
       "src/lib/test-utils/**",

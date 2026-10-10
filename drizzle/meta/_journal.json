@@ -57,6 +57,13 @@
       "when": 1791592318160,
       "tag": "0007_splits_tags",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1791593509181,
+      "tag": "0008_model_calls",
+      "breakpoints": true
     }
   ]
 }

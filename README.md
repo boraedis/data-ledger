@@ -128,21 +128,20 @@ budget accounts only by default.
 
 Only the description, amount and date are ever sent to a model — never
 account numbers, balances or connection tokens — and that model is always
-self-hosted (see below).
+the owner's own (see below).
 
-### AI: local models only
+### AI: one self-hosted model
 
-No ledger data is sent to a hosted AI service — no Claude, OpenAI or
-Gemini APIs, no AI gateways, and no connectors that let an external
-assistant reach in. The categorization classifier (#6) and Tally (#11) run
-on an **open-source model the owner hosts**, called through an
-OpenAI-compatible endpoint (what Ollama, llama.cpp's server, vLLM and LM
-Studio all expose), so swapping models is configuration, not code.
+The app has **one model**, and every AI feature goes through it: Tally's
+chat (#11), the categorization classifier (#6), the nightly digest, alerts
+and suspicious-transaction checks. It's an **open-weight model in the
+owner's own container** (#39), so no AI company processes the data — no
+Claude, OpenAI or Gemini APIs, no third-party inference APIs (even "zero
+retention" ones), no AI gateways, and no external assistants connecting
+in. The container runs on a GPU platform that scales to zero, the same
+trust level as Vercel and Neon.
 
-Still open, to settle when #6 starts: the app runs on Vercel, which can't
-reach a model on a home machine by itself. The options are a private
-tunnel from the home machine, hosting the app at home instead, or a small
-model running in the browser.
+See "Model service" below for how it's hosted, called and chosen.
 
 ### Nightly pipeline
 
@@ -163,8 +162,9 @@ and finance-derived charts are never public there.
 Same as Data Diary, so the new learning is finance and agents rather than
 tooling: Next.js on Vercel, Neon Postgres + Drizzle, Tailwind + shadcn/ui.
 Additions: Vercel Workflow + Cron (nightly pipeline), passkey auth with
-short sessions, and connection tokens encrypted at rest. AI features use a
-self-hosted open-source model (see "AI: local models only").
+short sessions, connection tokens encrypted at rest, and one self-hosted
+open-weight model served by vLLM on Modal (see "AI: one self-hosted
+model").
 
 ## Environments
 
@@ -229,6 +229,7 @@ local Postgres works the same way.
 | `db:seed` | Replace synthetic data in `DATABASE_URL` |
 | `db:studio` | Drizzle Studio |
 | `db:local` | Local PGlite server on port 54329 (see "Local database") |
+| `model:eval` | Score the configured model on synthetic categorization and tool calls |
 
 ### Environment variables
 
@@ -240,6 +241,9 @@ local Postgres works the same way.
 | `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGIN` | production (required) | The domain passkeys are bound to. Elsewhere they're derived from the request, so each preview URL works |
 | `CONNECTION_ENCRYPTION_KEY` | everywhere | Encrypts bank-connection credentials at rest (32 bytes, base64). Changing it orphans stored connections |
 | `CRON_SECRET` | production | Bearer token Vercel Cron sends to `/api/cron/sync` (16+ chars) |
+| `MODEL_BASE_URL` | optional | The model's OpenAI-compatible base URL, ending in `/v1`. Unset = no AI features; everything else works |
+| `MODEL_API_KEY` | with the above | The key the model server requires (same value as its `VLLM_API_KEY`) |
+| `MODEL_NAME` | optional | Model name to request; defaults to `ledger`, the name `model/serve.py` serves under |
 
 ### Authentication
 
@@ -384,4 +388,58 @@ To add an operation: define it with `defineRead` / `defineWrite` next to
 its neighbours, add it to `operations` in `registry.ts`, and add any new
 table it writes to `trackedTables`. Write the description for a model as
 much as a person: it becomes Tally's tool description.
+
+## Model service
+
+**Hosting** (`model/serve.py`): vLLM serving one pinned open-weight model
+behind an OpenAI-compatible API, in a Modal container that scales to zero
+3 minutes after the last request. Every request needs the API key (vLLM
+enforces it; the server refuses to start without one). Model weights and
+compiled kernels live on Modal volumes, so only the first-ever boot
+downloads them. The first request after idle meets a **cold start** —
+typically tens of seconds to a couple of minutes while the GPU boots.
+
+**Owner setup:**
+
+1. Create a Modal account, then install the CLI locally:
+   ```bash
+   pip install modal && modal setup
+   ```
+2. Create the server's API key as a Modal secret (it never enters the repo):
+   ```bash
+   modal secret create data-ledger-model VLLM_API_KEY="$(openssl rand -base64 32)"
+   ```
+3. Deploy, and note the URL it prints:
+   ```bash
+   modal deploy model/serve.py
+   ```
+4. In Vercel (Production), set `MODEL_BASE_URL` to that URL plus `/v1`
+   and `MODEL_API_KEY` to the same key. Redeploy.
+5. Settings → Model → **Test model** confirms the round trip.
+
+Changing models is a pull request to `model/serve.py`, justified by
+`npm run model:eval` numbers. Moving the model to home hardware later is
+just a different `MODEL_BASE_URL`.
+
+**Calling it** (`src/lib/model/`): every feature uses `chat()`, never its
+own HTTP client.
+
+- **Cold starts are expected:** 502/503/504 are retried with backoff — up
+  to 10 minutes for background work, 2½ for interactive — then reported as
+  "still starting up".
+- **Minimal data is enforced here, not per feature:** transactions reach
+  the model only through `modelTransaction()` (description, amount, date),
+  and tool results through `toolResult()`, which strips balances, account
+  numbers, provider ids and credentials at any depth.
+- **Every call is logged without content** in `model_calls` (feature,
+  latency, tokens, cold-start retries, outcome) — never the prompt or the
+  reply. Settings shows the recent numbers.
+- **No model is a normal state:** with `MODEL_BASE_URL` unset, AI features
+  simply don't run.
+
+**Choosing the model:** `npm run model:eval` scores whatever
+`MODEL_BASE_URL` points at, using only the seed's invented merchants: how
+many transactions it categorizes correctly (and whether its confidence is
+higher when it's right), and whether it calls the right tools with sane
+arguments.
 

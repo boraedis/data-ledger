@@ -50,12 +50,16 @@ If a task seems to require real data in any of these places, stop and ask.
   `memory`, `tally`, `import`), reason, and enough to undo it.
 - **Tally proposes; the user approves** writes, unless an action has been
   explicitly promoted to auto-apply.
-- **No external AI.** Ledger data never goes to a hosted AI service (Claude,
-  OpenAI, Gemini, AI gateways) and no external assistant connects in (an
-  MCP server was built and removed for this reason). AI features use a
-  self-hosted open-source model through an OpenAI-compatible endpoint.
+- **One self-hosted model, no AI companies.** Every AI feature goes
+  through the app's single open-weight model, running in the owner's own
+  container (#39), via `src/lib/model/` — never a feature's own client.
+  Ledger data never goes to a hosted AI or inference API (Claude, OpenAI,
+  Gemini, Together, Fireworks, AI gateways…), and no external assistant
+  connects in (an MCP server was built and removed for this reason).
 - **Minimal data to models.** Description, amount and date only — never
-  account numbers, balances or connection tokens.
+  account numbers, balances or connection tokens. Use `modelTransaction()`
+  and `toolResult()` from `src/lib/model/redact.ts`; the model call log
+  records no content.
 - **Connectors sit behind one interface.** Nothing downstream knows which
   aggregator a transaction came from.
 - **Reimbursements are not income.** Budgets count net spend (your share);

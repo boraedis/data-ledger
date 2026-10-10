@@ -1,13 +1,16 @@
 import { listPasskeys } from "@/lib/auth/webauthn";
 import { getDb } from "@/lib/db";
+import { getModelStatus } from "@/lib/model/status";
 import { getConnectionHealth } from "@/lib/sync/health";
 import { Connections } from "./connections";
+import { ModelStatusPanel } from "./model-status";
 import { AddPasskey } from "./add-passkey";
 
 const dateFormat = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
 export default async function SettingsPage() {
-  const [passkeys, health] = await Promise.all([listPasskeys(), getConnectionHealth(getDb())]);
+  const db = getDb();
+  const [passkeys, health, model] = await Promise.all([listPasskeys(), getConnectionHealth(db), getModelStatus(db)]);
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Settings</h1>
@@ -18,6 +21,10 @@ export default async function SettingsPage() {
           capped at 20 per connection per day.
         </p>
         <Connections health={health} />
+      </section>
+      <section className="space-y-3">
+        <h2 className="text-lg font-medium">Model</h2>
+        <ModelStatusPanel status={model} />
       </section>
       <section className="space-y-3">
         <h2 className="text-lg font-medium">Passkeys</h2>
