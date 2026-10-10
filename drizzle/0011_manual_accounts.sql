@@ -1,0 +1,1 @@
+ALTER TYPE "public"."data_source" ADD VALUE 'manual';

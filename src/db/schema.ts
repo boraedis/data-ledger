@@ -147,7 +147,11 @@ export const accountType = pgEnum("account_type", ACCOUNT_KINDS);
 
 // Where a row came from. "seed" marks synthetic data, which is what lets the
 // seed script prove it never touches a database holding anything real.
-export const dataSource = pgEnum("data_source", ["seed", "simplefin"]);
+// "manual" is an account the owner keeps up by hand (#26): a home, a car, a
+// private loan, an institution no aggregator covers. Its value only changes
+// through the accounts.*Manual operations, and no sync ever touches it
+// (syncs match on connection, which a manual account doesn't have).
+export const dataSource = pgEnum("data_source", ["seed", "simplefin", "manual"]);
 
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),

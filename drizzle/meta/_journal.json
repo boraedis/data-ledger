@@ -78,6 +78,13 @@
       "when": 1791649283218,
       "tag": "0010_balance_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1791650204573,
+      "tag": "0011_manual_accounts",
+      "breakpoints": true
     }
   ]
 }

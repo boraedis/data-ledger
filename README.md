@@ -400,6 +400,18 @@ rewritten; the convention is applied when reading
 history. Between snapshots a balance carries forward. Only USD is summed;
 an account in another currency is listed but left out.
 
+**Manual accounts** cover what no aggregator does: a home, a car, a loan
+from a friend, an account at an unsupported institution. Add one under
+Accounts → Manual with a kind and a value as of a date; for a loan or credit
+kind the value is the amount owed. Each update (`accounts.setManualValue`)
+is a dated balance snapshot, so manual accounts feed net-worth history like
+synced ones. Back-dating an entry fills in history without replacing the
+current value, and a second entry for the same date corrects the first. They
+are marked "Manual" wherever they appear, never count toward budgets, and
+syncs never touch them. Creating, updating and removing them (which removes
+their history too) are owner-only operations, logged and undoable; Tally
+can't run them, since it would see the values.
+
 Net worth is deliberately **not** an operation: every registered read
 becomes one of Tally's tools, and balances never go to a model.
 

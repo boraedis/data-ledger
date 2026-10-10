@@ -3,6 +3,7 @@ import { KIND_LABELS } from "@/lib/account-kinds";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { isLiability, netWorthSummary } from "@/lib/net-worth";
+import { ManualBadge } from "../accounts/account-row";
 import { NetWorthChart } from "./net-worth-chart";
 
 // Net worth today and over time (#25). Read-only: balances come from syncs,
@@ -71,9 +72,12 @@ export default async function NetWorthPage() {
           {summary.accounts.map((a) => (
             <li key={a.id} className="flex items-center justify-between gap-3 px-3 py-2">
               <span className="min-w-0">
-                <span className="block truncate">{a.name}</span>
+                <span className="block truncate">
+                  {a.name} {a.manual ? <ManualBadge /> : null}
+                </span>
                 <span className="block truncate text-xs text-muted-foreground">
-                  {KIND_LABELS[a.kind]} · {a.institution}
+                  {KIND_LABELS[a.kind]}
+                  {a.manual && a.institution === "Manual" ? "" : ` · ${a.institution}`}
                   {a.balanceAt ? ` · as of ${a.balanceAt.toISOString().slice(0, 10)}` : ""}
                 </span>
               </span>
