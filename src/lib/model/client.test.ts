@@ -89,7 +89,7 @@ describe("chat", () => {
     const c = clock();
     const always503 = (async () => new Response(null, { status: 503 })) as typeof fetch;
     await expect(chat({ feature: "tally", mode: "interactive", messages: [] }, { db, now: c.now, sleep: c.sleep, fetch: always503 })).rejects.toBeInstanceOf(ModelUnavailableError);
-    expect(c.now()).toBeLessThanOrEqual(150_000);
+    expect(c.now()).toBeLessThanOrEqual(5 * 60_000);
     const [row] = await db.select().from(modelCalls);
     expect(row.status).toBe("unavailable");
   });

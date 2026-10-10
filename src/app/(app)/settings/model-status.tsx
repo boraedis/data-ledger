@@ -35,7 +35,7 @@ export function ModelStatusPanel({ status }: { status: ModelStatus }) {
         <Button size="sm" variant="outline" disabled={pending} onClick={() => startTransition(async () => setResult(await testModel()))}>
           {pending ? "Waiting for the model…" : "Test model"}
         </Button>
-        <span className="text-xs text-muted-foreground">Starts the GPU if it&apos;s asleep, which can take a minute or two.</span>
+        <span className="text-xs text-muted-foreground">Starts the GPU if it&apos;s asleep, which takes about 3–4 minutes.</span>
       </div>
       {result ? (
         "error" in result ? <p className="text-destructive">{result.error}</p> : <p className="text-muted-foreground">{result.message}</p>

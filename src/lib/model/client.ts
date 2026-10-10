@@ -50,10 +50,13 @@ export class ModelUnavailableError extends Error {}
 export class ModelError extends Error {}
 
 // How long to keep retrying through a cold start, and how long one request
-// may take once the model is up.
+// may take once the model is up. Measured on Modal (A100-80GB, weights
+// cached on the volume): a cold start takes ~3.5 minutes, so even an
+// interactive call must be willing to wait that long — the UI says the
+// model is waking up rather than giving up first.
 const BUDGETS = {
   background: { coldStartMs: 10 * 60_000, requestMs: 180_000 },
-  interactive: { coldStartMs: 150_000, requestMs: 90_000 },
+  interactive: { coldStartMs: 5 * 60_000, requestMs: 90_000 },
 } as const;
 
 const RETRYABLE = new Set([502, 503, 504]);
