@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { accounts, transactions } from "@/db/schema";
+import { accounts, balanceSnapshots, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
@@ -110,5 +110,77 @@ describe("budget filtering", () => {
     // Sanity: the filter removed exactly that account's rows.
     const all = await db.select().from(transactions);
     expect((await list(true)).length).toBe(Math.min(500, all.filter((t) => t.accountId !== checkingId).length));
+  });
+});
+
+describe("manual accounts", () => {
+  const run = (operation: string, input: Record<string, unknown>) =>
+    execute(db, { operation, input, actor: "user", reason: "test" }) as Promise<{ commandId: string; output: Record<string, unknown> }>;
+  const history = (accountId: string) =>
+    db
+      .select({ on: balanceSnapshots.on, cents: balanceSnapshots.balanceCents })
+      .from(balanceSnapshots)
+      .where(eq(balanceSnapshots.accountId, accountId))
+      .orderBy(balanceSnapshots.on);
+  const account = async (id: string) => (await db.select().from(accounts).where(eq(accounts.id, id)))[0];
+
+  it("creates an account outside budgets, with its first dated value", async () => {
+    const { output } = await run("accounts.createManual", { name: "Hatchback", kind: "other_asset", valueCents: 1_200_000, on: "2026-06-01" });
+    const id = output.id as string;
+    expect(await account(id)).toMatchObject({ source: "manual", institution: "Manual", countsTowardBudgets: false, balanceCents: 1_200_000, connectionId: null });
+    expect(await history(id)).toEqual([{ on: "2026-06-01", cents: 1_200_000 }]);
+  });
+
+  it("each update is a dated value; back-filling doesn't replace the current one; same day corrects", async () => {
+    const { output } = await run("accounts.createManual", { name: "Loan from a friend", kind: "loan", valueCents: 500_000, on: "2026-05-01" });
+    const id = output.id as string;
+    await run("accounts.setManualValue", { accountId: id, valueCents: 400_000, on: "2026-06-01" });
+    await run("accounts.setManualValue", { accountId: id, valueCents: 450_000, on: "2026-05-15" });
+    expect((await account(id)).balanceCents).toBe(400_000);
+    await run("accounts.setManualValue", { accountId: id, valueCents: 390_000, on: "2026-06-01" });
+    expect(await history(id)).toEqual([
+      { on: "2026-05-01", cents: 500_000 },
+      { on: "2026-05-15", cents: 450_000 },
+      { on: "2026-06-01", cents: 390_000 },
+    ]);
+    expect((await account(id)).balanceCents).toBe(390_000);
+  });
+
+  it("updates are undoable, and removal takes history with it, undoably", async () => {
+    const { output } = await run("accounts.createManual", { name: "House", kind: "other_asset", valueCents: 30_000_000, on: "2026-01-01" });
+    const id = output.id as string;
+    const { commandId } = await run("accounts.setManualValue", { accountId: id, valueCents: 31_000_000, on: "2026-06-01" });
+    await undoCommand(db, commandId);
+    expect((await account(id)).balanceCents).toBe(30_000_000);
+    expect(await history(id)).toHaveLength(1);
+
+    const removed = await run("accounts.deleteManual", { accountId: id });
+    expect(await account(id)).toBeUndefined();
+    expect(await history(id)).toHaveLength(0);
+    await undoCommand(db, removed.commandId);
+    expect(await history(id)).toHaveLength(1);
+  });
+
+  it("refuses synced accounts, future dates, negative values, and anyone but the owner", async () => {
+    await expect(run("accounts.setManualValue", { accountId: checkingId, valueCents: 1, on: "2026-06-01" })).rejects.toThrow(/bank sync/);
+    await expect(run("accounts.deleteManual", { accountId: checkingId })).rejects.toThrow(/bank sync/);
+    await expect(run("accounts.createManual", { name: "X", kind: "other_asset", valueCents: 1, on: "2999-01-01" })).rejects.toThrow();
+    await expect(run("accounts.createManual", { name: "X", kind: "other_asset", valueCents: -1, on: "2026-01-01" })).rejects.toThrow();
+    await expect(
+      execute(db, { operation: "accounts.createManual", input: { name: "X", kind: "other_asset", valueCents: 1, on: "2026-01-01" }, actor: "tally", reason: "x" }),
+    ).rejects.toThrow(/may not run/);
+  });
+
+  it("stays out of budgets whatever kind it's changed to", async () => {
+    const { output } = await run("accounts.createManual", { name: "Old Bank", kind: "other_asset", valueCents: 1, on: "2026-06-01" });
+    await run("accounts.update", { accountId: output.id, kind: "checking" });
+    expect(await account(output.id as string)).toMatchObject({ type: "checking", countsTowardBudgets: false });
+  });
+
+  it("shows as manual in the account list", async () => {
+    await run("accounts.createManual", { name: "Hatchback", kind: "other_asset", valueCents: 1, on: "2026-06-01" });
+    const list = (await execute(db, { operation: "accounts.list", input: {}, actor: "user", reason: "" })) as { output: { name: string; manual: boolean }[] };
+    expect(list.output.find((a) => a.name === "Hatchback")?.manual).toBe(true);
+    expect(list.output.filter((a) => a.manual)).toHaveLength(1);
   });
 });

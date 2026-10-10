@@ -14,4 +14,29 @@ export async function updateAccount(accountId: string, patch: Patch, reason: str
     return { error: error instanceof Error ? error.message : "Couldn't update the account" };
   }
   revalidatePath("/accounts");
+  revalidatePath("/net-worth");
+}
+
+type Result = Promise<{ error: string } | undefined>;
+
+async function run(operation: string, input: Record<string, unknown>, reason: string, fallback: string): Result {
+  try {
+    await executeAsOwner({ operation, input, reason });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : fallback };
+  }
+  revalidatePath("/accounts");
+  revalidatePath("/net-worth");
+}
+
+export async function createManualAccount(input: { name: string; kind: string; valueCents: number; on: string }): Result {
+  return run("accounts.createManual", input, `Added manual account "${input.name}"`, "Couldn't add the account");
+}
+
+export async function setManualValue(accountId: string, name: string, valueCents: number, on: string): Result {
+  return run("accounts.setManualValue", { accountId, valueCents, on }, `Updated the value of "${name}" as of ${on}`, "Couldn't update the value");
+}
+
+export async function deleteManualAccount(accountId: string, name: string): Result {
+  return run("accounts.deleteManual", { accountId }, `Removed manual account "${name}"`, "Couldn't remove the account");
 }

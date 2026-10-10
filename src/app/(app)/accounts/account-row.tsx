@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input";
 import { ACCOUNT_KINDS, KIND_LABELS, countsTowardBudgetsByDefault, type AccountKind } from "@/lib/account-kinds";
 import { formatCents } from "@/lib/money";
 import { updateAccount } from "./actions";
+import { ManualValueControls } from "./manual-account";
 
 export type AccountRowData = {
   id: string;
@@ -14,6 +15,10 @@ export type AccountRowData = {
   countsTowardBudgets: boolean;
   balanceCents: number | null;
   currency: string;
+  // Kept up by hand (#26): no bank behind it, so it gets value controls
+  // instead of a bank name, and no budget flag (nothing posts to it).
+  manual: boolean;
+  balanceAt: string | null;
 };
 
 export function AccountRow({ account }: { account: AccountRowData }) {
@@ -44,10 +49,18 @@ export function AccountRow({ account }: { account: AccountRowData }) {
             onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
             className="h-8 max-w-xs"
           />
-          {account.displayName ? <p className="mt-1 text-xs text-muted-foreground">Bank name: {account.name}</p> : null}
+          {account.displayName && !account.manual ? (
+            <p className="mt-1 text-xs text-muted-foreground">Bank name: {account.name}</p>
+          ) : null}
         </div>
-        <span className="text-muted-foreground">
+        <span className="text-right text-muted-foreground">
           {account.balanceCents === null ? "—" : formatCents(account.balanceCents, account.currency)}
+          {account.manual && (account.kind === "loan" || account.kind === "credit") ? " owed" : ""}
+          {account.manual ? (
+            <span className="block text-xs">
+              <ManualBadge /> {account.balanceAt ? `as of ${account.balanceAt.slice(0, 10)}` : ""}
+            </span>
+          ) : null}
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-4">
@@ -69,6 +82,7 @@ export function AccountRow({ account }: { account: AccountRowData }) {
             ))}
           </select>
         </label>
+        {account.manual ? null : (
         <label className="flex items-center gap-2">
           <input
             type="checkbox"
@@ -83,11 +97,26 @@ export function AccountRow({ account }: { account: AccountRowData }) {
           />
           <span>Counts toward budgets</span>
         </label>
-        {account.countsTowardBudgets !== countsTowardBudgetsByDefault(account.kind) ? (
+        )}
+        {!account.manual && account.countsTowardBudgets !== countsTowardBudgetsByDefault(account.kind) ? (
           <span className="text-xs text-muted-foreground">(not the default for this kind)</span>
         ) : null}
       </div>
+      {account.manual ? (
+        <ManualValueControls
+          account={{ id: account.id, name: account.displayName ?? account.name, kind: account.kind, balanceAt: account.balanceAt }}
+        />
+      ) : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </li>
+  );
+}
+
+/** The one marker for "entered by hand", used wherever a manual account appears. */
+export function ManualBadge() {
+  return (
+    <span className="rounded border border-dashed px-1 py-px text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+      Manual
+    </span>
   );
 }

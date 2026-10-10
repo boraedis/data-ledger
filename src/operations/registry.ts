@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { listAccounts, updateAccount } from "@/operations/accounts";
+import { createManualAccount, deleteManualAccount, listAccounts, setManualValue, updateAccount } from "@/operations/accounts";
 import { applySnapshot } from "@/operations/import";
 import { createCategory, deleteCategory, listCategories, moveCategory, renameCategory } from "@/operations/categories";
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
@@ -25,6 +25,9 @@ import {
 export const operations: Operation[] = [
   listAccounts,
   updateAccount,
+  createManualAccount,
+  setManualValue,
+  deleteManualAccount,
   listCategories,
   createCategory,
   renameCategory,

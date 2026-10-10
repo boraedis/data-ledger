@@ -43,6 +43,9 @@ export type NetWorthAccount = {
   currency: string;
   balanceCents: number | null;
   balanceAt: Date | null;
+  // Entered by hand (#26) rather than synced; its value is only as fresh as
+  // the owner's last update, which the page makes visible.
+  manual: boolean;
 };
 
 export type NetWorthPoint = { on: string; assetsCents: number; liabilitiesCents: number; netCents: number };
@@ -114,6 +117,7 @@ export async function netWorthSummary(db: Db, { today = new Date() }: { today?: 
         currency: accounts.currency,
         balanceCents: accounts.balanceCents,
         balanceAt: accounts.balanceAt,
+        source: accounts.source,
       })
       .from(accounts),
     db
@@ -122,7 +126,11 @@ export async function netWorthSummary(db: Db, { today = new Date() }: { today?: 
       .orderBy(asc(balanceSnapshots.on)),
   ]);
 
-  const all: NetWorthAccount[] = rows.map(({ displayName, name, ...rest }) => ({ ...rest, name: displayName ?? name }));
+  const all: NetWorthAccount[] = rows.map(({ displayName, name, source, ...rest }) => ({
+    ...rest,
+    name: displayName ?? name,
+    manual: source === "manual",
+  }));
   const excluded: NetWorthSummary["excluded"] = [];
   const counted: (NetWorthAccount & { contributionCents: number | null })[] = [];
   for (const account of all) {
