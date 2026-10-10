@@ -15,6 +15,17 @@ export const ACCOUNT_KINDS = [
 ] as const;
 export type AccountKind = (typeof ACCOUNT_KINDS)[number];
 
+export const KIND_LABELS: Record<AccountKind, string> = {
+  checking: "Checking",
+  savings: "Savings",
+  credit: "Credit card",
+  payment_app: "Payment app",
+  brokerage: "Brokerage",
+  retirement: "Retirement",
+  loan: "Loan",
+  other_asset: "Other asset",
+};
+
 /** Whether a new account of this kind counts toward budgets unless the owner says otherwise. */
 export function countsTowardBudgetsByDefault(kind: AccountKind): boolean {
   return kind === "checking" || kind === "savings" || kind === "credit" || kind === "payment_app";

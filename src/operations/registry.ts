@@ -5,7 +5,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { accounts, categories, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { accounts, balanceSnapshots, categories, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -72,6 +72,7 @@ export function describeOperations() {
 // and the undo test fails loudly if that happens.
 export const trackedTables = {
   accounts,
+  balance_snapshots: balanceSnapshots,
   categories,
   rules,
   transactions,

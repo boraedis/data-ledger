@@ -71,6 +71,13 @@
       "when": 1791644928419,
       "tag": "0009_model_classifier",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1791649283218,
+      "tag": "0010_balance_snapshots",
+      "breakpoints": true
     }
   ]
 }

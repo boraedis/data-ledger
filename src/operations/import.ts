@@ -2,6 +2,7 @@ import { and, eq, gte, inArray } from "drizzle-orm";
 import { z } from "zod";
 import {
   accounts,
+  balanceSnapshots,
   countsTowardBudgetsByDefault,
   transactionSplits,
   transactionTags,
@@ -84,11 +85,16 @@ export const applySnapshot = defineWrite({
     // The start of the fetched window. Only pending transactions inside it
     // can be judged missing; older ones simply weren't asked for.
     windowStart: z.iso.date(),
+    // The day the balances are recorded under (UTC), for net-worth history.
+    // Passed in rather than read from the clock so the command log says
+    // exactly what the operation did. Defaults to today.
+    snapshotOn: z.iso.date().optional(),
     accounts: z.array(rawAccount),
     transactions: z.array(rawTransaction),
   }),
   apply: async (ctx, input) => {
-    const counts = { accountsAdded: 0, inserted: 0, updated: 0, removed: 0 };
+    const counts = { accountsAdded: 0, inserted: 0, updated: 0, removed: 0, snapshots: 0 };
+    const snapshotOn = input.snapshotOn ?? new Date().toISOString().slice(0, 10);
 
     // --- Accounts -----------------------------------------------------------
     const existingAccounts = await ctx.db.select().from(accounts).where(eq(accounts.connectionId, input.connectionId));
@@ -125,6 +131,34 @@ export const applySnapshot = defineWrite({
         existing.balanceAt?.getTime() !== values.balanceAt.getTime()
       ) {
         await ctx.update(accounts, existing.id, values);
+      }
+    }
+
+    // --- Balance snapshots --------------------------------------------------
+    // Every account in the snapshot gets today's balance recorded, changed
+    // or not: an unchanged balance is still a data point, and a gap would
+    // read as "unknown" rather than "flat". A later sync the same day
+    // replaces the row. Inside this command, so undoing a sync takes its
+    // snapshots with it.
+    // Only accounts present in this snapshot: one the provider dropped
+    // keeps its last balance rather than being judged unchanged.
+    const snapshotAccountIds = input.accounts.map((a) => accountIdByExternal.get(a.externalId)!);
+    const todays = snapshotAccountIds.length
+      ? await ctx.db
+          .select()
+          .from(balanceSnapshots)
+          .where(and(inArray(balanceSnapshots.accountId, snapshotAccountIds), eq(balanceSnapshots.on, snapshotOn)))
+      : [];
+    for (const raw of input.accounts) {
+      const accountId = accountIdByExternal.get(raw.externalId)!;
+      const balanceAt = new Date(raw.balanceAt);
+      const existing = todays.find((row) => row.accountId === accountId);
+      if (!existing) {
+        await ctx.insert(balanceSnapshots, { accountId, on: snapshotOn, balanceCents: raw.balanceCents, balanceAt });
+        counts.snapshots++;
+      } else if (existing.balanceCents !== raw.balanceCents || existing.balanceAt?.getTime() !== balanceAt.getTime()) {
+        await ctx.update(balanceSnapshots, existing.id, { balanceCents: raw.balanceCents, balanceAt });
+        counts.snapshots++;
       }
     }
 
@@ -184,9 +218,6 @@ export const applySnapshot = defineWrite({
     // like it (same account and amount, within a few days), it inherits the
     // pending row's category, split, tags and experience date, so the owner
     // doesn't redo any of it.
-    const snapshotAccountIds = input.accounts
-      .map((a) => accountIdByExternal.get(a.externalId))
-      .filter((id): id is string => Boolean(id));
     const pendingInWindow = snapshotAccountIds.length
       ? await ctx.db
           .select()

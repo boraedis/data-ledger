@@ -85,6 +85,7 @@ export async function syncConnection(
       input: {
         connectionId,
         windowStart: since.toISOString().slice(0, 10),
+        snapshotOn: now.toISOString().slice(0, 10),
         accounts: snapshot.accounts.map((a) => ({ ...a, balanceAt: a.balanceAt.toISOString() })),
         transactions: snapshot.transactions,
       },

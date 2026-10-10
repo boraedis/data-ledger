@@ -12,8 +12,11 @@ export type SeedAccount = {
   key: string;
   name: string;
   institution: string;
-  type: "checking" | "savings" | "credit" | "payment_app";
+  type: "checking" | "savings" | "credit" | "payment_app" | "brokerage" | "loan";
 };
+
+// A day's balance per account, for net-worth history (#25).
+export type SeedSnapshot = { accountKey: string; on: string; balanceCents: number };
 
 export type SeedTransaction = {
   accountKey: string;
@@ -30,7 +33,15 @@ export const SEED_ACCOUNTS: SeedAccount[] = [
   { key: "savings", name: "Rainy Day Savings", institution: "Example Community Credit Union", type: "savings" },
   { key: "card", name: "Rewards Card", institution: "Placeholder Card Co.", type: "credit" },
   { key: "p2p", name: "PayPeer", institution: "PayPeer", type: "payment_app" },
+  // Balance-only accounts: no transactions, just history, so net worth has
+  // an investment and a debt to show.
+  { key: "brokerage", name: "Index Fund Account", institution: "Example Brokerage", type: "brokerage" },
+  { key: "auto", name: "Auto Loan", institution: "Example Community Credit Union", type: "loan" },
 ];
+
+// Where each cash account's balance stood the day before the window, so
+// the daily balances that follow from the transactions stay plausible.
+const OPENING_BALANCES: Record<string, number> = { checking: 640_000, savings: 1_200_000, card: -95_000, p2p: 40_000 };
 
 // A starter set only. Categories are the owner's to shape; this just gives a
 // fresh database something to categorize into.
@@ -110,10 +121,6 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
     add("card", month(7), -1_099, "TUNEBOX MUSIC SUBSCR");
     add("card", month(5), -4_500, "IRONWORKS GYM MEMBERSHIP");
 
-    // Paying the card off from checking — a transfer, not spending.
-    const cardPayment = between(150_000, 260_000);
-    add("checking", month(20), -cardPayment, "PLACEHOLDER CARD CO PAYMENT");
-    add("card", month(20), cardPayment, "PAYMENT THANK YOU");
   }
 
   // Annual charges, once in the window: a budget period that isn't monthly.
@@ -144,6 +151,23 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
     }
   }
 
+  // Paying the card off from checking on the 20th — a transfer, not
+  // spending. Paid in full: whatever was charged since the last payment, so
+  // the card's balance stays a realistic debt rather than drifting.
+  let lastPayment = "";
+  for (let m = 0; m <= months; m++) {
+    const day = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + m, 20));
+    if (day < start || day > end) continue;
+    const on = iso(day);
+    const charged = txns
+      .filter((t) => t.accountKey === "card" && t.postedOn > lastPayment && t.postedOn <= on)
+      .reduce((sum, t) => sum + t.amountCents, 0);
+    lastPayment = on;
+    if (charged >= 0) continue;
+    add("checking", day, charged, "PLACEHOLDER CARD CO PAYMENT");
+    add("card", day, -charged, "PAYMENT THANK YOU");
+  }
+
   // Sweep the payment-app balance to checking monthly, as people do.
   for (let m = 1; m <= months; m++) {
     const day = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + m, 2));
@@ -154,5 +178,28 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
 
   txns.sort((a, b) => a.postedOn.localeCompare(b.postedOn) || a.description.localeCompare(b.description));
   const transactions: SeedTransaction[] = txns.map((t, i) => ({ ...t, externalId: `seed-${i}` }));
-  return { accounts: SEED_ACCOUNTS, categories: SEED_CATEGORIES, transactions };
+
+  // Daily balances. Cash accounts follow their own transactions from the
+  // opening balance. The card is reported negative when owed and the loan
+  // positive, as real providers disagree — exercising both sides of the
+  // net-worth sign convention (src/lib/net-worth.ts).
+  const snapshots: SeedSnapshot[] = [];
+  const running = { ...OPENING_BALANCES };
+  let brokerage = 3_850_000;
+  let loan = 1_420_000;
+  let t = 0;
+  for (let day = new Date(start); day <= end; day = addDays(day, 1)) {
+    const on = iso(day);
+    for (; t < transactions.length && transactions[t].postedOn === on; t++) {
+      running[transactions[t].accountKey] += transactions[t].amountCents;
+    }
+    // A market that drifts up with daily noise, and a loan paid down monthly.
+    brokerage = Math.round(brokerage * (1 + (random() - 0.47) * 0.012));
+    if (day.getUTCDate() === 10) loan = Math.max(0, loan - 41_500);
+    for (const [accountKey, balanceCents] of Object.entries(running)) snapshots.push({ accountKey, on, balanceCents });
+    snapshots.push({ accountKey: "brokerage", on, balanceCents: brokerage });
+    snapshots.push({ accountKey: "auto", on, balanceCents: loan });
+  }
+
+  return { accounts: SEED_ACCOUNTS, categories: SEED_CATEGORIES, transactions, snapshots };
 }
