@@ -381,6 +381,28 @@ budget flag. Every spending query and budget must filter on
 `countsTowardBudgets` (`budgetAccountIds()` in `src/operations/accounts.ts`;
 `transactions.list` takes `budgetOnly`).
 
+### Net worth
+
+Banks only ever report a balance "as of now", so history that isn't
+captured on the day is lost for good. Every sync therefore records each
+account's balance in `balance_snapshots`, one row per account per UTC day
+(a second sync that day replaces it), inside the same undoable import
+command. History starts the day this shipped; it can't be backfilled.
+
+**Net worth = assets − liabilities.** Providers disagree on the sign of a
+debt (a card owing $500 arrives as `-500.00` from some and `500.00` from
+others), so credit cards and loans always count as **what's owed,
+−|balance|**. Every other kind counts as reported, so an overdrawn checking
+account is negative. The one known miss: a card with a credit balance
+counts as a small debt rather than a small asset. Stored balances are never
+rewritten; the convention is applied when reading
+(`src/lib/net-worth.ts`), so fixing an account's kind also fixes its
+history. Between snapshots a balance carries forward. Only USD is summed;
+an account in another currency is listed but left out.
+
+Net worth is deliberately **not** an operation: every registered read
+becomes one of Tally's tools, and balances never go to a model.
+
 ## Operations layer
 
 Every change to ledger data is an **operation** (`src/operations/`): a

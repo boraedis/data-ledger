@@ -4,7 +4,7 @@ import type { Db } from "@/db/types";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { generateSeed } from "@/lib/seed/generate";
 
-const { accounts, categories, transactions } = schema;
+const { accounts, balanceSnapshots, categories, transactions } = schema;
 
 export class RealDataPresentError extends Error {}
 
@@ -39,7 +39,20 @@ export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Da
 
     const inserted = await tx
       .insert(accounts)
-      .values(data.accounts.map(({ name, institution, type }) => ({ name, institution, type, source: "seed" as const })))
+      .values(
+        data.accounts.map(({ key, name, institution, type }) => {
+          const last = data.snapshots.findLast((s) => s.accountKey === key);
+          return {
+            name,
+            institution,
+            type,
+            source: "seed" as const,
+            countsTowardBudgets: schema.countsTowardBudgetsByDefault(type),
+            balanceCents: last?.balanceCents ?? null,
+            balanceAt: last ? new Date(`${last.on}T12:00:00Z`) : null,
+          };
+        }),
+      )
       .returning({ id: accounts.id, name: accounts.name });
     const idByKey = new Map(
       data.accounts.map((a) => [a.key, inserted.find((row) => row.name === a.name)!.id]),
@@ -55,6 +68,11 @@ export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Da
       await tx.insert(transactions).values(rows.slice(i, i + 500));
     }
 
-    return { accounts: data.accounts.length, transactions: rows.length };
+    const snapshots = data.snapshots.map(({ accountKey, ...s }) => ({ ...s, accountId: idByKey.get(accountKey)! }));
+    for (let i = 0; i < snapshots.length; i += 500) {
+      await tx.insert(balanceSnapshots).values(snapshots.slice(i, i + 500));
+    }
+
+    return { accounts: data.accounts.length, transactions: rows.length, snapshots: snapshots.length };
   });
 }

@@ -3,6 +3,7 @@ import { count, desc, eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   accounts,
+  balanceSnapshots,
   categories,
   commandLog,
   connections,
@@ -222,6 +223,33 @@ describe("syncConnection", () => {
     await undoCommand(db, entry.id);
     expect(await rows()).toHaveLength(0);
     expect(await db.select().from(accounts)).toHaveLength(0);
+    expect(await db.select().from(balanceSnapshots)).toHaveLength(0);
+  });
+
+  it("records one balance snapshot per account per day, replaced by a later sync that day", async () => {
+    await sync();
+    snapshot.accounts = [account({ balanceCents: 95_000, balanceAt: new Date("2026-06-30T15:00:00Z") })];
+    await sync(new Date(now.getTime() + 3_600_000));
+    let snaps = await db.select().from(balanceSnapshots);
+    expect(snaps.map((s) => [s.on, s.balanceCents])).toEqual([["2026-06-30", 95_000]]);
+
+    // Next day, unchanged balance: still a data point.
+    await sync(new Date(now.getTime() + 86_400_000));
+    snaps = await db.select().from(balanceSnapshots).orderBy(balanceSnapshots.on);
+    expect(snaps.map((s) => [s.on, s.balanceCents])).toEqual([
+      ["2026-06-30", 95_000],
+      ["2026-07-01", 95_000],
+    ]);
+  });
+
+  it("undoing a sync restores the day's earlier snapshot", async () => {
+    await sync();
+    snapshot.accounts = [account({ balanceCents: 95_000 })];
+    await sync(new Date(now.getTime() + 3_600_000));
+    const [latest] = await db.select().from(commandLog).orderBy(desc(commandLog.createdAt)).limit(1);
+    await undoCommand(db, latest.id);
+    const snaps = await db.select().from(balanceSnapshots);
+    expect(snaps.map((s) => s.balanceCents)).toEqual([100_000]);
   });
 
   it("refuses the import operation to anyone but the import actor", async () => {

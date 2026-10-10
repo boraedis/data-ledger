@@ -2,20 +2,9 @@
 
 import { useState, useTransition } from "react";
 import { Input } from "@/components/ui/input";
-import { ACCOUNT_KINDS, countsTowardBudgetsByDefault, type AccountKind } from "@/lib/account-kinds";
+import { ACCOUNT_KINDS, KIND_LABELS, countsTowardBudgetsByDefault, type AccountKind } from "@/lib/account-kinds";
 import { formatCents } from "@/lib/money";
 import { updateAccount } from "./actions";
-
-const KIND_LABELS: Record<AccountKind, string> = {
-  checking: "Checking",
-  savings: "Savings",
-  credit: "Credit card",
-  payment_app: "Payment app",
-  brokerage: "Brokerage",
-  retirement: "Retirement",
-  loan: "Loan",
-  other_asset: "Other asset",
-};
 
 export type AccountRowData = {
   id: string;

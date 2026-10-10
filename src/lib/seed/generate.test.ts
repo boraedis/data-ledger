@@ -36,4 +36,18 @@ describe("generateSeed", () => {
     const into = transactions.filter((t) => t.description === "PAYMENT THANK YOU");
     expect(into.map((t) => t.amountCents).sort()).toEqual(out.map((t) => -t.amountCents).sort());
   });
+
+  it("records a balance for every account on every day, ending where the transactions leave them", () => {
+    const { accounts, transactions, snapshots } = generateSeed({ endDate });
+    const days = new Set(snapshots.map((s) => s.on));
+    expect(snapshots).toHaveLength(days.size * accounts.length);
+    const last = (key: string) => snapshots.findLast((s) => s.accountKey === key)!.balanceCents;
+    const first = (key: string) => snapshots.find((s) => s.accountKey === key)!;
+    // Checking's last balance = its first + every transaction after that day.
+    const after = transactions.filter((t) => t.accountKey === "checking" && t.postedOn > first("checking").on);
+    expect(last("checking")).toBe(first("checking").balanceCents + after.reduce((sum, t) => sum + t.amountCents, 0));
+    // Both debt sign conventions are present, which net worth has to handle.
+    expect(last("card")).toBeLessThan(0);
+    expect(last("auto")).toBeGreaterThan(0);
+  });
 });

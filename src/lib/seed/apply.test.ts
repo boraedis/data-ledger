@@ -18,7 +18,7 @@ describe("applySeed", () => {
     const result = await applySeed(db, { endDate: new Date("2026-06-30") });
     const [{ value }] = await db.select({ value: count() }).from(schema.transactions);
     expect(value).toBe(result.transactions);
-    expect(result.accounts).toBe(4);
+    expect(result.accounts).toBe(6);
   });
 
   it("can be re-run without duplicating anything", async () => {
@@ -27,7 +27,7 @@ describe("applySeed", () => {
     const [{ value }] = await db.select({ value: count() }).from(schema.transactions);
     expect(value).toBe(second.transactions);
     const [{ value: accounts }] = await db.select({ value: count() }).from(schema.accounts);
-    expect(accounts).toBe(4);
+    expect(accounts).toBe(6);
   });
 
   it("refuses, and changes nothing, when a non-seed account exists", async () => {

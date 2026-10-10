@@ -183,6 +183,31 @@ export const accounts = pgTable("accounts", {
   balanceAt: timestamp("balance_at", { withTimezone: true }),
 }, (t) => [uniqueIndex("accounts_connection_external_idx").on(t.connectionId, t.externalId)]);
 
+// One balance per account per day, recorded by every sync (#25). Banks only
+// ever report a balance "as of now", so history that isn't captured on the
+// day is gone for good — this table is the only place net-worth history can
+// come from. The balance is stored exactly as the provider reported it, with
+// no sign normalization: how a kind's balance counts toward net worth is
+// decided when reading (src/lib/net-worth.ts), so correcting an account's
+// kind later also corrects its past.
+export const balanceSnapshots = pgTable(
+  "balance_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    // The day this was recorded (UTC). A second sync the same day replaces
+    // the first rather than adding a row.
+    on: date("on").notNull(),
+    balanceCents: bigint("balance_cents", { mode: "number" }).notNull(),
+    // When the provider says the balance was true, which can lag the sync.
+    balanceAt: timestamp("balance_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("balance_snapshots_account_on_idx").on(t.accountId, t.on), index("balance_snapshots_on_idx").on(t.on)],
+);
+
 export const categoryKind = pgEnum("category_kind", ["expense", "income", "transfer"]);
 
 // The owner's own category tree (#6) — nothing is inherited from a bank.
