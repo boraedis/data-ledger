@@ -54,7 +54,12 @@ FAST_BOOT = True
 vllm_image = (
     modal.Image.from_registry("nvidia/cuda:12.9.0-devel-ubuntu22.04", add_python="3.12")
     .entrypoint([])
-    .uv_pip_install("vllm==0.21.0")
+    # Pinned to releases from vLLM 0.21.0's own week (May 2026), not
+    # "whatever resolves today": xgrammar 0.2.4/0.2.5 (Sept 2026) added a
+    # transformers<5 cap, so an unpinned install now pulls Transformers 4.x,
+    # which predates Gemma 4, and vLLM dies at startup ("Transformers does
+    # not recognize this architecture"). Bump these together, deliberately.
+    .uv_pip_install("vllm==0.21.0", "transformers==5.8.1", "xgrammar==0.2.1")
     .env({"HF_XET_HIGH_PERFORMANCE": "1"})
 )
 
