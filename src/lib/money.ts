@@ -21,3 +21,18 @@ export function parseAmountCents(amount: string): number {
   if (Number(padded[2]) >= 5) cents += 1;
   return sign === "-" && cents !== 0 ? -cents : cents;
 }
+
+/**
+ * A decimal string in canonical form, for quantities that aren't money
+ * (share counts): "+550.0" → "550", "0.50" → "0.5", "-0.0" → "0". Never goes
+ * through a float. Throws on anything that isn't a plain decimal.
+ */
+export function normalizeDecimal(value: string): string {
+  const match = /^([+-]?)(\d*)(?:\.(\d*))?$/.exec(value.trim());
+  if (!match || (!match[2] && !match[3])) throw new Error(`Unparseable decimal "${value}"`);
+  const [, sign, whole, fraction = ""] = match;
+  const intPart = whole.replace(/^0+(?=\d)/, "") || "0";
+  const fracPart = fraction.replace(/0+$/, "");
+  const body = fracPart ? `${intPart}.${fracPart}` : intPart;
+  return sign === "-" && /[1-9]/.test(body) ? `-${body}` : body;
+}

@@ -26,7 +26,7 @@ async function main() {
   try {
     const db = (local ? drizzlePg(pool as pg.Pool, { schema }) : drizzle(pool as Pool, { schema })) as unknown as Db;
     const result = await applySeed(db);
-    console.log(`Seeded ${result.accounts} accounts, ${result.transactions} transactions and ${result.snapshots} daily balances.`);
+    console.log(`Seeded ${result.accounts} accounts, ${result.transactions} transactions, ${result.snapshots} daily balances and ${result.holdings} daily positions.`);
   } finally {
     await pool.end();
   }

@@ -7,8 +7,10 @@ import {
   createSimpleFinConnector,
   epochToDate,
   normalizeAccountSet,
+  normalizeHoldings,
   parseAmountCents,
 } from "@/lib/connectors/simplefin";
+import { normalizeDecimal } from "@/lib/money";
 import { ConnectorAuthError } from "@/lib/connectors/types";
 
 // All data here is invented, shaped like SimpleFIN v2 responses.
@@ -83,6 +85,89 @@ describe("normalizeAccountSet", () => {
       { code: "con.auth", message: "Example Credit Union needs you to sign in again", institutionId: "CON-1" },
       { code: "gen", message: "You are approaching your daily request quota" },
     ]);
+  });
+});
+
+describe("normalizeDecimal", () => {
+  it.each([
+    ["550.0", "550"],
+    ["+12.50", "12.5"],
+    ["0.004321", "0.004321"],
+    ["007.10", "7.1"],
+    [".5", "0.5"],
+    ["-0.000", "0"],
+    ["-3.25", "-3.25"],
+    ["12345678901234567890.123456789", "12345678901234567890.123456789"],
+  ])("%s → %s", (input, out) => {
+    expect(normalizeDecimal(input)).toBe(out);
+  });
+
+  it("rejects anything that isn't a plain decimal", () => {
+    for (const bad of ["", ".", "1e3", "1,000", "abc", "1.2.3"]) expect(() => normalizeDecimal(bad)).toThrow();
+  });
+});
+
+describe("holdings", () => {
+  // Shaped like Bridge's demo position; values invented.
+  const position = {
+    id: "POS-1",
+    created: 345427200,
+    symbol: "EXTM",
+    description: "Example Total Market Fund",
+    shares: "550.0",
+    market_value: "105884.8",
+    cost_basis: "55.00",
+    purchase_price: "0.10",
+    currency: "USD",
+  };
+
+  it("maps a position with exact shares and cent values", () => {
+    expect(normalizeHoldings([position], "USD")).toEqual([
+      {
+        externalId: "POS-1",
+        symbol: "EXTM",
+        description: "Example Total Market Fund",
+        shares: "550",
+        marketValueCents: 10_588_480,
+        costBasisCents: 5_500,
+        currency: "USD",
+      },
+    ]);
+  });
+
+  it("reads a zero or missing cost basis as unknown, and falls back to the symbol for an id", () => {
+    const [zero, missing] = normalizeHoldings(
+      [
+        { ...position, cost_basis: "0.00" },
+        { ...position, id: undefined, cost_basis: undefined, currency: undefined },
+      ],
+      "CAD",
+    );
+    expect(zero.costBasisCents).toBeNull();
+    expect(missing).toMatchObject({ externalId: "EXTM", costBasisCents: null, currency: "CAD" });
+  });
+
+  it("skips positions it can't read exactly rather than guessing", () => {
+    expect(
+      normalizeHoldings(
+        [
+          { ...position, shares: "1e3" },
+          { ...position, market_value: undefined },
+          { ...position, id: undefined, symbol: undefined },
+          { ...position, id: "POS-2", shares: "2.5" },
+        ],
+        "USD",
+      ).map((h) => h.externalId),
+    ).toEqual(["POS-2"]);
+  });
+
+  it("tells 'no holdings reported' apart from 'none held'", () => {
+    const base = { name: "x", currency: "USD", balance: "1.00", "balance-date": 1 };
+    const { accounts } = normalizeAccountSet(
+      { accounts: [{ ...base, id: "A" }, { ...base, id: "B", holdings: [] }, { ...base, id: "C", holdings: [position] }] },
+      new Date(),
+    );
+    expect(accounts.map((a) => a.holdings?.length)).toEqual([undefined, 0, 1]);
   });
 });
 

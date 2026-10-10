@@ -4,6 +4,7 @@ import {
   accounts,
   balanceSnapshots,
   countsTowardBudgetsByDefault,
+  holdingSnapshots,
   transactionSplits,
   transactionTags,
   transactions,
@@ -21,6 +22,17 @@ import { defineWrite } from "@/operations/define";
 // row whose fields haven't changed isn't written at all. Re-running the same
 // snapshot logs a command with no changes.
 
+const rawHolding = z.object({
+  externalId: z.string().min(1),
+  symbol: z.string().nullable(),
+  description: z.string(),
+  // Exact decimal string; the connector has already normalized it.
+  shares: z.string().regex(/^-?\d+(\.\d+)?$/),
+  marketValueCents: z.number().int(),
+  costBasisCents: z.number().int().nullable(),
+  currency: z.string(),
+});
+
 const rawAccount = z.object({
   externalId: z.string().min(1),
   name: z.string(),
@@ -30,6 +42,7 @@ const rawAccount = z.object({
   balanceCents: z.number().int(),
   availableBalanceCents: z.number().int().nullable(),
   balanceAt: z.iso.datetime({ offset: true }),
+  holdings: z.array(rawHolding).optional(),
 });
 
 const rawTransaction = z.object({
@@ -93,7 +106,7 @@ export const applySnapshot = defineWrite({
     transactions: z.array(rawTransaction),
   }),
   apply: async (ctx, input) => {
-    const counts = { accountsAdded: 0, inserted: 0, updated: 0, removed: 0, snapshots: 0 };
+    const counts = { accountsAdded: 0, inserted: 0, updated: 0, removed: 0, snapshots: 0, holdings: 0 };
     const snapshotOn = input.snapshotOn ?? new Date().toISOString().slice(0, 10);
 
     // --- Accounts -----------------------------------------------------------
@@ -159,6 +172,53 @@ export const applySnapshot = defineWrite({
       } else if (existing.balanceCents !== raw.balanceCents || existing.balanceAt?.getTime() !== balanceAt.getTime()) {
         await ctx.update(balanceSnapshots, existing.id, { balanceCents: raw.balanceCents, balanceAt });
         counts.snapshots++;
+      }
+    }
+
+    // --- Holdings ----------------------------------------------------------
+    // Today's positions per account, replacing any recorded earlier today: a
+    // position sold between two syncs on the same day is removed, so a day's
+    // rows are always the latest picture. Only for accounts the provider
+    // reports holdings for at all; holdings never become transactions and
+    // never touch budgets.
+    for (const raw of input.accounts) {
+      if (raw.holdings === undefined) continue;
+      const accountId = accountIdByExternal.get(raw.externalId)!;
+      const recorded = await ctx.db
+        .select()
+        .from(holdingSnapshots)
+        .where(and(eq(holdingSnapshots.accountId, accountId), eq(holdingSnapshots.on, snapshotOn)));
+      const seenHoldings = new Set<string>();
+      for (const h of raw.holdings) {
+        if (seenHoldings.has(h.externalId)) continue; // a provider listing one position twice
+        seenHoldings.add(h.externalId);
+        const values = {
+          symbol: h.symbol,
+          description: h.description,
+          shares: h.shares,
+          marketValueCents: h.marketValueCents,
+          costBasisCents: h.costBasisCents,
+          currency: h.currency,
+        };
+        const existing = recorded.find((r) => r.externalId === h.externalId);
+        if (!existing) {
+          await ctx.insert(holdingSnapshots, { ...values, accountId, on: snapshotOn, externalId: h.externalId });
+          counts.holdings++;
+        } else if (
+          existing.symbol !== values.symbol ||
+          existing.description !== values.description ||
+          existing.shares !== values.shares ||
+          existing.marketValueCents !== values.marketValueCents ||
+          existing.costBasisCents !== values.costBasisCents ||
+          existing.currency !== values.currency
+        ) {
+          await ctx.update(holdingSnapshots, existing.id, values);
+          counts.holdings++;
+        }
+      }
+      for (const gone of recorded.filter((r) => !seenHoldings.has(r.externalId))) {
+        await ctx.remove(holdingSnapshots, gone.id);
+        counts.holdings++;
       }
     }
 

@@ -50,4 +50,14 @@ describe("generateSeed", () => {
     expect(last("card")).toBeLessThan(0);
     expect(last("auto")).toBeGreaterThan(0);
   });
+
+  it("holds invented positions worth no more than the brokerage balance, every day", () => {
+    const { holdings, snapshots } = generateSeed({ endDate });
+    const balance = new Map(snapshots.filter((s) => s.accountKey === "brokerage").map((s) => [s.on, s.balanceCents]));
+    const byDay = new Map<string, number>();
+    for (const h of holdings) byDay.set(h.on, (byDay.get(h.on) ?? 0) + h.marketValueCents);
+    expect(byDay.size).toBe(balance.size);
+    for (const [on, total] of byDay) expect(total).toBeLessThanOrEqual(balance.get(on)!);
+    expect(holdings.some((h) => h.costBasisCents === null)).toBe(true);
+  });
 });
