@@ -55,7 +55,9 @@ export async function runCategorization(db: Db): Promise<CategorizationResult> {
       merchant: transactions.merchant,
     })
     .from(transactions)
-    .where(and(isNull(transactions.categoryId), inArray(transactions.accountId, budgetAccountIds(db))));
+    .where(
+      and(isNull(transactions.categoryId), eq(transactions.isSplit, false), inArray(transactions.accountId, budgetAccountIds(db))),
+    );
   if (candidates.length === 0) return { byRules: 0, byMemory: 0, remaining: 0 };
 
   // 1. Rules.

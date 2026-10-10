@@ -1,4 +1,5 @@
 import type { SyncMessage } from "@/db/schema";
+import { parseAmountCents } from "@/lib/money";
 import {
   ConnectorAuthError,
   type Connector,
@@ -89,20 +90,9 @@ function splitAccessUrl(accessUrl: string): { base: string; authorization: strin
   };
 }
 
-/**
- * "-12.34" → -1234. Done on the string, never through a float: 0.1 + 0.2
- * style error has no business in a ledger. More than two decimals (some
- * institutions send them) rounds half away from zero.
- */
-export function parseAmountCents(amount: string): number {
-  const match = /^([+-]?)(\d+)(?:\.(\d+))?$/.exec(amount.trim());
-  if (!match) throw new Error(`Unparseable amount "${amount}"`);
-  const [, sign, whole, fraction = ""] = match;
-  const padded = fraction.padEnd(3, "0");
-  let cents = Number(whole) * 100 + Number(padded.slice(0, 2));
-  if (Number(padded[2]) >= 5) cents += 1;
-  return sign === "-" && cents !== 0 ? -cents : cents;
-}
+// Exact decimal → cents parsing lives in src/lib/money.ts (the client's
+// split editor needs it too); re-exported here for the connector's callers.
+export { parseAmountCents } from "@/lib/money";
 
 /**
  * Epoch seconds → YYYY-MM-DD, in UTC. Banks rarely carry a meaningful time

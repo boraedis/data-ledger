@@ -33,6 +33,15 @@ vi.mock("@/operations/registry", async (importOriginal) => {
       },
     }),
     defineWrite({
+      name: "test.insertThenUpdate",
+      description: "Test only: inserts a category, then changes it in the same command.",
+      input: z.object({}),
+      apply: async (ctx) => {
+        const row = await ctx.insert(schema.categories, { name: "Draft", kind: "expense" });
+        return ctx.update(schema.categories, row.id, { name: "Final" });
+      },
+    }),
+    defineWrite({
       name: "test.deleteCategory",
       description: "Test only: deletes a category.",
       input: z.object({ categoryId: z.uuid() }),
@@ -210,6 +219,14 @@ describe("undo", () => {
     await undoCommand(db, (result as { commandId: string }).commandId);
     const [after] = await db.select().from(categories).where(eq(categories.id, diningId));
     expect(after).toEqual(before);
+  });
+
+  it("undoes a command that changed the same row more than once", async () => {
+    const result = await execute(db, { operation: "test.insertThenUpdate", input: {}, actor: "user", reason: "x" });
+    expect(await db.select().from(categories).where(eq(categories.name, "Final"))).toHaveLength(1);
+    await undoCommand(db, (result as { commandId: string }).commandId);
+    expect(await db.select().from(categories).where(eq(categories.name, "Final"))).toHaveLength(0);
+    expect(await db.select().from(categories).where(eq(categories.name, "Draft"))).toHaveLength(0);
   });
 
   it("can't undo twice, undo an undo, or undo a proposal", async () => {

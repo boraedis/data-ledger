@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, useTransition } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -197,6 +198,11 @@ export function Inbox({ rows: serverRows, options }: { rows: InboxRow[]; options
         <input type="checkbox" checked={alwaysRule} onChange={(e) => setAlwaysRule(e.target.checked)} />
         Always for this merchant (creates a rule)
       </label>
+      {current ? (
+        <Link href={`/transactions/${current.id}`} className="block text-sm text-muted-foreground underline">
+          Split, tag or date this transaction →
+        </Link>
+      ) : null}
       {variant === "panel" ? (
         <p className="text-xs text-muted-foreground">↑↓ move · Tab next match · Enter assign · Shift+Enter assign + rule</p>
       ) : null}

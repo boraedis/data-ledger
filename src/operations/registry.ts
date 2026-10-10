@@ -3,14 +3,19 @@ import { listAccounts, updateAccount } from "@/operations/accounts";
 import { applySnapshot } from "@/operations/import";
 import { createCategory, deleteCategory, listCategories, moveCategory, renameCategory } from "@/operations/categories";
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
+import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { accounts, categories, rules, transactions } from "@/db/schema";
+import { accounts, categories, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
+  getTransaction,
   listInbox,
   listTransactions,
+  setExperienceDate,
   setTransactionCategory,
+  spendingLines,
+  splitTransaction,
 } from "@/operations/transactions";
 
 // The one list of everything that can be done to the ledger. The UI calls
@@ -29,8 +34,16 @@ export const operations: Operation[] = [
   updateRule,
   deleteRule,
   listTransactions,
+  getTransaction,
+  spendingLines,
   listInbox,
   setTransactionCategory,
+  splitTransaction,
+  setExperienceDate,
+  listTags,
+  setTransactionTags,
+  renameTag,
+  deleteTag,
   applyCategories,
   backfillMerchants,
   applySnapshot,
@@ -55,4 +68,12 @@ export function describeOperations() {
 // Tables tracked writes may touch, by SQL name — how undo finds the drizzle
 // table for a logged change. A write to a table missing here can't be undone,
 // and the undo test fails loudly if that happens.
-export const trackedTables = { accounts, categories, rules, transactions } as const;
+export const trackedTables = {
+  accounts,
+  categories,
+  rules,
+  transactions,
+  transaction_splits: transactionSplits,
+  tags,
+  transaction_tags: transactionTags,
+} as const;

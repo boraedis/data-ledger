@@ -32,6 +32,9 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           <Link href="/inbox" className="text-muted-foreground hover:text-foreground">
             Inbox{inbox ? <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">{inbox}</span> : null}
           </Link>
+          <Link href="/transactions" className="text-muted-foreground hover:text-foreground">
+            Transactions
+          </Link>
           <Link href="/categories" className="text-muted-foreground hover:text-foreground">
             Categories
           </Link>
