@@ -3,13 +3,19 @@ import { KIND_LABELS } from "@/lib/account-kinds";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { isLiability, netWorthSummary } from "@/lib/net-worth";
+import { investmentIncome } from "@/operations/investments";
+import { read } from "@/operations/runtime";
 import { ManualBadge } from "../accounts/account-row";
 import { NetWorthChart } from "./net-worth-chart";
 
 // Net worth today and over time (#25). Read-only: balances come from syncs,
 // and how each kind counts is explained in src/lib/net-worth.ts.
 export default async function NetWorthPage() {
-  const summary = await netWorthSummary(getDb());
+  const db = getDb();
+  // The trailing twelve months, from the first of the month eleven months ago.
+  const now = new Date();
+  const yearAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1)).toISOString().slice(0, 10);
+  const [summary, income] = await Promise.all([netWorthSummary(db), read(db, investmentIncome, { from: yearAgo })]);
   const largest = Math.max(1, ...summary.byKind.map((k) => Math.abs(k.cents)));
   const historyStart = summary.series[0]?.on;
 
@@ -65,6 +71,40 @@ export default async function NetWorthPage() {
           </ul>
         )}
       </section>
+
+      {income.byMonth.length ? (
+        <section className="space-y-2">
+          <h2 className="text-lg font-medium">Investment income</h2>
+          {/* Kept apart from budget income on purpose: it comes from what
+              you hold, not your paycheck, and those accounts are out of
+              budgets. Reinvested dividends still count; the reinvestment
+              itself is a buy. */}
+          <p className="text-sm text-muted-foreground tabular-nums">
+            {formatCents(income.totalCents)} in the last 12 months: {formatCents(income.dividendsCents)} in dividends,{" "}
+            {formatCents(income.interestCents)} in interest.
+          </p>
+          <table className="w-full text-sm tabular-nums">
+            <thead className="text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="py-1 font-normal">Month</th>
+                <th className="py-1 text-right font-normal">Dividends</th>
+                <th className="py-1 text-right font-normal">Interest</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {income.byMonth.map((m) => (
+                <tr key={m.month}>
+                  <td className="py-1">
+                    {new Date(`${m.month}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" })}
+                  </td>
+                  <td className="py-1 text-right">{m.dividendsCents ? formatCents(m.dividendsCents) : "—"}</td>
+                  <td className="py-1 text-right">{m.interestCents ? formatCents(m.interestCents) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      ) : null}
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Accounts</h2>

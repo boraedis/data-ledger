@@ -78,6 +78,17 @@ Runs after every sync (and after each correction in the inbox), only on
 uncategorized transactions in accounts that count toward budgets, and
 never overwrites a category that's already set:
 
+0. **Transfers** (#24) — a cash-account transaction and one in a
+   brokerage or retirement account with exactly opposite amounts, within 5
+   days, are paired as the two sides of a transfer (actor `matcher`, one
+   undoable command per run). A paired transaction needs no category: it
+   leaves the inbox and never counts as spending or income. Only
+   unambiguous pairs — on a tie for closest date, neither is paired — and
+   never a cash side the owner already categorized. "Not a transfer" on the
+   transaction page unpairs both sides and the matcher leaves them alone.
+   Cash↔investment only for now: between two everyday accounts (say, a
+   $20 card charge and a $20 payment-app receipt) a coincidental match is
+   too likely.
 1. **Rules** — the owner's own, in priority order: merchant or description
    equals / contains / starts with a pattern, optionally limited to one
    account or an amount range. No regex (a user pattern run over every
@@ -423,6 +434,16 @@ syncs never touch them. Creating, updating and removing them (which removes
 their history too) are owner-only operations, logged and undoable; Tally
 can't run them, since it would see the values.
 
+**Investment activity** (#24). Brokerage and retirement accounts start
+outside budgets, so their buys, sells and dividends never read as spending
+or paycheck income. Each of their transactions is labelled by description
+rules (`src/lib/investments/activity.ts`, no model): dividend (including
+capital-gain distributions), interest, reinvestment, buy, sell, fee,
+transfer or other. Labels are computed when read, so changing an account's
+kind relabels its history. Dividends and interest that paid money in are
+**investment income**, reported on their own (`investments.income`, and on
+the Net worth page), never mixed into budget income.
+
 Net worth is deliberately **not** an operation: every registered read
 becomes one of Tally's tools, and balances never go to a model.
 
@@ -436,7 +457,8 @@ one's JSON Schema for tool-calling surfaces.
 
 Everything runs through `execute()` in `runtime.ts`, which:
 
-- validates input and the **actor** (`user`, `tally`, `import`, `rule:<id>`),
+- validates input and the **actor** (`user`, `tally`, `import`, `rule:<id>`,
+  `memory`, `model`, `matcher`),
   including operations restricted to certain actors (`allowedActors`);
 - applies a write and its **command log** entry in one transaction, with a
   required one-line reason;

@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
-import { categories, categorySuggestions, rules, transactions } from "@/db/schema";
+import { accounts, categories, categorySuggestions, rules, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import {
   classifierRequest,
@@ -11,11 +11,16 @@ import {
 import { categoryOptions } from "@/lib/categorize/labels";
 import { firstMatchingRule, merchantMemory, type RuleLike } from "@/lib/categorize/match";
 import { chat, modelIsConfigured } from "@/lib/model/client";
-import { budgetAccountIds } from "@/operations/accounts";
+import { CASH_KINDS, INVESTMENT_KINDS } from "@/lib/investments/activity";
+import { findTransferPairs } from "@/lib/investments/transfers";
 import { execute } from "@/operations/runtime";
+import { awaitingCategory } from "@/operations/transactions";
 
 // The categorization pipeline (README, "Categorization pipeline"):
 //
+//   0. transfer matching (#24): money moved between a cash account and an
+//      investment account is paired, not categorized — it's neither
+//      spending nor income, so it leaves the queue before any rule sees it
 //   1. the owner's rules, in priority order
 //   2. merchant memory — categorize like this merchant was before
 //   3. the self-hosted model (#39), only for what 1 and 2 left, and only when
@@ -31,6 +36,8 @@ import { execute } from "@/operations/runtime";
 const BATCH = 2000;
 
 export type CategorizationResult = {
+  // Transfer pairs matched this run (each takes two transactions).
+  transfers?: number;
   byRules: number;
   byMemory: number;
   byModel: number;
@@ -105,10 +112,51 @@ async function applyInBatches(db: Db, actor: "memory" | "model" | `rule:${string
   return applied;
 }
 
+/**
+ * Step 0: pair unambiguous transfers between cash and investment accounts,
+ * as one undoable "matcher" command. Pending rows, rows already paired, and
+ * rows the owner said aren't transfers are left alone; the cash side must
+ * still be uncategorized (if the owner already filed it, that stands).
+ */
+export async function matchTransfersStep(db: Db): Promise<number> {
+  const open = and(eq(transactions.pending, false), isNull(transactions.transferPairId), eq(transactions.transferRejected, false));
+  const select = { id: transactions.id, accountId: transactions.accountId, amountCents: transactions.amountCents, postedOn: transactions.postedOn };
+  const investment = await db
+    .select(select)
+    .from(transactions)
+    .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+    .where(and(open, inArray(accounts.type, [...INVESTMENT_KINDS])));
+  if (investment.length === 0) return 0;
+  const amounts = [...new Set(investment.map((t) => -t.amountCents))];
+  const cash = await db
+    .select(select)
+    .from(transactions)
+    .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+    .where(
+      and(
+        open,
+        isNull(transactions.categoryId),
+        eq(transactions.isSplit, false),
+        inArray(accounts.type, [...CASH_KINDS]),
+        inArray(transactions.amountCents, amounts),
+      ),
+    );
+  const pairs = findTransferPairs(cash, investment);
+  if (pairs.length === 0) return 0;
+  const result = await execute(db, {
+    operation: "transactions.matchTransfers",
+    actor: "matcher",
+    reason: `Matched ${pairs.length} transfer${pairs.length === 1 ? "" : "s"} between cash and investment accounts`,
+    input: { pairs },
+  });
+  return result.status === "applied" ? (result.output as { matched: number }).matched : 0;
+}
+
 export async function runCategorization(
   db: Db,
   { model }: { model?: ModelStepOptions | false } = {},
 ): Promise<CategorizationResult> {
+  const transfers = await matchTransfersStep(db);
   const candidates = await db
     .select({
       id: transactions.id,
@@ -120,10 +168,8 @@ export async function runCategorization(
       experiencedOn: transactions.experiencedOn,
     })
     .from(transactions)
-    .where(
-      and(isNull(transactions.categoryId), eq(transactions.isSplit, false), inArray(transactions.accountId, budgetAccountIds(db))),
-    );
-  if (candidates.length === 0) return { byRules: 0, byMemory: 0, byModel: 0, modelSeen: 0, modelPending: 0, remaining: 0 };
+    .where(awaitingCategory(db));
+  if (candidates.length === 0) return { transfers, byRules: 0, byMemory: 0, byModel: 0, modelSeen: 0, modelPending: 0, remaining: 0 };
 
   // 1. Rules.
   const activeRules = await db
@@ -177,6 +223,7 @@ export async function runCategorization(
   const modelResult = model && modelIsConfigured() ? await modelStep(db, forModel, model) : { byModel: 0, seen: 0, pending: 0 };
 
   return {
+    transfers,
     byRules,
     byMemory,
     byModel: modelResult.byModel,

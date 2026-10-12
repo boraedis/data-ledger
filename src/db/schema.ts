@@ -302,10 +302,21 @@ export const transactions = pgTable(
     // use experiencedOn ?? postedOn.
     experiencedOn: date("experienced_on"),
     categoryId: uuid("category_id").references(() => categories.id, { onDelete: "set null" }),
+    // The other side of a transfer between two of the owner's own accounts
+    // (#24): money moved, nothing was spent or earned. Both sides point at
+    // each other. A paired transaction is out of the inbox and out of
+    // spending without needing a category. Set by the transfer matcher
+    // (src/lib/investments/transfers.ts) or the owner. SET NULL is a
+    // backstop only: unpairing goes through transactions.unmatchTransfer,
+    // which clears both sides as tracked writes.
+    transferPairId: uuid("transfer_pair_id").references((): AnyPgColumn => transactions.id, { onDelete: "set null" }),
+    // The owner said this isn't a transfer; the matcher leaves it alone.
+    transferRejected: boolean("transfer_rejected").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("transactions_posted_on_idx").on(t.postedOn),
+    index("transactions_transfer_pair_idx").on(t.transferPairId),
     index("transactions_merchant_idx").on(t.merchant),
     uniqueIndex("transactions_account_external_idx").on(t.accountId, t.externalId),
   ],

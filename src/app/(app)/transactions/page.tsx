@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ACTIVITY_LABELS } from "@/lib/investments/activity";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
@@ -118,6 +119,14 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                       <span className="rounded bg-secondary px-1.5">Split</span>
                     ) : t.categoryId ? (
                       <span className="rounded bg-secondary px-1.5">{labelOf.get(t.categoryId)}</span>
+                    ) : t.transfer ? (
+                      <span className="rounded border border-dashed px-1.5 text-muted-foreground">
+                        Transfer {t.amountCents > 0 ? "from" : "to"} {accountName.get(t.transfer.accountId)}
+                      </span>
+                    ) : t.investmentActivity ? (
+                      // Investment accounts are out of budgets: an
+                      // uncategorized trade isn't waiting on anything.
+                      <span className="rounded bg-secondary px-1.5">{ACTIVITY_LABELS[t.investmentActivity]}</span>
                     ) : (
                       <span className="rounded bg-amber-500/15 px-1.5 text-amber-800 dark:text-amber-200">Uncategorized</span>
                     )}

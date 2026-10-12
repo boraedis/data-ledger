@@ -56,8 +56,8 @@ export const SEED_ACCOUNTS: SeedAccount[] = [
   { key: "savings", name: "Rainy Day Savings", institution: "Example Community Credit Union", type: "savings" },
   { key: "card", name: "Rewards Card", institution: "Placeholder Card Co.", type: "credit" },
   { key: "p2p", name: "PayPeer", institution: "PayPeer", type: "payment_app" },
-  // Balance-only accounts: no transactions, just history, so net worth has
-  // an investment and a debt to show.
+  // Net worth needs an investment and a debt to show. The loan has balance
+  // history only; the brokerage also has investment activity (#24).
   { key: "brokerage", name: "Index Fund Account", institution: "Example Brokerage", type: "brokerage" },
   { key: "auto", name: "Auto Loan", institution: "Example Community Credit Union", type: "loan" },
 ];
@@ -174,6 +174,23 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
     }
   }
 
+  // Investing (#24): a monthly contribution from checking that lands in the
+  // brokerage two days later — a transfer on both sides, which the matcher
+  // should pair — then a buy; quarterly dividends, reinvested; and a little
+  // interest on uninvested cash. None of it is spending or paycheck income.
+  for (let m = 0; m <= months; m++) {
+    const month = (day: number) => new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + m, day));
+    add("checking", month(5), -50_000, "ONLINE TRANSFER TO EXAMPLE BROKERAGE XXXXXX");
+    add("brokerage", month(7), 50_000, "ACH DEPOSIT FROM BANK");
+    add("brokerage", month(8), -50_000, "BUY EXTM EXAMPLE TOTAL MARKET INDEX FUND");
+    add("brokerage", month(28), between(40, 320), "INTEREST ON CASH SWEEP");
+    if (m % 3 === 2) {
+      const dividend = between(9_000, 14_000);
+      add("brokerage", month(24), dividend, "DIVIDEND RECEIVED EXTM");
+      add("brokerage", month(25), -dividend, "DIVIDEND REINVESTMENT EXTM");
+    }
+  }
+
   // Paying the card off from checking on the 20th — a transfer, not
   // spending. Paid in full: whatever was charged since the last payment, so
   // the card's balance stays a realistic debt rather than drifting.
@@ -215,7 +232,8 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
   for (let day = new Date(start); day <= end; day = addDays(day, 1)) {
     const on = iso(day);
     for (; t < transactions.length && transactions[t].postedOn === on; t++) {
-      running[transactions[t].accountKey] += transactions[t].amountCents;
+      // Balance-only accounts (the brokerage) follow their own walk below.
+      if (transactions[t].accountKey in running) running[transactions[t].accountKey] += transactions[t].amountCents;
     }
     // A market that drifts up with daily noise, and a loan paid down monthly.
     brokerage = Math.round(brokerage * (1 + (random() - 0.47) * 0.012));

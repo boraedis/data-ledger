@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createManualAccount, deleteManualAccount, listAccounts, setManualValue, updateAccount } from "@/operations/accounts";
 import { applySnapshot } from "@/operations/import";
+import { investmentIncome } from "@/operations/investments";
 import { createCategory, deleteCategory, listCategories, moveCategory, renameCategory } from "@/operations/categories";
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
@@ -13,10 +14,12 @@ import {
   listInbox,
   recordSuggestions,
   listTransactions,
+  matchTransfers,
   setExperienceDate,
   setTransactionCategory,
   spendingLines,
   splitTransaction,
+  unmatchTransfer,
 } from "@/operations/transactions";
 
 // The one list of everything that can be done to the ledger. The UI calls
@@ -40,10 +43,13 @@ export const operations: Operation[] = [
   listTransactions,
   getTransaction,
   spendingLines,
+  investmentIncome,
   listInbox,
   setTransactionCategory,
   splitTransaction,
   setExperienceDate,
+  matchTransfers,
+  unmatchTransfer,
   listTags,
   setTransactionTags,
   renameTag,
