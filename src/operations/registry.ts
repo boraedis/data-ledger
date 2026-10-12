@@ -5,7 +5,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { accounts, balanceSnapshots, categories, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { accounts, balanceSnapshots, categories, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -76,6 +76,7 @@ export function describeOperations() {
 export const trackedTables = {
   accounts,
   balance_snapshots: balanceSnapshots,
+  holding_snapshots: holdingSnapshots,
   categories,
   rules,
   transactions,

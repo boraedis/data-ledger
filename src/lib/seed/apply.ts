@@ -4,7 +4,7 @@ import type { Db } from "@/db/types";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { generateSeed } from "@/lib/seed/generate";
 
-const { accounts, balanceSnapshots, categories, transactions } = schema;
+const { accounts, balanceSnapshots, categories, holdingSnapshots, transactions } = schema;
 
 export class RealDataPresentError extends Error {}
 
@@ -73,6 +73,11 @@ export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Da
       await tx.insert(balanceSnapshots).values(snapshots.slice(i, i + 500));
     }
 
-    return { accounts: data.accounts.length, transactions: rows.length, snapshots: snapshots.length };
+    const holdings = data.holdings.map(({ accountKey, ...h }) => ({ ...h, accountId: idByKey.get(accountKey)! }));
+    for (let i = 0; i < holdings.length; i += 500) {
+      await tx.insert(holdingSnapshots).values(holdings.slice(i, i + 500));
+    }
+
+    return { accounts: data.accounts.length, transactions: rows.length, snapshots: snapshots.length, holdings: holdings.length };
   });
 }

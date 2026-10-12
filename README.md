@@ -359,6 +359,17 @@ Settings. Each run:
   that the bank no longer returns is removed, and a newly posted one with
   the same account and amount within 5 days inherits its category.
 
+- records **investment holdings** where the provider sends them (Bridge
+  includes a `holdings` list per account; not in the published protocol):
+  symbol, description, shares as an exact decimal (Postgres `numeric`,
+  never a float), market value and total cost basis in cents. One row per
+  position per account per day in `holding_snapshots`, replaced by a later
+  sync that day, inside the same undoable import command. A zero cost basis
+  is stored as unknown, and a position whose numbers can't be read exactly
+  is skipped. Holdings are display and history only: an account's net-worth
+  value is still its balance, which already includes them, and they never
+  become transactions, count toward budgets, or go to a model.
+
 **Health:** a 403 or 402 marks the connection broken (only reconnecting
 fixes it); other failures just fail that night. Provider messages are kept
 per institution and always shown, as Bridge asks. An institution with no

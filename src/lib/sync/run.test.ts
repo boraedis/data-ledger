@@ -5,6 +5,7 @@ import {
   accounts,
   balanceSnapshots,
   categories,
+  holdingSnapshots,
   commandLog,
   connections,
   syncRuns,
@@ -250,6 +251,67 @@ describe("syncConnection", () => {
     await undoCommand(db, latest.id);
     const snaps = await db.select().from(balanceSnapshots);
     expect(snaps.map((s) => s.balanceCents)).toEqual([100_000]);
+  });
+
+  describe("holdings", () => {
+    const holding = (id: string, overrides = {}) => ({
+      externalId: id,
+      symbol: id,
+      description: `Example ${id} Fund`,
+      shares: "10.5",
+      marketValueCents: 105_000,
+      costBasisCents: 90_000,
+      currency: "USD",
+      ...overrides,
+    });
+    const held = () => db.select().from(holdingSnapshots).orderBy(holdingSnapshots.on, holdingSnapshots.externalId);
+
+    beforeEach(() => {
+      snapshot.accounts = [account({ name: "Individual Brokerage", holdings: [holding("EXTM"), holding("EXBD", { shares: "0.004321" })] })];
+      snapshot.transactions = [];
+    });
+
+    it("records today's positions with exact shares, and no transactions", async () => {
+      expect(await sync()).toMatchObject({ status: "success", inserted: 0 });
+      expect((await held()).map((h) => [h.on, h.externalId, h.shares, h.marketValueCents])).toEqual([
+        ["2026-06-30", "EXBD", "0.004321", 105_000],
+        ["2026-06-30", "EXTM", "10.5", 105_000],
+      ]);
+      expect(await rows()).toHaveLength(0);
+      const [acct] = await db.select().from(accounts);
+      expect(acct).toMatchObject({ type: "brokerage", countsTowardBudgets: false });
+    });
+
+    it("a later sync the same day replaces the day's picture; the next day adds history", async () => {
+      await sync();
+      // Sold EXBD and EXTM moved, later the same day.
+      snapshot.accounts = [account({ holdings: [holding("EXTM", { marketValueCents: 110_000 })] })];
+      await sync(new Date(now.getTime() + 3_600_000));
+      expect((await held()).map((h) => [h.externalId, h.marketValueCents])).toEqual([["EXTM", 110_000]]);
+
+      await sync(new Date(now.getTime() + 86_400_000));
+      expect((await held()).map((h) => [h.on, h.externalId])).toEqual([
+        ["2026-06-30", "EXTM"],
+        ["2026-07-01", "EXTM"],
+      ]);
+      // Re-running the same day's snapshot changes nothing.
+      await sync(new Date(now.getTime() + 86_400_000 + 60_000));
+      const [last] = await db.select().from(commandLog).orderBy(desc(commandLog.createdAt)).limit(1);
+      expect(last.changes).toEqual([]);
+    });
+
+    it("leaves recorded positions alone when the provider stops reporting holdings, and undoes with the sync", async () => {
+      await sync();
+      snapshot.accounts = [account()]; // no holdings key at all
+      await sync(new Date(now.getTime() + 3_600_000));
+      expect(await held()).toHaveLength(2);
+
+      const [first] = await db.select().from(commandLog).orderBy(commandLog.createdAt).limit(1);
+      const [second] = await db.select().from(commandLog).orderBy(desc(commandLog.createdAt)).limit(1);
+      await undoCommand(db, second.id);
+      await undoCommand(db, first.id);
+      expect(await held()).toHaveLength(0);
+    });
   });
 
   it("refuses the import operation to anyone but the import actor", async () => {

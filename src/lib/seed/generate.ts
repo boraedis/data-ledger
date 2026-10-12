@@ -18,6 +18,29 @@ export type SeedAccount = {
 // A day's balance per account, for net-worth history (#25).
 export type SeedSnapshot = { accountKey: string; on: string; balanceCents: number };
 
+// A day's position in the brokerage account (#23).
+export type SeedHolding = {
+  accountKey: string;
+  on: string;
+  externalId: string;
+  symbol: string;
+  description: string;
+  shares: string;
+  marketValueCents: number;
+  costBasisCents: number | null;
+  currency: string;
+};
+
+// Invented funds with invented tickers — not real securities. Shares are
+// fixed, so each day's value moves with the account balance; a share of the
+// account sits in cash. One position has no cost basis, as happens when a
+// brokerage doesn't have it (e.g. shares transferred in).
+const SEED_POSITIONS = [
+  { externalId: "seed-pos-1", symbol: "EXTM", description: "Example Total Market Index Fund", shares: "182.4071", weight: 0.62, costBasisCents: 2_050_000 },
+  { externalId: "seed-pos-2", symbol: "EXIN", description: "Example International Index Fund", shares: "310.5", weight: 0.23, costBasisCents: 960_000 },
+  { externalId: "seed-pos-3", symbol: "EXBD", description: "Example Bond Index Fund", shares: "95", weight: 0.11, costBasisCents: null },
+] as const;
+
 export type SeedTransaction = {
   accountKey: string;
   postedOn: string; // YYYY-MM-DD
@@ -184,6 +207,7 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
   // positive, as real providers disagree — exercising both sides of the
   // net-worth sign convention (src/lib/net-worth.ts).
   const snapshots: SeedSnapshot[] = [];
+  const holdings: SeedHolding[] = [];
   const running = { ...OPENING_BALANCES };
   let brokerage = 3_850_000;
   let loan = 1_420_000;
@@ -198,8 +222,11 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
     if (day.getUTCDate() === 10) loan = Math.max(0, loan - 41_500);
     for (const [accountKey, balanceCents] of Object.entries(running)) snapshots.push({ accountKey, on, balanceCents });
     snapshots.push({ accountKey: "brokerage", on, balanceCents: brokerage });
+    for (const { weight, ...position } of SEED_POSITIONS) {
+      holdings.push({ ...position, accountKey: "brokerage", on, marketValueCents: Math.round(brokerage * weight), currency: "USD" });
+    }
     snapshots.push({ accountKey: "auto", on, balanceCents: loan });
   }
 
-  return { accounts: SEED_ACCOUNTS, categories: SEED_CATEGORIES, transactions, snapshots };
+  return { accounts: SEED_ACCOUNTS, categories: SEED_CATEGORIES, transactions, snapshots, holdings };
 }

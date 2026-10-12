@@ -14,6 +14,23 @@ export type RawAccount = {
   balanceCents: number;
   availableBalanceCents: number | null;
   balanceAt: Date;
+  // Investment positions as of the sync (#23). Undefined means the provider
+  // doesn't report holdings for this account, which is different from an
+  // empty list (it does, and there are none).
+  holdings?: RawHolding[];
+};
+
+export type RawHolding = {
+  // The provider's ID for the position, or its symbol when it has none.
+  externalId: string;
+  symbol: string | null;
+  description: string;
+  // An exact decimal string ("12.5", "0.004321"), never a float.
+  shares: string;
+  marketValueCents: number;
+  // Total cost of the position; null when the brokerage doesn't say.
+  costBasisCents: number | null;
+  currency: string;
 };
 
 export type RawTransaction = {
