@@ -1,6 +1,6 @@
 import { and, count, eq, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { categories, rules, transactionSplits, transactions } from "@/db/schema";
+import { budgetAdjustments, budgetTargets, categories, rules, transactionSplits, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { defineRead, defineWrite } from "@/operations/define";
 
@@ -105,14 +105,18 @@ export const deleteCategory = defineWrite({
       ctx.db.select({ value: count() }).from(rules).where(eq(rules.categoryId, categoryId)),
       ctx.db.select({ value: count() }).from(categories).where(eq(categories.parentId, categoryId)),
       ctx.db.select({ value: count() }).from(transactionSplits).where(eq(transactionSplits.categoryId, categoryId)),
+      ctx.db.select({ value: count() }).from(budgetTargets).where(eq(budgetTargets.categoryId, categoryId)),
+      ctx.db.select({ value: count() }).from(budgetAdjustments).where(eq(budgetAdjustments.categoryId, categoryId)),
     ]);
-    const [txns, ruleCount, children, splitParts] = usage.map(([{ value }]) => value);
+    const [txns, ruleCount, children, splitParts, targets, adjustments] = usage.map(([{ value }]) => value);
     if (txns || ruleCount || children || splitParts) {
       throw new Error(
         `Still in use: ${txns} transactions, ${splitParts} split parts, ${ruleCount} rules, ${children} subcategories. ` +
           "Recategorize or move them first.",
       );
     }
+    // Budget history refers to it; deleting would rewrite past periods.
+    if (targets || adjustments) throw new Error("This category has budget history. Remove its target instead; the history stays.");
     await ctx.remove(categories, categoryId);
   },
 });

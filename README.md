@@ -173,6 +173,26 @@ Only the description, amount and date are ever sent to a model — never
 account numbers, balances or connection tokens — and that model is always
 the owner's own (see below).
 
+### Budgets
+
+**Category targets plus one buffer** (#7; rules in `src/lib/budgets/engine.ts`).
+
+- **Targets and periods:** a target is an amount per period for an expense category. A period is N months counted from an anchor month: 1 is monthly, 12 annual (January by default), anything else custom, such as every 3 or 6 months.
+- **Parents and children:** a target on a parent covers its children, unless a child has its own target.
+- **The buffer:** one target with no category, which every expense category without a target draws from, so "misc" never needs a category of its own. What drew from it is listed by category, which is where a new target suggests itself.
+- **Net spend:** spending minus refunds, in accounts that count toward budgets, by experience date (`transactions.spendingLines`). Income and transfer categories, uncategorized transactions and matched transfers never count. Reimbursements (#8) will reduce spend here too.
+- **Versioned:** a change starts a new version at the beginning of the current period, so earlier periods keep the target they had. Browse earlier months on the Budgets page to see them as they were.
+  - **Same-period edits** correct that version instead of adding one.
+  - **Schedule changes:** if the period itself changes (monthly → annual in October), the new schedule's first period starts at that boundary and is prorated by months, so nothing is counted twice.
+  - **New annual targets** cover the whole year, giving true year-to-date figures.
+  - **Removing a target** keeps its history; its spending falls to the buffer from then on.
+- **Rollover:** per target, the remainder (or overspend) carries into the next period while rollover stays on. A gap resets it.
+- **Annual and other multi-month targets** show year-to-date (period-to-date) spend against an even-pace marker. With a sinking fund, they also show the monthly set-aside and how much should be set aside by now.
+- **Rebalancing:** `budgets.rebalance` moves money between two targets for the current period only, as a dated adjustment pair. Both targets stay as they are.
+- **Operations:**
+  - **Reads:** `budgets.status` and `budgets.targets`. Budget figures come from transactions, not balances, so Tally may read them.
+  - **Writes:** `budgets.setTarget`, `removeTarget` and `rebalance`. All are logged and undoable, and Tally's are proposals.
+
 ### AI: one self-hosted model
 
 The app has **one model**, and every AI feature goes through it: Tally's
