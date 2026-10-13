@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { modelCalls } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { testDb } from "@/lib/test-utils/db";
-import { ModelError, ModelNotConfiguredError, ModelUnavailableError, chat } from "@/lib/model/client";
+import { ModelError, ModelNotConfiguredError, ModelUnavailableError, chat, chatStream, type StreamEvent } from "@/lib/model/client";
 import { modelConfig } from "@/lib/model/config";
 
 const env = { ...process.env };
@@ -120,3 +120,63 @@ describe("chat", () => {
   });
 });
 
+
+/** An SSE body like vLLM's, split across reads at awkward places. */
+function sse(chunks: unknown[]): Response {
+  const text = chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join("") + "data: [DONE]\n\n";
+  const encoder = new TextEncoder();
+  const pieces = [text.slice(0, 17), text.slice(17, 90), text.slice(90)];
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (const p of pieces) controller.enqueue(encoder.encode(p));
+        controller.close();
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "text/event-stream" } },
+  );
+}
+
+async function collect(gen: AsyncGenerator<StreamEvent>) {
+  const events: StreamEvent[] = [];
+  for await (const e of gen) events.push(e);
+  return events;
+}
+
+describe("chatStream", () => {
+  it("reports waiting through a cold start, then streams text and assembles tool calls", async () => {
+    const c = clock();
+    let calls = 0;
+    const fetch = (async () => {
+      calls++;
+      if (calls <= 2) return new Response(null, { status: 503 });
+      return sse([
+        { choices: [{ delta: { content: "Let me " } }] },
+        { choices: [{ delta: { content: "check." } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, id: "call_1", function: { name: "transactions__list", arguments: "{\"lim" } }] } }] },
+        { choices: [{ delta: { tool_calls: [{ index: 0, function: { arguments: "it\": 5}" } }] } }] },
+        { choices: [], usage: { prompt_tokens: 100, completion_tokens: 20 } },
+      ]);
+    }) as typeof globalThis.fetch;
+
+    const events = await collect(chatStream({ feature: "tally", messages: [{ role: "user", content: "hi" }], mode: "interactive" }, { fetch, db, ...c }));
+    expect(events.filter((e) => e.type === "waiting").map((e) => (e as { retries: number }).retries)).toEqual([1, 2]);
+    expect(events.filter((e) => e.type === "delta").map((e) => (e as { text: string }).text).join("")).toBe("Let me check.");
+    const done = events.at(-1) as Extract<StreamEvent, { type: "done" }>;
+    expect(done).toMatchObject({
+      type: "done",
+      content: "Let me check.",
+      coldStartRetries: 2,
+      usage: { promptTokens: 100, completionTokens: 20 },
+      toolCalls: [{ id: "call_1", type: "function", function: { name: "transactions__list", arguments: '{"limit": 5}' } }],
+    });
+    const [logged] = await db.select().from(modelCalls);
+    expect(logged).toMatchObject({ feature: "tally", status: "ok", coldStartRetries: 2, promptTokens: 100 });
+  });
+
+  it("gives up with ModelUnavailableError when the cold start outlasts the interactive budget", async () => {
+    const c = clock();
+    const fetch = (async () => new Response(null, { status: 503 })) as typeof globalThis.fetch;
+    await expect(collect(chatStream({ feature: "tally", messages: [], mode: "interactive" }, { fetch, db, ...c }))).rejects.toBeInstanceOf(ModelUnavailableError);
+  });
+});

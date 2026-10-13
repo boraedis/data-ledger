@@ -1,7 +1,9 @@
 import { timingSafeEqual } from "crypto";
 import { after } from "next/server";
 import { chainUrl, classifyLink, triggerClassify } from "@/lib/categorize/classify-chain";
+import { withTransactionalDb } from "@/lib/db";
 import { modelIsConfigured } from "@/lib/model/client";
+import { writeDigest } from "@/lib/tally/digest";
 
 // The nightly model step (#6), as a self-continuing job — see
 // src/lib/categorize/classify-chain.ts for why. Triggered by the sync cron
@@ -24,8 +26,16 @@ async function handle(request: Request) {
   if (!modelIsConfigured()) return Response.json({ skipped: "no model configured" });
   const depth = Math.max(0, Math.min(Number(request.headers.get("x-chain-depth")) || 0, 100));
   const url = chainUrl(request.url);
+  const started = Date.now();
   after(async () => {
     const result = await classifyLink(depth, maxDuration, { trigger: (next) => triggerClassify(url, next) });
+    // The chain's last link writes the day's digest (#11): the model is warm
+    // by now. With whatever time this function has left; if that's not
+    // enough, Home still shows the alerts and counts it would have covered.
+    if (!result.continued) {
+      const written = await withTransactionalDb((db) => writeDigest(db, { deadline: started + (maxDuration - 5) * 1000 }));
+      console.log(`digest ${written ? "written" : "not written"}`);
+    }
     // Counts only — never transaction details — in Vercel's logs.
     console.log(
       `classify link ${depth}: model applied ${result.byModel}, saw ${result.modelSeen}, pending ${result.modelPending}` +

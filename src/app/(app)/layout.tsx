@@ -22,12 +22,15 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   const [problems, inbox] = await Promise.all([getConnectionHealth(db).then(healthProblems), inboxCount(db)]);
   return (
     <div className="flex min-h-svh flex-col">
-      {/* Wraps on phones rather than running off-screen: twelve links and a
+      {/* Wraps on phones rather than running off-screen: thirteen links and a
           sign-out button don't fit on one 375px line. */}
       <header className="flex items-start justify-between gap-2 border-b px-4 py-2">
         <nav className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
           <Link href="/" className="whitespace-nowrap font-semibold">
             Data Ledger
+          </Link>
+          <Link href="/tally" className="text-muted-foreground hover:text-foreground">
+            Tally
           </Link>
           <Link href="/inbox" className="text-muted-foreground hover:text-foreground">
             Inbox{inbox ? <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">{inbox}</span> : null}

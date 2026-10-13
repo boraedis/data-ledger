@@ -6,15 +6,17 @@ import { listAlerts } from "@/operations/recurring";
 import { owedToMe } from "@/operations/reimbursements";
 import { read } from "@/operations/runtime";
 import { inboxCount } from "@/operations/transactions";
+import { latestDigest } from "@/lib/tally/digest";
 import { AlertList } from "./subscriptions/alert-list";
 
-// Home is the digest: what needs attention today. Alerts are raised by the
-// nightly pipeline (#9); push or email delivery of the same digest is #29,
-// which will read these same alerts.
+// Home is the digest: Tally's note from last night (#11), then what needs
+// attention — alerts raised by the nightly pipeline (#9), the inbox, budgets
+// over, what's owed. Push or email delivery is #29 and reads the same.
 
 export default async function HomePage() {
   const db = getDb();
-  const [alerts, inbox, budgets, owed] = await Promise.all([
+  const [digest, alerts, inbox, budgets, owed] = await Promise.all([
+    latestDigest(db),
     read(db, listAlerts, {}),
     inboxCount(db),
     read(db, budgetStatus, {}),
@@ -33,6 +35,17 @@ export default async function HomePage() {
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">Today</h1>
+      {digest ? (
+        <section className="space-y-1 rounded-lg border p-3 text-sm">
+          <p className="text-xs text-muted-foreground">
+            Tally&apos;s note · {digest.on} ·{" "}
+            <Link href="/tally" className="underline">
+              ask a follow-up
+            </Link>
+          </p>
+          <div className="whitespace-pre-wrap">{digest.content}</div>
+        </section>
+      ) : null}
       {alerts.length === 0 && items.length === 0 ? (
         <p className="text-muted-foreground">Nothing needs you today.</p>
       ) : null}

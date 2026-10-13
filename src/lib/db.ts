@@ -54,10 +54,15 @@ export function isLocalDatabaseUrl(url: string): boolean {
 // share — and corrupt — each other's transactions. The cost is that code
 // inside withTransactionalDb must use the db it's given, never getDb();
 // the operations layer already works that way.
-let localPool: pg.Pool | undefined;
+//
+// Kept on globalThis, not in module scope: the dev server bundles route
+// handlers separately from pages and re-evaluates modules on every reload,
+// and each copy opening its own connection to the single-session server
+// knocks the other's off (a streamed Tally reply died this way).
+const local = globalThis as typeof globalThis & { __dataLedgerLocalPool?: pg.Pool };
 function localDb(url: string): Db {
-  localPool ??= new pg.Pool({ connectionString: url, max: 1 });
-  return drizzlePg(localPool, { schema }) as unknown as Db;
+  local.__dataLedgerLocalPool ??= new pg.Pool({ connectionString: url, max: 1 });
+  return drizzlePg(local.__dataLedgerLocalPool, { schema }) as unknown as Db;
 }
 
 export function getDb() {
