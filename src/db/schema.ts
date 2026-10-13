@@ -352,6 +352,47 @@ export const transactionSplits = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Savings goals (#10).
+// ---------------------------------------------------------------------------
+
+// Something to save toward. Progress comes from linked accounts' balances
+// and/or transfers tagged with the goal's tag (src/lib/goals/progress.ts);
+// nothing about progress is stored, so it's always current and its history
+// can be rebuilt from balance snapshots.
+export const goals = pgTable("goals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  targetCents: bigint("target_cents", { mode: "number" }).notNull(),
+  // Optional: without one there's no pace, only a projection from the trend.
+  targetDate: date("target_date"),
+  // Where the even-pace line starts: the day the goal was set.
+  startOn: date("start_on").notNull(),
+  // Transfers tagged with this count toward the goal. Restrict:
+  // tags.delete refuses while a goal uses the tag.
+  tagId: uuid("tag_id").references(() => tags.id, { onDelete: "restrict" }),
+  // Reached or given up on: kept for the record, off the main list.
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Accounts whose balance counts toward a goal (savings, a brokerage for a
+// down payment). Cascade is a backstop; goals.update relinks through
+// tracked writes.
+export const goalAccounts = pgTable(
+  "goal_accounts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    goalId: uuid("goal_id")
+      .notNull()
+      .references(() => goals.id, { onDelete: "cascade" }),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+  },
+  (t) => [uniqueIndex("goal_accounts_goal_account_idx").on(t.goalId, t.accountId)],
+);
+
+// ---------------------------------------------------------------------------
 // Recurring charges and alerts (#9).
 // ---------------------------------------------------------------------------
 
