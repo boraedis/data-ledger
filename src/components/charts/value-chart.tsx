@@ -2,15 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatCents } from "@/lib/money";
-import type { NetWorthPoint } from "@/lib/net-worth";
-
-// Net worth over time: one line, drawn in SVG at the container's real pixel
+// A value over time — net worth, an account's balance: one line, drawn in
+// SVG at the container's real pixel
 // width (measured, not a stretched viewBox) so text and strokes stay crisp
 // at any size. No chart library: one series doesn't need one.
 //
 // Dataviz choices, following Data Diary's guidance:
-// - The value axis fits the data rather than starting at zero. Net worth
-//   isn't a non-negative measure; it can be below zero, and pinning zero
+// - The value axis fits the data rather than starting at zero. These
+//   values aren't non-negative measures (net worth can be below zero), and pinning zero
 //   would flatten a $250k balance's month-to-month movement into a line.
 //   When zero is inside the range it gets its own rule, so crossing it is
 //   unmistakable.
@@ -26,7 +25,13 @@ const RANGES = [
   { key: "all", label: "All", days: Infinity },
 ] as const;
 
-const HEIGHT = 220;
+export type ValuePoint = {
+  on: string; // YYYY-MM-DD
+  cents: number;
+  // A second readout line for this day, formatted by the server
+  // ("Assets … · Liabilities …").
+  detail?: string;
+};
 const PAD = { top: 12, right: 8, bottom: 24, left: 8 };
 
 function niceStep(span: number, targetTicks: number): number {
@@ -56,7 +61,8 @@ function formatDay(on: string, withYear = true): string {
   });
 }
 
-export function NetWorthChart({ series }: { series: NetWorthPoint[] }) {
+export function ValueChart({ series, label, height = 220 }: { series: ValuePoint[]; label: string; height?: number }) {
+  const HEIGHT = height;
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [range, setRange] = useState<(typeof RANGES)[number]["key"]>("all");
@@ -78,7 +84,7 @@ export function NetWorthChart({ series }: { series: NetWorthPoint[] }) {
 
   const geometry = useMemo(() => {
     if (width === 0 || visible.length === 0) return null;
-    const values = visible.map((p) => p.netCents);
+    const values = visible.map((p) => p.cents);
     let min = Math.min(...values);
     let max = Math.max(...values);
     if (min === max) {
@@ -97,13 +103,13 @@ export function NetWorthChart({ series }: { series: NetWorthPoint[] }) {
     const plotH = HEIGHT - PAD.top - PAD.bottom;
     const x = (i: number) => PAD.left + (visible.length === 1 ? plotW / 2 : (i / (visible.length - 1)) * plotW);
     const y = (v: number) => PAD.top + (1 - (v - lo) / (hi - lo)) * plotH;
-    const path = visible.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.netCents).toFixed(1)}`).join("");
+    const path = visible.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.cents).toFixed(1)}`).join("");
     return { ticks, x, y, path, lo, hi, plotW };
-  }, [visible, width]);
+  }, [visible, width, HEIGHT]);
 
   const shown = visible[hover ?? visible.length - 1];
   const first = visible[0];
-  const change = shown && first ? shown.netCents - first.netCents : 0;
+  const change = shown && first ? shown.cents - first.cents : 0;
 
   function pointAt(clientX: number) {
     const el = containerRef.current;
@@ -122,7 +128,7 @@ export function NetWorthChart({ series }: { series: NetWorthPoint[] }) {
             <>
               <div className="text-sm text-muted-foreground">{formatDay(shown.on)}</div>
               <div className="flex flex-wrap items-baseline gap-x-3 text-sm">
-                <span className="text-lg font-semibold tabular-nums">{formatCents(shown.netCents)}</span>
+                <span className="text-lg font-semibold tabular-nums">{formatCents(shown.cents)}</span>
                 {visible.length > 1 ? (
                   <span className={`tabular-nums ${change < 0 ? "text-red-700 dark:text-red-400" : "text-muted-foreground"}`}>
                     {change >= 0 ? "+" : "−"}
@@ -130,9 +136,7 @@ export function NetWorthChart({ series }: { series: NetWorthPoint[] }) {
                   </span>
                 ) : null}
               </div>
-              <div className="text-xs text-muted-foreground tabular-nums">
-                Assets {formatCents(shown.assetsCents)} · Liabilities {formatCents(shown.liabilitiesCents)}
-              </div>
+              {shown.detail ? <div className="text-xs text-muted-foreground tabular-nums">{shown.detail}</div> : null}
             </>
           ) : null}
         </div>
@@ -170,25 +174,35 @@ export function NetWorthChart({ series }: { series: NetWorthPoint[] }) {
         onPointerLeave={() => setHover(null)}
       >
         {geometry ? (
-          <svg width={width} height={HEIGHT} role="img" aria-label={`Net worth from ${formatDay(first.on)} to ${formatDay(visible.at(-1)!.on)}`}>
+          <svg width={width} height={HEIGHT} role="img" aria-label={`${label} from ${formatDay(first.on)} to ${formatDay(visible.at(-1)!.on)}`}>
             {geometry.ticks.map((t) => (
-              <g key={t}>
-                <line
-                  x1={PAD.left}
-                  x2={width - PAD.right}
-                  y1={geometry.y(t)}
-                  y2={geometry.y(t)}
-                  className={t === 0 ? "stroke-foreground/50" : "stroke-border"}
-                  strokeDasharray={t === 0 ? undefined : "2 3"}
-                />
-                <text x={PAD.left + 2} y={geometry.y(t) - 3} className="fill-muted-foreground text-[10px] tabular-nums">
-                  {compact(t)}
-                </text>
-              </g>
+              <line
+                key={t}
+                x1={PAD.left}
+                x2={width - PAD.right}
+                y1={geometry.y(t)}
+                y2={geometry.y(t)}
+                className={t === 0 ? "stroke-foreground/50" : "stroke-border"}
+                strokeDasharray={t === 0 ? undefined : "2 3"}
+              />
             ))}
             <path d={geometry.path} fill="none" className="stroke-foreground" strokeWidth={1.75} strokeLinejoin="round" />
+            {/* Labels after the line, with a background-colored halo, so a
+                label stays legible where the line runs through it. */}
+            {geometry.ticks.map((t) => (
+              <text
+                key={t}
+                x={PAD.left + 2}
+                y={geometry.y(t) - 3}
+                className="fill-muted-foreground stroke-background text-[10px] tabular-nums"
+                strokeWidth={3}
+                paintOrder="stroke"
+              >
+                {compact(t)}
+              </text>
+            ))}
             {visible.length === 1 ? (
-              <circle cx={geometry.x(0)} cy={geometry.y(visible[0].netCents)} r={3.5} className="fill-foreground" />
+              <circle cx={geometry.x(0)} cy={geometry.y(visible[0].cents)} r={3.5} className="fill-foreground" />
             ) : null}
             {hover !== null ? (
               <g>
@@ -199,7 +213,7 @@ export function NetWorthChart({ series }: { series: NetWorthPoint[] }) {
                   y2={HEIGHT - PAD.bottom}
                   className="stroke-foreground/40"
                 />
-                <circle cx={geometry.x(hover)} cy={geometry.y(visible[hover].netCents)} r={3.5} className="fill-foreground" />
+                <circle cx={geometry.x(hover)} cy={geometry.y(visible[hover].cents)} r={3.5} className="fill-foreground" />
               </g>
             ) : null}
             <text x={PAD.left} y={HEIGHT - 6} className="fill-muted-foreground text-[10px]">

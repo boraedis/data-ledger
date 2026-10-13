@@ -6,7 +6,7 @@ import { isLiability, netWorthSummary } from "@/lib/net-worth";
 import { investmentIncome } from "@/operations/investments";
 import { read } from "@/operations/runtime";
 import { ManualBadge } from "../accounts/account-row";
-import { NetWorthChart } from "./net-worth-chart";
+import { ValueChart } from "@/components/charts/value-chart";
 
 // Net worth today and over time (#25). Read-only: balances come from syncs,
 // and how each kind counts is explained in src/lib/net-worth.ts.
@@ -32,7 +32,14 @@ export default async function NetWorthPage() {
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Over time</h2>
         {summary.series.length > 1 ? (
-          <NetWorthChart series={summary.series} />
+          <ValueChart
+            label="Net worth"
+            series={summary.series.map((p) => ({
+              on: p.on,
+              cents: p.netCents,
+              detail: `Assets ${formatCents(p.assetsCents)} · Liabilities ${formatCents(p.liabilitiesCents)}`,
+            }))}
+          />
         ) : (
           // Banks only report today's balance, so history can't be
           // backfilled; it builds up one sync at a time.

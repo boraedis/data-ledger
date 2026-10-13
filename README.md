@@ -444,8 +444,16 @@ kind relabels its history. Dividends and interest that paid money in are
 **investment income**, reported on their own (`investments.income`, and on
 the Net worth page), never mixed into budget income.
 
-Net worth is deliberately **not** an operation: every registered read
-becomes one of Tally's tools, and balances never go to a model.
+**Investments page** (#27), display only, never advice:
+- **Totals and freshness:** the total across brokerage and retirement accounts, each account's value with the day its balance and positions are as of.
+- **Unrealized gain or loss:** market value minus cost basis, per position and in total. It covers only positions with a cost basis, and says how many are left out, so the gain is never overstated.
+- **Allocation:** by account, and by holding. A holding in several accounts is combined, and the part of a balance the position list doesn't cover shows as "cash and other". An account whose provider doesn't report positions appears whole.
+- **Value over time:** per account, from balance snapshots, with that day's position total from holding snapshots.
+- **Source of the numbers:** an account's value is always its balance; positions are never added on top. Built in `src/lib/investments/summary.ts`, not an operation, for the same reason as net worth.
+
+Net worth and the investments page are deliberately **not** operations:
+every registered read becomes one of Tally's tools, and balances and
+holdings never go to a model.
 
 ## Operations layer
 
