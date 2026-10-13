@@ -138,12 +138,24 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
     add("savings", month(15), 30_000, "ONLINE TRANSFER FROM CHECKING XXXXXX");
     add("savings", month(28), between(800, 1_400), "INTEREST PAYMENT");
 
-    // Card subscriptions. Streamflix raises its price three months in, the
-    // kind of quiet increase #9's alerts exist to catch.
-    add("card", month(3), m < 3 ? -1_549 : -1_799, "STREAMFLIX.COM 800-555-0100");
+    // Card subscriptions. Streamflix raises its price four months in, the
+    // kind of quiet increase #9's alerts exist to catch (recent enough to
+    // still be news).
+    add("card", month(3), m < 4 ? -1_549 : -1_799, "STREAMFLIX.COM 800-555-0100");
     add("card", month(7), -1_099, "TUNEBOX MUSIC SUBSCR");
     add("card", month(5), -4_500, "IRONWORKS GYM MEMBERSHIP");
 
+  }
+
+  // Subscription-alert shapes (#9), fixed amounts so the rest of the seed
+  // doesn't shift: a $1 trial that turns into a monthly plan, a gym charge
+  // that lands twice, and the music plan also billed to checking (the same
+  // subscription paid twice). Streamflix's price rise above is the fourth.
+  for (let m = months - 3; m <= months; m++) {
+    const month = (day: number) => new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + m, day));
+    add("card", month(12), m === months - 3 ? -100 : -1_299, "VIDEOPAL.COM");
+    add("checking", month(9), -1_099, "TUNEBOX MUSIC SUBSCR");
+    if (m === months - 1) add("card", month(6), -4_500, "IRONWORKS GYM MEMBERSHIP");
   }
 
   // Annual charges, once in the window: a budget period that isn't monthly.

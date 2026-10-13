@@ -9,8 +9,8 @@ import type { WriteContext } from "@/operations/tracked";
 //   rule:<id> — a categorization rule firing
 //   memory    — merchant memory: "categorized like this merchant was before"
 //   model     — the self-hosted model's confident categorizations (#6)
-//   matcher   — rule-based transfer matching between the owner's own
-//               accounts (#24, src/lib/investments/transfers.ts)
+//   matcher   — rule-based pipeline work: transfer matching between the
+//               owner's own accounts (#24) and subscription alerts (#9)
 export type Actor = "user" | "tally" | "import" | "memory" | "model" | "matcher" | `rule:${string}`;
 
 const NAMED_ACTORS = new Set(["user", "tally", "import", "memory", "model", "matcher"]);

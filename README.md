@@ -210,6 +210,25 @@ mustn't look like income (#8).
 - **Owed to me** shows what each person still owes, with aging buckets (0–30, 31–60, 61–90, over 90 days since the expense), and every open item.
 - **Logging:** every change is a logged, undoable operation. Payment names and amounts are ordinary transaction data, so Tally may read them.
 
+### Recurring charges and alerts
+
+**Detection** (#9; `src/lib/recurring/detect.ts`, rule-based) is computed each time it's read, from the last ~400 days of spending in budget accounts. Transfers (paired, or filed under a transfer category) never count.
+- **What a series is:** one merchant in one account. It recurs when its charges land on a steady cadence (weekly, every 2 weeks, monthly, quarterly, twice a year, annual) within a tolerance.
+- **How much evidence:** three charges for most cadences, two for annual.
+- **Duplicates:** a same-amount charge days after another is one occurrence plus a possible duplicate.
+- **Fixed or variable:** a plan within 25% of its usual amount is fixed-price; anything wider is variable (a utility bill).
+- **What's stored:** only your decisions (`recurring_series`: confirmed or dismissed), so better detection never needs a backfill.
+- **Tracking:** a confirmed series is tracked, with its next expected charge and yearly cost on the Subscriptions page. A dismissed one is never suggested or alerted on again.
+
+**Alerts** (`alerts`) are raised by `alerts.refresh` after every nightly sync, as `matcher`, or on demand with "Check now". Each one says what happened, about events in the last 90 days:
+- **Price increase:** a fixed-price series charging more than last time. A step up from a token trial charge doesn't count.
+- **Duplicate charge:** the same amount again within 3 days, for a series that charges at most every two weeks.
+- **Paying twice:** the same merchant billing in two accounts.
+- **Trial ended:** a token charge of 20% or less of the usual price, followed within 40 days by the first full one.
+- **Missing charge:** a *confirmed* series past its due date plus tolerance. A merely detected one may simply have ended.
+
+Each event has a dedupe key, so it's raised once, and a dismissed alert never comes back. **Home is the digest:** open alerts plus the inbox, budgets over target and what's owed. `alerts.notifiedAt` is there for push or email delivery (#29) to mark what it has sent.
+
 ### AI: one self-hosted model
 
 The app has **one model**, and every AI feature goes through it: Tally's
@@ -226,7 +245,9 @@ See "Model service" below for how it's hosted, called and chosen.
 ### Nightly pipeline
 
 Sync → categorize → detect recurring → match reimbursements → anomaly
-checks → digest. Runs as a durable workflow so a failed step retries rather
+checks → digest. (Today: the sync cron categorizes, raises recurring-charge
+alerts, then hands the rest to the model; reimbursement matches are
+proposed on read, and Home is the digest.) Runs as a durable workflow so a failed step retries rather
 than half-completing.
 
 ### Diary bridge
