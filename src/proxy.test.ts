@@ -26,6 +26,12 @@ describe("proxy", () => {
     expect(response.headers.get("location")).toBeNull();
   });
 
+  it("never redirects the bridge, whose server caller may not follow one", () => {
+    production();
+    const response = proxy(new NextRequest("https://ledger-abc123-someone.vercel.app/api/bridge/v1/recurring"));
+    expect(response.headers.get("location")).toBeNull();
+  });
+
   it("leaves the canonical domain alone", () => {
     production();
     const response = proxy(new NextRequest("https://ledger.example.test/login"));
@@ -43,6 +49,12 @@ describe("proxy", () => {
     expect(proxy(new NextRequest("http://localhost/api/cron/sync")).status).toBe(200);
     expect(proxy(new NextRequest("http://localhost/api/cron/classify")).status).toBe(200);
     expect(proxy(new NextRequest("http://localhost/api/cron/other")).status).toBe(401);
+  });
+
+  it("lets the bridge routes through to their own token check, as exact paths", () => {
+    expect(proxy(new NextRequest("http://localhost/api/bridge/v1/spend/daily?from=2026-01-01&to=2026-01-31")).status).toBe(200);
+    expect(proxy(new NextRequest("http://localhost/api/bridge/v1/recurring")).status).toBe(200);
+    expect(proxy(new NextRequest("http://localhost/api/bridge/v1/transactions")).status).toBe(401);
   });
 
   it("lets the sign-in routes through without a session", () => {
