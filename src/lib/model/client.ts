@@ -77,22 +77,22 @@ export function modelIsConfigured(): boolean {
   return modelConfig() !== null;
 }
 
-export async function chat(request: ChatRequest, deps: ClientDeps = {}): Promise<ChatResult> {
+type Budget = { coldStartMs: number; requestMs: number };
+
+function prepare(request: ChatRequest, deps: ClientDeps, stream: boolean) {
   const config = modelConfig();
   if (!config) throw new ModelNotConfiguredError();
-  const fetchImpl = deps.fetch ?? fetch;
-  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
   const now = deps.now ?? Date.now;
   const base = BUDGETS[request.mode ?? "background"];
-  const remaining = request.deadline ? request.deadline - (deps.now ?? Date.now)() : Infinity;
+  const remaining = request.deadline ? request.deadline - now() : Infinity;
   if (remaining <= 0) throw new ModelUnavailableError("No time left before the deadline");
-  const budget = { coldStartMs: Math.min(base.coldStartMs, remaining), requestMs: Math.min(base.requestMs, remaining) };
-
+  const budget: Budget = { coldStartMs: Math.min(base.coldStartMs, remaining), requestMs: Math.min(base.requestMs, remaining) };
   const body = JSON.stringify({
     model: config.model,
     messages: request.messages,
     temperature: request.temperature ?? 0,
     max_tokens: request.maxTokens ?? 512,
+    ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
     ...(request.tools?.length
       ? { tools: request.tools.map((t) => ({ type: "function", function: t })), tool_choice: "auto" }
       : {}),
@@ -100,11 +100,12 @@ export async function chat(request: ChatRequest, deps: ClientDeps = {}): Promise
       ? { response_format: { type: "json_schema", json_schema: { ...request.jsonSchema, strict: true } } }
       : {}),
   });
+  return { config, body, budget, now };
+}
 
-  const started = now();
-  let retries = 0;
-  let delay = 2_000;
-  const record = async (status: "ok" | "error" | "unavailable", extra: Partial<typeof modelCalls.$inferInsert> = {}) => {
+/** Records one call in model_calls (no content, ever). */
+function recorder(request: ChatRequest, deps: ClientDeps, started: number, now: () => number) {
+  return async (status: "ok" | "error" | "unavailable", retries: number, extra: Partial<typeof modelCalls.$inferInsert> = {}) => {
     if (!deps.db) return;
     await deps.db.insert(modelCalls).values({
       feature: request.feature,
@@ -115,7 +116,27 @@ export async function chat(request: ChatRequest, deps: ClientDeps = {}): Promise
       ...extra,
     });
   };
+}
 
+/**
+ * POSTs until the model answers with something other than a cold-start
+ * status, sleeping between tries. `onWaiting` hears about each retry so a
+ * caller can tell the owner the model is waking up.
+ */
+async function connect(
+  config: NonNullable<ReturnType<typeof modelConfig>>,
+  body: string,
+  budget: Budget,
+  deps: ClientDeps,
+  started: number,
+  record: ReturnType<typeof recorder>,
+  onWaiting?: (retries: number) => Promise<void> | void,
+): Promise<{ response: Response; retries: number }> {
+  const fetchImpl = deps.fetch ?? fetch;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise((r) => setTimeout(r, ms)));
+  const now = deps.now ?? Date.now;
+  let retries = 0;
+  let delay = 2_000;
   for (;;) {
     let response: Response;
     try {
@@ -129,7 +150,7 @@ export async function chat(request: ChatRequest, deps: ClientDeps = {}): Promise
       // A network error before the model answers is treated like a cold
       // start (the endpoint may be mid-boot); a timeout once it's up is not.
       if (error instanceof Error && error.name === "TimeoutError") {
-        await record("error", { error: `timed out after ${budget.requestMs / 1000}s` });
+        await record("error", retries, { error: `timed out after ${budget.requestMs / 1000}s` });
         throw new ModelError("The model took too long to answer");
       }
       response = new Response(null, { status: 503 });
@@ -137,10 +158,11 @@ export async function chat(request: ChatRequest, deps: ClientDeps = {}): Promise
 
     if (RETRYABLE.has(response.status)) {
       if (now() - started + delay > budget.coldStartMs) {
-        await record("unavailable", { error: `still ${response.status} after ${Math.round((now() - started) / 1000)}s` });
+        await record("unavailable", retries, { error: `still ${response.status} after ${Math.round((now() - started) / 1000)}s` });
         throw new ModelUnavailableError("The model is still starting up; try again in a minute");
       }
       retries++;
+      await onWaiting?.(retries);
       await sleep(delay);
       delay = Math.min(delay * 2, 15_000);
       continue;
@@ -149,28 +171,128 @@ export async function chat(request: ChatRequest, deps: ClientDeps = {}): Promise
     if (!response.ok) {
       // Our own description only: the response body could echo the prompt.
       const reason = response.status === 401 ? "API key rejected (401)" : `HTTP ${response.status}`;
-      await record("error", { error: reason });
+      await record("error", retries, { error: reason });
       throw new ModelError(`Model request failed: ${reason}`);
     }
-
-    const data = (await response.json()) as {
-      choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[];
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
-    const message = data.choices?.[0]?.message;
-    if (!message) {
-      await record("error", { error: "response had no message" });
-      throw new ModelError("Model returned no message");
-    }
-    const usage = { promptTokens: data.usage?.prompt_tokens ?? null, completionTokens: data.usage?.completion_tokens ?? null };
-    await record("ok", usage);
-    return {
-      content: message.content ?? null,
-      toolCalls: message.tool_calls ?? [],
-      usage,
-      latencyMs: Math.round(now() - started),
-      coldStartRetries: retries,
-    };
+    return { response, retries };
   }
 }
 
+export async function chat(request: ChatRequest, deps: ClientDeps = {}): Promise<ChatResult> {
+  const { config, body, budget, now } = prepare(request, deps, false);
+  const started = now();
+  const record = recorder(request, deps, started, now);
+  const { response, retries } = await connect(config, body, budget, deps, started, record);
+
+  const data = (await response.json()) as {
+    choices?: { message?: { content?: string | null; tool_calls?: ToolCall[] } }[];
+    usage?: { prompt_tokens?: number; completion_tokens?: number };
+  };
+  const message = data.choices?.[0]?.message;
+  if (!message) {
+    await record("error", retries, { error: "response had no message" });
+    throw new ModelError("Model returned no message");
+  }
+  const usage = { promptTokens: data.usage?.prompt_tokens ?? null, completionTokens: data.usage?.completion_tokens ?? null };
+  await record("ok", retries, usage);
+  return {
+    content: message.content ?? null,
+    toolCalls: message.tool_calls ?? [],
+    usage,
+    latencyMs: Math.round(now() - started),
+    coldStartRetries: retries,
+  };
+}
+
+export type StreamEvent =
+  // The model is cold and booting; `elapsedMs` since the first try.
+  | { type: "waiting"; retries: number; elapsedMs: number }
+  | { type: "delta"; text: string }
+  | ({ type: "done" } & ChatResult);
+
+/**
+ * The same call, streamed (#11): text arrives as it's generated, and while
+ * the model is cold the caller hears "waiting" instead of silence. Tool
+ * calls arrive in pieces and are assembled; they come out whole in "done".
+ */
+export async function* chatStream(request: ChatRequest, deps: ClientDeps = {}): AsyncGenerator<StreamEvent> {
+  const { config, body, budget, now } = prepare(request, deps, true);
+  const started = now();
+  const record = recorder(request, deps, started, now);
+
+  // connect() reports retries through a callback; queue them so this
+  // generator can yield them while the retry loop sleeps.
+  const waiting: StreamEvent[] = [];
+  let wake: (() => void) | null = null;
+  let finished = false;
+  const connecting = connect(config, body, budget, deps, started, record, (retries) => {
+    waiting.push({ type: "waiting", retries, elapsedMs: Math.round(now() - started) });
+    wake?.();
+  }).finally(() => {
+    finished = true;
+    wake?.();
+  });
+  while (!finished || waiting.length) {
+    if (waiting.length) {
+      yield waiting.shift()!;
+      continue;
+    }
+    await new Promise<void>((resolve) => (wake = resolve));
+    wake = null;
+  }
+  const { response, retries } = await connecting;
+
+  let content = "";
+  const calls = new Map<number, { id: string; name: string; arguments: string }>();
+  let usage: ChatResult["usage"] = { promptTokens: null, completionTokens: null };
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (payload === "[DONE]") continue;
+        const chunk = JSON.parse(payload) as {
+          choices?: { delta?: { content?: string | null; tool_calls?: { index: number; id?: string; function?: { name?: string; arguments?: string } }[] } }[];
+          usage?: { prompt_tokens?: number; completion_tokens?: number } | null;
+        };
+        if (chunk.usage) usage = { promptTokens: chunk.usage.prompt_tokens ?? null, completionTokens: chunk.usage.completion_tokens ?? null };
+        const delta = chunk.choices?.[0]?.delta;
+        if (delta?.content) {
+          content += delta.content;
+          yield { type: "delta", text: delta.content };
+        }
+        for (const part of delta?.tool_calls ?? []) {
+          const call = calls.get(part.index) ?? { id: "", name: "", arguments: "" };
+          if (part.id) call.id = part.id;
+          if (part.function?.name) call.name += part.function.name;
+          if (part.function?.arguments) call.arguments += part.function.arguments;
+          calls.set(part.index, call);
+        }
+      }
+    }
+  } catch (error) {
+    await record("error", retries, { error: error instanceof Error && error.name === "TimeoutError" ? "stream timed out" : "stream broke off" });
+    throw new ModelError("The model's reply broke off");
+  }
+
+  await record("ok", retries, usage);
+  yield {
+    type: "done",
+    content: content || null,
+    toolCalls: [...calls.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([index, c]) => ({ id: c.id || `call_${index}`, type: "function" as const, function: { name: c.name, arguments: c.arguments || "{}" } })),
+    usage,
+    latencyMs: Math.round(now() - started),
+    coldStartRetries: retries,
+  };
+}

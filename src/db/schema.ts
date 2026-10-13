@@ -352,6 +352,58 @@ export const transactionSplits = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Tally, the chat assistant (#11).
+// ---------------------------------------------------------------------------
+
+// Conversations with Tally, kept so a reload doesn't lose the thread or its
+// proposals. Infrastructure rather than ledger data — like model_calls —
+// written directly by src/lib/tally, not through operations: nothing here
+// changes the books. Any change Tally wants is a proposal in command_log.
+export const tallyConversations = pgTable("tally_conversations", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  // The first question, shortened, for the list.
+  title: text("title").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const tallyRole = pgEnum("tally_role", ["user", "assistant", "tool"]);
+
+// One message in the model's own shape (OpenAI-style), replayed as context
+// for the next turn. Tool results are stored as the model saw them —
+// already redacted (src/lib/model/redact.ts).
+export const tallyMessages = pgTable(
+  "tally_messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => tallyConversations.id, { onDelete: "cascade" }),
+    role: tallyRole("role").notNull(),
+    content: text("content"),
+    // Assistant turns that called tools: [{ id, name, arguments }].
+    toolCalls: jsonb("tool_calls").$type<{ id: string; name: string; arguments: string }[]>(),
+    // Tool results: which call they answer, and the proposal it made if any.
+    toolCallId: text("tool_call_id"),
+    commandId: uuid("command_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("tally_messages_conversation_idx").on(t.conversationId, t.createdAt)],
+);
+
+// The nightly digest, written by Tally from the day's facts (sync status,
+// inbox, alerts, budget pace). One per day; Home shows the latest. The
+// facts it was written from are kept beside it, so a surprising sentence
+// can be checked against what the model was actually told.
+export const digests = pgTable("digests", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  on: date("on").notNull().unique(),
+  content: text("content").notNull(),
+  facts: jsonb("facts").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ---------------------------------------------------------------------------
 // Savings goals (#10).
 // ---------------------------------------------------------------------------
 

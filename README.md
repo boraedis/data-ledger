@@ -257,12 +257,29 @@ trust level as Vercel and Neon.
 
 See "Model service" below for how it's hosted, called and chosen.
 
+### Tally, the assistant
+
+**Tally** (#11, `/tally`) is the chat face of the same model.
+
+- **Tools are the operations registry** (`src/lib/tally/tools.ts`): every operation Tally may run, with its own description and input schema. A new operation is a new tool.
+  - Operations restricted to other actors (the sync's import, the pipeline's batches, owner-only manual accounts) aren't offered.
+  - **Reads run immediately. Writes run as actor `tally`,** which the runtime always turns into a **proposal**. It shows inline in the chat with Approve / Reject, and in Activity. Nothing changes until you approve, and the applied command stays logged as `tally`.
+- **Minimal data at the tool boundary:** every result passes through `toolResult()`, which redacts sensitive keys and caps size so a long list can't crowd out the conversation (it asks for a narrower request instead). Balances never reach it: net worth, investments and goal progress aren't operations.
+- **Streaming:** replies stream from the model through the gateway (`chatStream`) to the page as newline-delimited JSON from `/api/tally`.
+- **Cold start:** the first message after the model has been idle meets a cold start (~3–4 minutes). The page shows "Waking the model up", with a timer, instead of hanging. Once warm, replies take seconds.
+- **History:** conversations are stored (`tally_conversations`, `tally_messages`; the conversation, not the books), so a reload keeps the thread and its proposals.
+- **The nightly digest** is written by Tally at the end of the nightly classify chain, while the model is warm.
+  - **Facts it gets:** sync status, new transactions, the inbox, open alerts, budget pace and what's owed, in fixed order and with no balances. It's told to use only those facts.
+  - **Storage:** the note is stored beside the facts (`digests`), so any sentence can be checked against what it was told.
+  - **Where it shows:** at the top of Home.
+
 ### Nightly pipeline
 
 Sync → categorize → detect recurring → match reimbursements → anomaly
-checks → digest. (Today: the sync cron categorizes, raises recurring-charge
-alerts, then hands the rest to the model; reimbursement matches are
-proposed on read, and Home is the digest.) Runs as a durable workflow so a failed step retries rather
+checks → digest. (Today: the sync cron categorizes and raises
+recurring-charge alerts, then hands the rest to the model's classify chain,
+whose last link has Tally write the digest; reimbursement matches are
+proposed on read.) Runs as a durable workflow so a failed step retries rather
 than half-completing.
 
 ### Diary bridge
