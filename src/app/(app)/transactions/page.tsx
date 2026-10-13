@@ -119,7 +119,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                       <span className="rounded bg-secondary px-1.5">Split</span>
                     ) : t.categoryId ? (
                       <span className="rounded bg-secondary px-1.5">{labelOf.get(t.categoryId)}</span>
-                    ) : t.transfer ? (
+                    ) : t.reimbursedCents >= t.amountCents && t.amountCents > 0 ? null : t.transfer ? (
                       <span className="rounded border border-dashed px-1.5 text-muted-foreground">
                         Transfer {t.amountCents > 0 ? "from" : "to"} {accountName.get(t.transfer.accountId)}
                       </span>
@@ -130,6 +130,16 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     ) : (
                       <span className="rounded bg-amber-500/15 px-1.5 text-amber-800 dark:text-amber-200">Uncategorized</span>
                     )}
+                    {t.sharedOwedCents ? (
+                      <span className="rounded border px-1.5 text-muted-foreground">
+                        Shared · your share {formatCents(-t.amountCents - t.sharedOwedCents)}
+                      </span>
+                    ) : null}
+                    {t.reimbursedCents ? (
+                      <span className="rounded border border-dashed px-1.5 text-muted-foreground">
+                        Paid back {formatCents(t.reimbursedCents)}
+                      </span>
+                    ) : null}
                     {t.tags.map((name) => (
                       <span key={name} className="rounded border px-1.5 text-muted-foreground">
                         #{name}

@@ -180,7 +180,7 @@ the owner's own (see below).
 - **Targets and periods:** a target is an amount per period for an expense category. A period is N months counted from an anchor month: 1 is monthly, 12 annual (January by default), anything else custom, such as every 3 or 6 months.
 - **Parents and children:** a target on a parent covers its children, unless a child has its own target.
 - **The buffer:** one target with no category, which every expense category without a target draws from, so "misc" never needs a category of its own. What drew from it is listed by category, which is where a new target suggests itself.
-- **Net spend:** spending minus refunds, in accounts that count toward budgets, by experience date (`transactions.spendingLines`). Income and transfer categories, uncategorized transactions and matched transfers never count. Reimbursements (#8) will reduce spend here too.
+- **Net spend:** spending minus refunds, in accounts that count toward budgets, by experience date (`transactions.spendingLines`). Income and transfer categories, uncategorized transactions and matched transfers never count. Shared expenses count only your share; "Show gross" shows spending as charged.
 - **Versioned:** a change starts a new version at the beginning of the current period, so earlier periods keep the target they had. Browse earlier months on the Budgets page to see them as they were.
   - **Same-period edits** correct that version instead of adding one.
   - **Schedule changes:** if the period itself changes (monthly → annual in October), the new schedule's first period starts at that boundary and is prorated by months, so nothing is counted twice.
@@ -192,6 +192,23 @@ the owner's own (see below).
 - **Operations:**
   - **Reads:** `budgets.status` and `budgets.targets`. Budget figures come from transactions, not balances, so Tally may read them.
   - **Writes:** `budgets.setTarget`, `removeTarget` and `rebalance`. All are logged and undoable, and Tally's are proposals.
+
+### Shared expenses and reimbursements
+
+Spending friends pay back mustn't inflate your spending, and their payments
+mustn't look like income (#8).
+
+- **People** are a light list (`people.*`): a name plus the spellings payment apps use for it. Data Diary's people catalog joins through the bridge later.
+- **Sharing an expense:** on a posted expense's page, record what each person owes, or split it evenly; you keep any leftover cent. Your share is the rest. **Net spend counts only your share, from the moment it's recorded**, whether or not they've paid yet. `transactions.spendingLines` is net by default and takes `gross: true` for spending as charged; the Budgets page has a "Show gross" toggle.
+- **Matching payments:** the Owed page proposes incoming payments (checking, savings, payment apps) as matches, using the name in the description, the amount and the timing (`src/lib/reimbursements/match.ts`).
+  - **Kinds of match:** exact, several expenses one payment covers, partial (applied oldest first), or more than owed (the rest stays an ordinary transaction).
+  - **Strong evidence first:** exact and combined matches across all payments are assigned before partial ones, so an unrelated earlier payment from the same friend can't claim the debt.
+  - **You confirm:** nothing is matched until you do (`reimbursements.match`).
+- **What a match does:** the matched part of a payment is never income, even if the payment was categorized. A fully matched payment leaves the inbox.
+- **"Not a reimbursement"** stops a payment being proposed.
+- **Forgiving** stops expecting the rest of a debt; its unpaid part counts as your spend again.
+- **Owed to me** shows what each person still owes, with aging buckets (0–30, 31–60, 61–90, over 90 days since the expense), and every open item.
+- **Logging:** every change is a logged, undoable operation. Payment names and amounts are ordinary transaction data, so Tally may read them.
 
 ### AI: one self-hosted model
 

@@ -11,6 +11,8 @@ import { NotFoundError } from "@/operations/tracked";
 import { ACTIVITY_LABELS } from "@/lib/investments/activity";
 import { listAccounts } from "@/operations/accounts";
 import { TransactionEditor } from "./editor";
+import { listPeople, transactionReimbursements } from "@/operations/reimbursements";
+import { SharePanel } from "./share-panel";
 import { TransferNote } from "./transfer-note";
 
 export default async function TransactionPage(props: PageProps<"/transactions/[id]">) {
@@ -23,7 +25,13 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
     throw error;
   });
   if (!txn) notFound();
-  const [cats, tagList, accts] = await Promise.all([read(db, listCategories, {}), read(db, listTags, {}), read(db, listAccounts, {})]);
+  const [cats, tagList, accts, peopleList, shared] = await Promise.all([
+    read(db, listCategories, {}),
+    read(db, listTags, {}),
+    read(db, listAccounts, {}),
+    read(db, listPeople, {}),
+    read(db, transactionReimbursements, { transactionId: txn.id }),
+  ]);
   const otherAccount = txn.transfer ? accts.find((a) => a.id === txn.transfer!.accountId)?.name ?? "another account" : null;
 
   return (
@@ -51,6 +59,16 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
           otherId={txn.transfer.transactionId}
           otherAccountName={otherAccount!}
           incoming={txn.amountCents > 0}
+        />
+      ) : null}
+      {/* Pending rows can be replaced when they post, so sharing waits. */}
+      {!txn.pending && !txn.transfer ? (
+        <SharePanel
+          transactionId={txn.id}
+          amountCents={txn.amountCents}
+          people={peopleList.map((p) => ({ id: p.id, name: p.name }))}
+          shares={shared.shares}
+          covers={shared.covers}
         />
       ) : null}
       <TransactionEditor txn={txn} options={categoryOptions(cats)} knownTags={tagList.map((t) => t.name)} />

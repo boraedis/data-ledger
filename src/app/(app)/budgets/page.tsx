@@ -29,7 +29,18 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
   const on = isCurrent ? today : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
 
   const db = getDb();
-  const [status, cats] = await Promise.all([read(db, budgetStatus, { on }), read(db, listCategories, {})]);
+  // Net by default (your share of shared expenses); ?gross=1 shows spending
+  // as charged, before what friends owe comes off.
+  const gross = sp.gross === "1";
+  const [status, cats] = await Promise.all([read(db, budgetStatus, { on, gross }), read(db, listCategories, {})]);
+  const hrefWith = (next: { month?: string; gross?: boolean }) => {
+    const q = new URLSearchParams();
+    const m = next.month ?? month;
+    if (m !== thisMonth) q.set("month", m);
+    if (next.gross ?? gross) q.set("gross", "1");
+    const s = q.toString();
+    return s ? `/budgets?${s}` : "/budgets";
+  };
 
   const targeted = new Set(status.targets.map((t) => t.categoryId));
   const choices: TargetChoice[] = [
@@ -46,12 +57,12 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold">Budgets</h1>
         <nav className="flex items-center gap-3 text-sm">
-          <Link href={`/budgets?month=${shiftMonth(month, -1)}`} className="text-muted-foreground hover:text-foreground">
+          <Link href={hrefWith({ month: shiftMonth(month, -1) })} className="text-muted-foreground hover:text-foreground">
             ← Earlier
           </Link>
           <span className="font-medium">{monthLabel}</span>
           {isCurrent ? null : (
-            <Link href={month === shiftMonth(thisMonth, -1) ? "/budgets" : `/budgets?month=${shiftMonth(month, 1)}`} className="text-muted-foreground hover:text-foreground">
+            <Link href={hrefWith({ month: shiftMonth(month, 1) })} className="text-muted-foreground hover:text-foreground">
               Later →
             </Link>
           )}
@@ -61,7 +72,22 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
         Net spending in accounts that count toward budgets: refunds offset spending, and transfers, income and
         investment accounts never count. Each category with a target is measured on its own period; everything else
         draws from the buffer.
-        {isCurrent ? "" : ` Showing ${monthLabel} as of its last day, with the targets in effect then.`}
+        {isCurrent ? "" : ` Showing ${monthLabel} as of its last day, with the targets in effect then.`}{" "}
+        {gross ? (
+          <>
+            Showing <strong>gross</strong> spending, before friends&apos; shares come off.{" "}
+            <Link href={hrefWith({ gross: false })} className="underline">
+              Show your share
+            </Link>
+          </>
+        ) : (
+          <>
+            Shared expenses count only your share.{" "}
+            <Link href={hrefWith({ gross: true })} className="underline">
+              Show gross
+            </Link>
+          </>
+        )}
       </p>
 
       {status.targets.length === 0 ? (
