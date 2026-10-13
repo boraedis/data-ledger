@@ -3,6 +3,7 @@ import { createManualAccount, deleteManualAccount, listAccounts, setManualValue,
 import { budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
 import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goals";
 import { applySnapshot } from "@/operations/import";
+import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
 import { dismissAlert, listAlerts, listRecurring, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
 import {
   createPerson,
@@ -91,6 +92,10 @@ export const operations: Operation[] = [
   setExperienceDate,
   matchTransfers,
   unmatchTransfer,
+  listProvisional,
+  matchProvisional,
+  discardProvisional,
+  createProvisional,
   listTags,
   setTransactionTags,
   renameTag,

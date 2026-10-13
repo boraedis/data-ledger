@@ -48,3 +48,7 @@ export async function setExperienceDate(transactionId: string, experiencedOn: st
 export async function notATransfer(transactionId: string) {
   return run(transactionId, "transactions.unmatchTransfer", {}, "Marked as not a transfer");
 }
+
+export async function discardProvisional(transactionId: string) {
+  return run(transactionId, "transactions.discardProvisional", {}, "Discarded a purchase alert the bank never reported");
+}

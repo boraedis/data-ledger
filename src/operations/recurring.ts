@@ -30,6 +30,9 @@ async function loadCharges(db: Db, on: string) {
         gte(transactions.postedOn, since),
         sql`${transactions.postedOn} <= ${on}`,
         eq(transactions.pending, false),
+        // An alert's provisional copy would look like a duplicate charge;
+        // the synced version is the one that recurs.
+        isNull(transactions.provisionalSource),
         sql`${transactions.amountCents} < 0`,
         isNull(transactions.transferPairId),
         inArray(transactions.accountId, budgetAccountIds(db)),

@@ -54,7 +54,9 @@ export const listTransactions = defineRead({
     "that count toward budgets (excludes investment, retirement, loan and asset accounts) — use it for " +
     "anything about spending. Page with offset. `transfer` is set when the transaction is one side of a " +
     "transfer between the owner's accounts (never spending or income); `investmentActivity` classifies " +
-    "brokerage and retirement transactions (dividend, interest, buy, sell, reinvestment, fee, transfer, other).",
+    "brokerage and retirement transactions (dividend, interest, buy, sell, reinvestment, fee, transfer, other). " +
+    "`provisionalSource` is set on a provisional transaction: one from a purchase alert that the bank hasn't " +
+    "reported yet (see transactions.provisional).",
   input: z.object({
     from: isoDate.optional(),
     to: isoDate.optional(),
@@ -105,6 +107,7 @@ export const listTransactions = defineRead({
         description: transactions.description,
         merchant: transactions.merchant,
         pending: transactions.pending,
+        provisionalSource: transactions.provisionalSource,
         accountId: transactions.accountId,
         categoryId: transactions.categoryId,
         isSplit: transactions.isSplit,
@@ -268,6 +271,7 @@ export const getTransaction = defineRead({
         description: transactions.description,
         merchant: transactions.merchant,
         pending: transactions.pending,
+        provisionalSource: transactions.provisionalSource,
         categoryId: transactions.categoryId,
         isSplit: transactions.isSplit,
         accountId: transactions.accountId,
@@ -340,13 +344,33 @@ export async function reimbursementAdjustments(db: Db, transactionIds: string[])
   return { owedOff, matched };
 }
 
+/**
+ * Whether a transaction counts as spending (#30). Everything synced does.
+ * A provisional one (from a purchase alert) counts until the bank's own
+ * data for its account reaches its date. From then on the bank's version,
+ * if there is one, is what counts. Matching usually removes the
+ * provisional row the same night. When it can't (a tip changed the
+ * amount), the purchase is never counted twice while both rows exist; the
+ * cost is a day or two of undercount if the bank reports other purchases
+ * first.
+ */
+export function countsAsSpending(): SQL {
+  return sql`(${transactions.provisionalSource} is null or not exists (
+    select 1 from ${transactions} as synced
+    where synced.account_id = ${transactions.accountId}
+      and synced.provisional_source is null
+      and synced.posted_on >= ${transactions.postedOn}
+  ))`;
+}
+
 export const spendingLines = defineRead({
   name: "transactions.spendingLines",
   description:
     "Categorized amounts for budgets and spending questions: one line per categorized transaction, and one " +
     "per part of a split transaction. Dated by experience date when set, else posted date; from/to filter " +
     "on that date (inclusive). budgetOnly (default true) limits to accounts that count toward budgets. " +
-    "Net by default: what friends owe on a shared expense comes off it (your share is what counts), and the " +
+    "A provisional transaction (from a purchase alert) counts until the bank's data for its account reaches " +
+    "its date. Net by default: what friends owe on a shared expense comes off it (your share is what counts), and the " +
     "part of an incoming payment matched to a reimbursement is dropped (never income). gross: true returns " +
     "the amounts as charged.",
   input: z.object({
@@ -365,6 +389,7 @@ export const spendingLines = defineRead({
     if (from) filters.push(sql`${effective} >= ${from}`);
     if (to) filters.push(sql`${effective} <= ${to}`);
     if (budgetOnly) filters.push(inArray(transactions.accountId, budgetAccountIds(db)));
+    filters.push(countsAsSpending());
 
     const [whole, split] = await Promise.all([
       db
@@ -491,6 +516,7 @@ export const listInbox = defineRead({
         merchant: transactions.merchant,
         accountId: transactions.accountId,
         pending: transactions.pending,
+        provisionalSource: transactions.provisionalSource,
       })
       .from(transactions)
       .where(
@@ -560,6 +586,7 @@ export const matchTransfers = defineWrite({
         accountId: transactions.accountId,
         amountCents: transactions.amountCents,
         pending: transactions.pending,
+        provisionalSource: transactions.provisionalSource,
         transferPairId: transactions.transferPairId,
       })
       .from(transactions)
@@ -575,6 +602,9 @@ export const matchTransfers = defineWrite({
       // Pending rows can vanish when they post (import removes them), which
       // would leave the other side pointing at nothing.
       if (a.pending || b.pending) throw new Error("Pending transactions can't be paired; wait until they post");
+      // Provisional rows are removed when their synced version arrives, for
+      // the same reason.
+      if (a.provisionalSource || b.provisionalSource) throw new Error("Provisional transactions can't be paired; wait until the bank reports them");
       // Already paired (e.g. by the owner in the meantime): leave it.
       if (a.transferPairId || b.transferPairId) continue;
       await ctx.update(transactions, a.id, { transferPairId: b.id });

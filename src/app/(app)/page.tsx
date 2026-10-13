@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { budgetStatus } from "@/operations/budgets";
 import { listAlerts } from "@/operations/recurring";
+import { provisionalRows } from "@/operations/provisional";
 import { owedToMe } from "@/operations/reimbursements";
 import { read } from "@/operations/runtime";
 import { inboxCount } from "@/operations/transactions";
@@ -15,19 +16,24 @@ import { AlertList } from "./subscriptions/alert-list";
 
 export default async function HomePage() {
   const db = getDb();
-  const [digest, alerts, inbox, budgets, owed] = await Promise.all([
+  const [digest, alerts, inbox, budgets, owed, alerted] = await Promise.all([
     latestDigest(db),
     read(db, listAlerts, {}),
     inboxCount(db),
     read(db, budgetStatus, {}),
     read(db, owedToMe, {}),
+    provisionalRows(db, new Date().toISOString().slice(0, 10)),
   ]);
+  const stale = alerted.filter((r) => r.stale).length;
   const over = budgets.targets.filter((t) => t.remainingCents < 0);
 
   const items = [
     inbox ? { href: "/inbox", text: `${inbox} transaction${inbox === 1 ? "" : "s"} to categorize` } : null,
     over.length
       ? { href: "/budgets", text: `Over budget: ${over.map((t) => `${t.name} by ${formatCents(-t.remainingCents)}`).join(", ")}` }
+      : null,
+    stale
+      ? { href: "/inbox#alerts", text: `${stale} purchase alert${stale === 1 ? "" : "s"} the bank never reported` }
       : null,
     owed.totalCents ? { href: "/owed", text: `${formatCents(owed.totalCents)} owed to you` } : null,
   ].filter((i): i is { href: string; text: string } => Boolean(i));

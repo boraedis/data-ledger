@@ -244,6 +244,15 @@ mustn't look like income (#8).
 
 Each event has a dedupe key, so it's raised once, and a dismissed alert never comes back. **Home is the digest:** open alerts plus the inbox, budgets over target and what's owed. `alerts.notifiedAt` is there for push or email delivery (#29) to mark what it has sent.
 
+### Provisional transactions
+
+Near-real-time purchase alerts (#28: bank emails #31, Apple Pay #32) can't wait for the daily sync, so each one creates a **provisional transaction** (`transactions.provisional_source`, #30) that you can categorize, split, tag or share on the spot. The sync stays the source of truth.
+- **Created only by an alert** (`transactions.createProvisional`, actor `alert`), keyed on the alert's own id, so a re-delivered alert is recorded once. If the bank already reported the purchase, nothing is added.
+- **Matched nightly**, first in the pipeline, as `matcher` (`src/lib/provisional/match.ts`). A match needs the same account, the exact amount, and a bank row dated from a day before to five days after, which arrived after the alert. Everything you set carries over to the bank's row (category or split, experience date, tags, shares friends owe), unless the bank's row already has its own. The provisional row is then removed, as one undoable command, like pending → posted.
+- **Never counted twice:** a provisional transaction counts as spending until the bank's data for its account reaches its date. From then on the bank's version counts, whether or not the two were matched.
+- **Review:** after a week without a match it's flagged, in the Inbox's "Waiting for the bank" and on Home. Usually the bank charged a different amount (a tip), so you pick the right charge from a short list. Otherwise it was declined or misread, and you discard it. Both are operations (`transactions.matchProvisional`, `transactions.discardProvisional`) and can be undone.
+- **Kept out of** transfer matching, recurring-charge detection and reimbursement payments, where a second copy of a purchase would mislead.
+
 ### AI: one self-hosted model
 
 The app has **one model**, and every AI feature goes through it: Tally's
@@ -275,7 +284,7 @@ See "Model service" below for how it's hosted, called and chosen.
 
 ### Nightly pipeline
 
-Sync → categorize → detect recurring → match reimbursements → anomaly
+Sync → match provisional transactions → categorize → detect recurring → match reimbursements → anomaly
 checks → digest. (Today: the sync cron categorizes and raises
 recurring-charge alerts, then hands the rest to the model's classify chain,
 whose last link has Tally write the digest; reimbursement matches are

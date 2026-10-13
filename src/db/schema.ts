@@ -267,6 +267,11 @@ export const categories = pgTable(
   (t) => [unique("categories_parent_name_unique").on(t.parentId, t.name).nullsNotDistinct()],
 );
 
+// Where a provisional transaction came from (#30): a near-real-time alert
+// that arrived before the bank's own data. Null on everything the sync
+// brings in.
+export const provisionalSource = pgEnum("provisional_source", ["email", "apple_pay"]);
+
 export const transactions = pgTable(
   "transactions",
   {
@@ -315,10 +320,18 @@ export const transactions = pgTable(
     // The owner said this incoming payment isn't paying anyone back (a gift,
     // a sale); it's no longer proposed as a reimbursement match (#8).
     notReimbursement: boolean("not_reimbursement").notNull().default(false),
+    // Set on a provisional transaction (#30): one created from a purchase
+    // alert (#31 email, #32 Apple Pay) before the bank reported it. The
+    // nightly pipeline matches it to the synced transaction, carries the
+    // owner's work over and removes it (src/operations/provisional.ts). Its
+    // externalId is "<source>:<the alert's own id>", so a re-delivered
+    // alert can't create it twice.
+    provisionalSource: provisionalSource("provisional_source"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("transactions_posted_on_idx").on(t.postedOn),
+    index("transactions_provisional_idx").on(t.provisionalSource),
     index("transactions_transfer_pair_idx").on(t.transferPairId),
     index("transactions_merchant_idx").on(t.merchant),
     uniqueIndex("transactions_account_external_idx").on(t.accountId, t.externalId),

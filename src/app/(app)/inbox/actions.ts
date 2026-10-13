@@ -80,3 +80,27 @@ export async function askModel(): Promise<{ error: string } | { ok: true; messag
     return failure(error);
   }
 }
+
+type Done = { error: string } | { ok: true };
+
+async function provisionalAction(operation: string, input: Record<string, unknown>, reason: string): Promise<Done> {
+  try {
+    await asOwner((db) => execute(db, { operation, input, actor: "user", reason }));
+  } catch (error) {
+    return failure(error);
+  }
+  revalidatePath("/inbox");
+  revalidatePath("/transactions");
+  revalidatePath("/");
+  return { ok: true };
+}
+
+/** A purchase alert the bank reported differently (a tip): the owner says which it was (#30). */
+export async function matchAlert(provisionalId: string, transactionId: string) {
+  return provisionalAction("transactions.matchProvisional", { pairs: [{ provisionalId, transactionId }] }, "Matched a purchase alert by hand");
+}
+
+/** A purchase alert the bank never reported: declined, reversed, or read wrong. */
+export async function discardAlert(transactionId: string) {
+  return provisionalAction("transactions.discardProvisional", { transactionId }, "Discarded a purchase alert the bank never reported");
+}
