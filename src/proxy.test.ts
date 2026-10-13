@@ -57,6 +57,13 @@ describe("proxy", () => {
     expect(proxy(new NextRequest("http://localhost/api/bridge/v1/transactions")).status).toBe(401);
   });
 
+  it("serves the installable app's static pieces without a session, and nothing else under them", () => {
+    for (const path of ["/manifest.webmanifest", "/sw.js", "/icons/apple-touch-icon.png", "/icons/icon-192.png"]) {
+      expect(proxy(new NextRequest(`http://localhost${path}`)).status).toBe(200);
+    }
+    expect(proxy(new NextRequest("http://localhost/icons/other.png")).headers.get("location")).toBe("http://localhost/login");
+  });
+
   it("lets the sign-in routes through without a session", () => {
     expect(proxy(new NextRequest("http://localhost/login")).status).toBe(200);
     expect(proxy(new NextRequest("http://localhost/api/auth/login/options")).status).toBe(200);

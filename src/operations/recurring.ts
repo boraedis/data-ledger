@@ -166,6 +166,21 @@ export const refreshAlerts = defineWrite({
   },
 });
 
+export const markAlertsNotified = defineWrite({
+  name: "alerts.markNotified",
+  description: "Pipeline only: record that alerts were sent to the owner's devices as push notifications.",
+  // The push sender (src/lib/push/alerts.ts) after a delivery; nobody
+  // marks an alert notified by hand.
+  allowedActors: ["matcher"],
+  input: z.object({ alertIds: z.array(z.uuid()).min(1).max(200) }),
+  apply: async (ctx, { alertIds }) => {
+    const now = new Date();
+    const rows = await ctx.db.select({ id: alerts.id }).from(alerts).where(and(inArray(alerts.id, alertIds), isNull(alerts.notifiedAt)));
+    for (const row of rows) await ctx.update(alerts, row.id, { notifiedAt: now });
+    return { marked: rows.length };
+  },
+});
+
 export const listAlerts = defineRead({
   name: "alerts.list",
   description: "Open alerts (not dismissed), newest first: kind, title, detail, the day it happened, and when it was raised.",

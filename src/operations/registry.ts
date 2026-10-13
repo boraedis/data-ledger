@@ -4,7 +4,7 @@ import { budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@
 import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goals";
 import { applySnapshot } from "@/operations/import";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
-import { dismissAlert, listAlerts, listRecurring, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
+import { dismissAlert, listAlerts, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
 import {
   createPerson,
   dismissPayment,
@@ -73,6 +73,7 @@ export const operations: Operation[] = [
   listRecurring,
   setRecurringStatus,
   refreshAlerts,
+  markAlertsNotified,
   listAlerts,
   dismissAlert,
   listPeople,

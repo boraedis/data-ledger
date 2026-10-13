@@ -16,6 +16,15 @@ const PUBLIC_PATHS = new Set([
   // Listed one by one, so a new bridge endpoint is a deliberate addition.
   "/api/bridge/v1/spend/daily",
   "/api/bridge/v1/recurring",
+  // The installable app's pieces (#29): fetched by the browser and iOS
+  // without a session (iOS fetches the manifest and icons on its own when
+  // adding to the home screen). Static, no data in them.
+  "/manifest.webmanifest",
+  "/sw.js",
+  "/icons/icon-192.png",
+  "/icons/icon-512.png",
+  "/icons/icon-maskable-512.png",
+  "/icons/apple-touch-icon.png",
 ]);
 const PUBLIC_PREFIXES = ["/api/auth/"];
 

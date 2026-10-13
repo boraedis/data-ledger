@@ -282,6 +282,16 @@ See "Model service" below for how it's hosted, called and chosen.
   - **Storage:** the note is stored beside the facts (`digests`), so any sentence can be checked against what it was told.
   - **Where it shows:** at the top of Home.
 
+### Push notifications
+
+The app notifies the owner's devices itself, with Web Push (#29); no notification service is in between.
+- **Installable:** a web app manifest and icons (`src/app/manifest.ts`, `public/icons/`, from `scripts/generate-icons.mjs`). On an iPhone, add it from Safari's Share menu (Add to Home Screen); iOS allows push only for a home-screen app (iOS 16.4+).
+- **Devices:** each device opts in from Settings → Notifications and gets a row in `push_subscriptions`. Settings lists them with when they were last notified, and Remove revokes one. A device the push service reports as gone is removed automatically.
+- **Private on the way:** every payload is encrypted to the device's own keys, so the push service (Apple's, for an iPhone) delivers it without being able to read it. VAPID keys sign each push, so only this app can send to these devices.
+- **Minimal on the lock screen:** a merchant and an amount, never balances or account numbers. `sendPush` (`src/lib/push/send.ts`) is the one way to notify; the purchase-alert and suspicious-charge flows (#31–#33) will use it.
+- **What notifies today:** alerts raised by the nightly sync, once each (`alerts.notifiedAt`). Several at once become one summary. Only alerts from the last two days are sent, so turning notifications on doesn't replay old ones.
+- **The service worker** (`public/sw.js`) only shows notifications and opens the app where one points. It caches nothing, so no ledger page is stored on the device.
+
 ### Nightly pipeline
 
 Sync → match provisional transactions → categorize → detect recurring → match reimbursements → anomaly
@@ -398,6 +408,8 @@ local Postgres works the same way.
 | `MODEL_API_KEY` | with the above | The key the model server requires (same value as its `VLLM_API_KEY`) |
 | `MODEL_NAME` | optional | Model name to request; defaults to `ledger`, the name `model/serve.py` serves under |
 | `MODEL_AUTO_APPLY_THRESHOLD` | optional | Confidence (0–1) at or above which the model's category is applied rather than suggested; default 0.9 |
+| `BRIDGE_TOKEN` | optional | Bearer token Data Diary sends to the bridge (32+ chars). Unset = bridge off |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional | Push notifications (#29): the key pair from `npx web-push generate-vapid-keys`, and a `mailto:` or https contact. Unset = no notifications |
 
 ### Authentication
 

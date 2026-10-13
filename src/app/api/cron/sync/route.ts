@@ -2,6 +2,7 @@ import { timingSafeEqual } from "crypto";
 import { withTransactionalDb } from "@/lib/db";
 import { chainUrl, triggerClassify } from "@/lib/categorize/classify-chain";
 import { modelIsConfigured } from "@/lib/model/client";
+import { notifyNewAlerts } from "@/lib/push/alerts";
 import { syncAllConnections } from "@/lib/sync/run";
 import { execute } from "@/operations/runtime";
 
@@ -35,6 +36,14 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error("Alert refresh failed", error);
   }
+  // New alerts to the owner's phone (#29). Same rule: a push problem never
+  // fails the sync, and Home still shows every alert.
+  let alertsPushed = 0;
+  try {
+    alertsPushed = (await withTransactionalDb((db) => notifyNewAlerts(db))).notified;
+  } catch (error) {
+    console.error("Alert push failed", error);
+  }
   // Then hand whatever rules and memory left to the model, as its own job
   // (a cold start alone can take most of a function's 5 minutes).
   if (modelIsConfigured()) await triggerClassify(chainUrl(request.url), 0);
@@ -43,5 +52,6 @@ export async function GET(request: Request) {
   return Response.json({
     results: Object.fromEntries(Object.entries(results).map(([id, r]) => [id, r.status])),
     alertsRaised,
+    alertsPushed,
   });
 }

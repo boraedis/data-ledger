@@ -3,10 +3,12 @@ import { getDb } from "@/lib/db";
 import { autoApplyThreshold } from "@/lib/categorize/pipeline";
 import { latestEval, recommendedThreshold } from "@/lib/model/evaluate";
 import { getModelStatus } from "@/lib/model/status";
+import { listDevices, pushConfig } from "@/lib/push/send";
 import { getConnectionHealth } from "@/lib/sync/health";
 import { Connections } from "./connections";
 import { ModelStatusPanel } from "./model-status";
 import { AddPasskey } from "./add-passkey";
+import { Notifications } from "./notifications";
 
 const dateFormat = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
@@ -15,11 +17,12 @@ export const maxDuration = 300;
 
 export default async function SettingsPage() {
   const db = getDb();
-  const [passkeys, health, model, lastEval] = await Promise.all([
+  const [passkeys, health, model, lastEval, devices] = await Promise.all([
     listPasskeys(),
     getConnectionHealth(db),
     getModelStatus(db),
     latestEval(db),
+    listDevices(db),
   ]);
   const evaluation = lastEval ? { summary: lastEval, recommended: recommendedThreshold(lastEval.thresholds) } : null;
   return (
@@ -32,6 +35,22 @@ export default async function SettingsPage() {
           capped at 20 per connection per day.
         </p>
         <Connections health={health} />
+      </section>
+      <section className="space-y-3">
+        <h2 className="text-lg font-medium">Notifications</h2>
+        <p className="text-sm text-muted-foreground">
+          New alerts arrive on your devices as notifications, showing a merchant and an amount, never balances.
+        </p>
+        <Notifications
+          publicKey={pushConfig()?.publicKey ?? null}
+          devices={devices.map((d) => ({
+            id: d.id,
+            label: d.label,
+            added: dateFormat.format(d.createdAt),
+            lastSent: d.lastSentAt ? dateFormat.format(d.lastSentAt) : null,
+            lastError: d.lastError,
+          }))}
+        />
       </section>
       <section className="space-y-3">
         <h2 className="text-lg font-medium">Model</h2>
