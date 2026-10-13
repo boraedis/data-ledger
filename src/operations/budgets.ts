@@ -55,13 +55,14 @@ export const budgetStatus = defineRead({
     "target, rollover carried in, rebalancing adjustments, available, net spent and remaining, in cents. " +
     "Multi-month targets add an even-pace expected spend and, if a sinking fund, the monthly set-aside. " +
     "The buffer (categoryId null) covers every expense category without its own target; `unbudgeted` " +
-    "lists what drew from it this period by category.",
-  input: z.object({ on: isoDate.optional() }),
-  run: async (db, { on = today() }) => {
+    "lists what drew from it this period by category. Net of shared expenses (your share counts) unless " +
+    "gross is true.",
+  input: z.object({ on: isoDate.optional(), gross: z.boolean().default(false) }),
+  run: async (db, { on = today(), gross }) => {
     const versions = await loadVersions(db);
     const earliest = versions.reduce((min, v) => (v.effectiveFrom < min ? v.effectiveFrom : min), on.slice(0, 8) + "01");
     const [lines, { rows, labelOf }, adjustments] = await Promise.all([
-      spendingLines.run(db, { from: earliest, to: on, budgetOnly: true }),
+      spendingLines.run(db, { from: earliest, to: on, budgetOnly: true, gross }),
       labels(db),
       db.select({ categoryId: budgetAdjustments.categoryId, on: budgetAdjustments.on, amountCents: budgetAdjustments.amountCents }).from(budgetAdjustments),
     ]);

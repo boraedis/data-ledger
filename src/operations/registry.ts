@@ -2,12 +2,25 @@ import { z } from "zod";
 import { createManualAccount, deleteManualAccount, listAccounts, setManualValue, updateAccount } from "@/operations/accounts";
 import { budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
 import { applySnapshot } from "@/operations/import";
+import {
+  createPerson,
+  dismissPayment,
+  forgive,
+  listPeople,
+  match,
+  owedToMe,
+  proposals,
+  setShares,
+  transactionReimbursements,
+  unmatch,
+  updatePerson,
+} from "@/operations/reimbursements";
 import { investmentIncome } from "@/operations/investments";
 import { createCategory, deleteCategory, listCategories, moveCategory, renameCategory } from "@/operations/categories";
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { accounts, balanceSnapshots, budgetAdjustments, budgetTargets, categories, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { accounts, balanceSnapshots, budgetAdjustments, budgetTargets, categories, people, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -50,6 +63,17 @@ export const operations: Operation[] = [
   setTarget,
   removeTarget,
   rebalance,
+  listPeople,
+  createPerson,
+  updatePerson,
+  setShares,
+  forgive,
+  match,
+  unmatch,
+  dismissPayment,
+  owedToMe,
+  proposals,
+  transactionReimbursements,
   listInbox,
   setTransactionCategory,
   splitTransaction,
@@ -90,6 +114,9 @@ export const trackedTables = {
   balance_snapshots: balanceSnapshots,
   budget_targets: budgetTargets,
   budget_adjustments: budgetAdjustments,
+  people,
+  reimbursements,
+  reimbursement_matches: reimbursementMatches,
   holding_snapshots: holdingSnapshots,
   categories,
   rules,

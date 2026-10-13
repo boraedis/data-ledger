@@ -1,9 +1,20 @@
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, categories, categorySuggestions, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import {
+  accounts,
+  categories,
+  categorySuggestions,
+  reimbursementMatches,
+  reimbursements,
+  tags,
+  transactionSplits,
+  transactionTags,
+  transactions,
+} from "@/db/schema";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { merchantMemory } from "@/lib/categorize/match";
 import { isInvestmentKind, investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
+import { distribute } from "@/lib/reimbursements/match";
 import type { Db } from "@/db/types";
 import { budgetAccountIds } from "@/operations/accounts";
 import { defineRead, defineWrite } from "@/operations/define";
@@ -13,8 +24,9 @@ const isoDate = z.iso.date();
 
 /**
  * Transactions still waiting for a category: uncategorized, not split, in
- * an account that counts toward budgets, and not one side of a transfer
- * (#24) — a transfer needs no category, it's just money moving. The one
+ * an account that counts toward budgets, not one side of a transfer (#24)
+ * and not a payment fully matched to reimbursements (#8) — neither needs a
+ * category, it's just money moving. The one
  * definition the inbox, its badge and the pipeline all share.
  */
 export function awaitingCategory(db: Db): SQL {
@@ -23,6 +35,13 @@ export function awaitingCategory(db: Db): SQL {
     eq(transactions.isSplit, false),
     isNull(transactions.transferPairId),
     inArray(transactions.accountId, budgetAccountIds(db)),
+    // A payment fully matched to what friends owed (#8) is settled, not
+    // income, and needs no category.
+    sql`not exists (
+      select 1 from ${reimbursementMatches}
+      where ${reimbursementMatches.transactionId} = ${transactions.id}
+      having sum(${reimbursementMatches.amountCents}) >= ${transactions.amountCents}
+    )`,
   )!;
 }
 
@@ -105,10 +124,14 @@ export const listTransactions = defineRead({
           .innerJoin(tags, eq(tags.id, transactionTags.tagId))
           .where(inArray(transactionTags.transactionId, ids))
       : [];
-    const context = await transferAndActivity(db, rows);
+    const [context, { owedOff, matched }] = await Promise.all([transferAndActivity(db, rows), reimbursementAdjustments(db, ids)]);
     return rows.map(({ transferPairId, ...r }) => ({
       ...r,
       ...context(r.accountId, r.description, transferPairId),
+      // Shared expenses (#8): what friends owe on it, and how much of an
+      // incoming payment was matched to what they owed.
+      sharedOwedCents: owedOff.get(r.id) ?? 0,
+      reimbursedCents: matched.get(r.id) ?? 0,
       tags: tagRows.filter((t) => t.transactionId === r.id).map((t) => t.name).sort(),
     }));
   },
@@ -279,21 +302,64 @@ export const getTransaction = defineRead({
   },
 });
 
+/**
+ * Shared-expense adjustments for a set of transactions (#8):
+ * - `owedOff`: what friends owe on a shared expense, which comes off the
+ *   owner's spend — the full owed amount while it's expected, only what was
+ *   actually paid once forgiven.
+ * - `matched`: the part of an incoming payment matched to reimbursements,
+ *   which is never income.
+ */
+export async function reimbursementAdjustments(db: Db, transactionIds: string[]) {
+  const owedOff = new Map<string, number>();
+  const matched = new Map<string, number>();
+  if (transactionIds.length === 0) return { owedOff, matched };
+  const [owed, paidByReimbursement, paidByPayment] = await Promise.all([
+    db
+      .select({ id: reimbursements.id, transactionId: reimbursements.transactionId, amountCents: reimbursements.amountCents, forgiven: reimbursements.forgiven })
+      .from(reimbursements)
+      .where(inArray(reimbursements.transactionId, transactionIds)),
+    db
+      .select({ reimbursementId: reimbursementMatches.reimbursementId, cents: sql<number>`sum(${reimbursementMatches.amountCents})`.mapWith(Number) })
+      .from(reimbursementMatches)
+      .innerJoin(reimbursements, eq(reimbursements.id, reimbursementMatches.reimbursementId))
+      .where(inArray(reimbursements.transactionId, transactionIds))
+      .groupBy(reimbursementMatches.reimbursementId),
+    db
+      .select({ transactionId: reimbursementMatches.transactionId, cents: sql<number>`sum(${reimbursementMatches.amountCents})`.mapWith(Number) })
+      .from(reimbursementMatches)
+      .where(inArray(reimbursementMatches.transactionId, transactionIds))
+      .groupBy(reimbursementMatches.transactionId),
+  ]);
+  const paid = new Map(paidByReimbursement.map((p) => [p.reimbursementId, p.cents]));
+  for (const r of owed) {
+    const off = r.forgiven ? (paid.get(r.id) ?? 0) : r.amountCents;
+    owedOff.set(r.transactionId, (owedOff.get(r.transactionId) ?? 0) + off);
+  }
+  for (const p of paidByPayment) matched.set(p.transactionId, p.cents);
+  return { owedOff, matched };
+}
+
 export const spendingLines = defineRead({
   name: "transactions.spendingLines",
   description:
     "Categorized amounts for budgets and spending questions: one line per categorized transaction, and one " +
     "per part of a split transaction. Dated by experience date when set, else posted date; from/to filter " +
-    "on that date (inclusive). budgetOnly (default true) limits to accounts that count toward budgets.",
+    "on that date (inclusive). budgetOnly (default true) limits to accounts that count toward budgets. " +
+    "Net by default: what friends owe on a shared expense comes off it (your share is what counts), and the " +
+    "part of an incoming payment matched to a reimbursement is dropped (never income). gross: true returns " +
+    "the amounts as charged.",
   input: z.object({
     from: z.iso.date().optional(),
     to: z.iso.date().optional(),
     budgetOnly: z.boolean().default(true),
+    gross: z.boolean().default(false),
   }),
-  run: async (db, { from, to, budgetOnly }) => {
+  run: async (db, { from, to, budgetOnly, gross }) => {
     // The one definition of "what counts where" that budgets (#7) build
     // on: splits expanded into their parts, experience date winning over
-    // posted date, uncategorized transactions left out.
+    // posted date, uncategorized transactions left out, net of shared
+    // expenses and reimbursements (#8).
     const effective = sql<string>`coalesce(${transactions.experiencedOn}, ${transactions.postedOn})`;
     const filters: SQL[] = [];
     if (from) filters.push(sql`${effective} >= ${from}`);
@@ -309,11 +375,28 @@ export const spendingLines = defineRead({
         .select({ transactionId: transactions.id, date: effective, amountCents: transactionSplits.amountCents, categoryId: transactionSplits.categoryId })
         .from(transactionSplits)
         .innerJoin(transactions, eq(transactions.id, transactionSplits.transactionId))
-        .where(and(...filters)),
+        .where(and(...filters))
+        .orderBy(transactionSplits.position),
     ]);
-    return [...whole, ...split]
-      .map((line) => ({ ...line, categoryId: line.categoryId! }))
-      .sort((a, b) => b.date.localeCompare(a.date));
+    let lines = [...whole, ...split].map((line) => ({ ...line, categoryId: line.categoryId! }));
+
+    if (!gross) {
+      const { owedOff, matched } = await reimbursementAdjustments(db, [...new Set(lines.map((l) => l.transactionId))]);
+      const byTxn = new Map<string, typeof lines>();
+      for (const line of lines) byTxn.set(line.transactionId, [...(byTxn.get(line.transactionId) ?? []), line]);
+      lines = [...byTxn.values()].flatMap((parts) => {
+        const id = parts[0].transactionId;
+        // An expense is negative: what friends owe moves it toward zero. A
+        // payment is positive: the matched part comes off it.
+        const adjust = (owedOff.get(id) ?? 0) - (matched.get(id) ?? 0);
+        if (adjust === 0) return parts;
+        const shares = distribute(Math.abs(adjust), parts.map((p) => p.amountCents));
+        return parts
+          .map((p, i) => ({ ...p, amountCents: p.amountCents + Math.sign(adjust) * shares[i] }))
+          .filter((p) => p.amountCents !== 0);
+      });
+    }
+    return lines.sort((a, b) => b.date.localeCompare(a.date));
   },
 });
 

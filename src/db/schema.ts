@@ -312,6 +312,9 @@ export const transactions = pgTable(
     transferPairId: uuid("transfer_pair_id").references((): AnyPgColumn => transactions.id, { onDelete: "set null" }),
     // The owner said this isn't a transfer; the matcher leaves it alone.
     transferRejected: boolean("transfer_rejected").notNull().default(false),
+    // The owner said this incoming payment isn't paying anyone back (a gift,
+    // a sale); it's no longer proposed as a reimbursement match (#8).
+    notReimbursement: boolean("not_reimbursement").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -346,6 +349,71 @@ export const transactionSplits = pgTable(
     position: integer("position").notNull().default(0),
   },
   (t) => [index("transaction_splits_transaction_idx").on(t.transactionId)],
+);
+
+// ---------------------------------------------------------------------------
+// Shared expenses and reimbursements (#8).
+// ---------------------------------------------------------------------------
+
+// The people who pay the owner back. Deliberately light: a name and the
+// spellings payment apps use for it ("ALEX R", "A RIVERA"). Data Diary's
+// people catalog joins later, through the bridge.
+export const people = pgTable(
+  "people",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    // Extra spellings to recognize in payment descriptions.
+    aliases: text("aliases").array().notNull().default(sql`'{}'::text[]`),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("people_name_lower_idx").on(sql`lower(${t.name})`)],
+);
+
+// What one person owes on one shared expense. The owner's share is the
+// expense minus these. Net spend drops by the owed amount as soon as it's
+// recorded — your share is what counts, whether or not they've paid yet.
+// A forgiven reimbursement stops being owed: its unpaid part returns to
+// the owner's spend.
+export const reimbursements = pgTable(
+  "reimbursements",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // The shared expense. Cascade is a backstop: only posted transactions
+    // can be shared, and only pending ones are ever removed by a sync.
+    transactionId: uuid("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    personId: uuid("person_id")
+      .notNull()
+      .references(() => people.id, { onDelete: "restrict" }),
+    // Positive cents owed.
+    amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+    forgiven: boolean("forgiven").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("reimbursements_transaction_idx").on(t.transactionId), index("reimbursements_person_idx").on(t.personId)],
+);
+
+// Money received against what's owed: part of an incoming payment applied
+// to one reimbursement. One payment can cover several reimbursements (one
+// Venmo for two dinners) and one reimbursement can be paid in parts. The
+// matched part of a payment is never income.
+export const reimbursementMatches = pgTable(
+  "reimbursement_matches",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    reimbursementId: uuid("reimbursement_id")
+      .notNull()
+      .references(() => reimbursements.id, { onDelete: "cascade" }),
+    // The incoming payment.
+    transactionId: uuid("transaction_id")
+      .notNull()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+    amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("reimbursement_matches_reimbursement_idx").on(t.reimbursementId), index("reimbursement_matches_transaction_idx").on(t.transactionId)],
 );
 
 // ---------------------------------------------------------------------------

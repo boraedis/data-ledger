@@ -20,7 +20,8 @@
 // - **Net spend**: −(sum of signed amounts), so a refund in a category
 //   offsets its spending. Only expense-kind categories count; income and
 //   transfer categories, uncategorized lines and matched transfers never
-//   reach a budget. Reimbursements (#8) will reduce spend here too.
+//   reach a budget. Shared expenses arrive here already net of what
+//   friends owe (#8, in transactions.spendingLines).
 
 export const BUFFER = "buffer" as const;
 export type TargetKey = string; // a category id, or BUFFER
