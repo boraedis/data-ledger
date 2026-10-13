@@ -11,6 +11,11 @@ const PUBLIC_PATHS = new Set([
   // anything without the CRON_SECRET bearer token.
   "/api/cron/sync",
   "/api/cron/classify",
+  // Data Diary's server calls the bridge (#12), also without a session;
+  // each route rejects anything without the BRIDGE_TOKEN bearer token.
+  // Listed one by one, so a new bridge endpoint is a deliberate addition.
+  "/api/bridge/v1/spend/daily",
+  "/api/bridge/v1/recurring",
 ]);
 const PUBLIC_PREFIXES = ["/api/auth/"];
 
@@ -27,7 +32,8 @@ function canonicalRedirect(request: NextRequest): URL | null {
   if (process.env.VERCEL_ENV !== "production" || !origin) return null;
   // Cron and chain calls carry their own secret and may arrive on a
   // deployment URL; a redirect there could mean the nightly job never runs.
-  if (request.nextUrl.pathname.startsWith("/api/cron/")) return null;
+  // The same goes for the bridge: a server client may not follow it.
+  if (/^\/api\/(cron|bridge)\//.test(request.nextUrl.pathname)) return null;
   const canonical = new URL(origin);
   if (request.nextUrl.host === canonical.host) return null;
   return new URL(request.nextUrl.pathname + request.nextUrl.search, canonical);

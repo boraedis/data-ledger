@@ -284,11 +284,22 @@ than half-completing.
 
 ### Diary bridge
 
-At the end, a read-only, versioned API (`/api/bridge/v1/…`) serving
-aggregates only — daily spend by category, recurring charges, and later
-merchant→place links — behind a server-to-server token. No
-transaction-level endpoint. Data Diary consumes it like any other import,
-and finance-derived charts are never public there.
+A read-only, versioned API serving aggregates only (#12). Data Diary
+consumes it like any other import, and finance-derived charts are never
+public there. The contract for the Diary side is
+[docs/bridge-v1.md](docs/bridge-v1.md).
+
+- **Endpoints:** `GET /api/bridge/v1/spend/daily?from&to` gives net spend
+  per day per expense category, the same numbers Budgets counts.
+  `GET /api/bridge/v1/recurring` gives recurring charges, minus any the
+  owner dismissed. Merchant→place links come later.
+- **Auth:** a server-to-server bearer token, `BRIDGE_TOKEN`, separate
+  from `CRON_SECRET`. Unset or short means every request is refused.
+  The proxy lists each bridge path exactly, so a new endpoint is public
+  only by a deliberate edit.
+- **No transaction-level endpoint and no passthrough:** every response
+  field is chosen by name in `src/lib/bridge/v1.ts`. No ids beyond
+  categories, and no descriptions, accounts or balances.
 
 ## Stack
 
