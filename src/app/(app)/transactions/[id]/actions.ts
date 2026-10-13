@@ -44,3 +44,7 @@ export async function setExperienceDate(transactionId: string, experiencedOn: st
     experiencedOn ? `Experience date set to ${experiencedOn}` : "Cleared experience date",
   );
 }
+
+export async function notATransfer(transactionId: string) {
+  return run(transactionId, "transactions.unmatchTransfer", {}, "Marked as not a transfer");
+}

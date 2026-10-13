@@ -3,12 +3,28 @@ import { z } from "zod";
 import { accounts, categories, categorySuggestions, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { merchantMemory } from "@/lib/categorize/match";
+import { isInvestmentKind, investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
 import type { Db } from "@/db/types";
 import { budgetAccountIds } from "@/operations/accounts";
 import { defineRead, defineWrite } from "@/operations/define";
 import { NotFoundError, type WriteContext } from "@/operations/tracked";
 
 const isoDate = z.iso.date();
+
+/**
+ * Transactions still waiting for a category: uncategorized, not split, in
+ * an account that counts toward budgets, and not one side of a transfer
+ * (#24) — a transfer needs no category, it's just money moving. The one
+ * definition the inbox, its badge and the pipeline all share.
+ */
+export function awaitingCategory(db: Db): SQL {
+  return and(
+    isNull(transactions.categoryId),
+    eq(transactions.isSplit, false),
+    isNull(transactions.transferPairId),
+    inArray(transactions.accountId, budgetAccountIds(db)),
+  )!;
+}
 
 export const listTransactions = defineRead({
   name: "transactions.list",
@@ -17,7 +33,9 @@ export const listTransactions = defineRead({
     "Filter by date range (inclusive, YYYY-MM-DD, on posted date), account, category (matches split parts " +
     "too), tag, text search on merchant/description, or uncategorized only. budgetOnly limits to accounts " +
     "that count toward budgets (excludes investment, retirement, loan and asset accounts) — use it for " +
-    "anything about spending. Page with offset.",
+    "anything about spending. Page with offset. `transfer` is set when the transaction is one side of a " +
+    "transfer between the owner's accounts (never spending or income); `investmentActivity` classifies " +
+    "brokerage and retirement transactions (dividend, interest, buy, sell, reinvestment, fee, transfer, other).",
   input: z.object({
     from: isoDate.optional(),
     to: isoDate.optional(),
@@ -71,6 +89,7 @@ export const listTransactions = defineRead({
         accountId: transactions.accountId,
         categoryId: transactions.categoryId,
         isSplit: transactions.isSplit,
+        transferPairId: transactions.transferPairId,
       })
       .from(transactions)
       .where(and(...filters))
@@ -86,12 +105,42 @@ export const listTransactions = defineRead({
           .innerJoin(tags, eq(tags.id, transactionTags.tagId))
           .where(inArray(transactionTags.transactionId, ids))
       : [];
-    return rows.map((r) => ({
+    const context = await transferAndActivity(db, rows);
+    return rows.map(({ transferPairId, ...r }) => ({
       ...r,
+      ...context(r.accountId, r.description, transferPairId),
       tags: tagRows.filter((t) => t.transactionId === r.id).map((t) => t.name).sort(),
     }));
   },
 });
+
+/**
+ * For each transaction: the other side's account if it's a paired
+ * transfer, and what kind of investment activity it is if it's in a
+ * brokerage or retirement account (rule-based, src/lib/investments).
+ */
+async function transferAndActivity(db: Db, rows: { accountId: string; transferPairId: string | null }[]) {
+  const pairIds = rows.map((r) => r.transferPairId).filter((id): id is string => Boolean(id));
+  const [kinds, pairs] = await Promise.all([
+    db.select({ id: accounts.id, kind: accounts.type }).from(accounts),
+    pairIds.length
+      ? db.select({ id: transactions.id, accountId: transactions.accountId }).from(transactions).where(inArray(transactions.id, pairIds))
+      : Promise.resolve([]),
+  ]);
+  const kindOf = new Map(kinds.map((k) => [k.id, k.kind]));
+  const pairAccount = new Map(pairs.map((p) => [p.id, p.accountId]));
+  return (
+    accountId: string,
+    description: string,
+    transferPairId: string | null,
+  ): { transfer: { transactionId: string; accountId: string } | null; investmentActivity: InvestmentActivity | null } => {
+    const kind = kindOf.get(accountId);
+    return {
+      transfer: transferPairId ? { transactionId: transferPairId, accountId: pairAccount.get(transferPairId)! } : null,
+      investmentActivity: kind && isInvestmentKind(kind) ? investmentActivity(description) : null,
+    };
+  };
+}
 
 async function assertCategoriesExist(ctx: WriteContext, ids: string[]) {
   const unique = [...new Set(ids)];
@@ -182,7 +231,9 @@ export const setExperienceDate = defineWrite({
 
 export const getTransaction = defineRead({
   name: "transactions.get",
-  description: "One transaction with its account, category or split parts, tags and experience date.",
+  description:
+    "One transaction with its account, category or split parts, tags, experience date, transfer pairing and " +
+    "investment activity (see transactions.list).",
   input: z.object({ transactionId: z.uuid() }),
   run: async (db, { transactionId }) => {
     const [row] = await db
@@ -198,6 +249,7 @@ export const getTransaction = defineRead({
         isSplit: transactions.isSplit,
         accountId: transactions.accountId,
         accountName: sql<string>`coalesce(${accounts.displayName}, ${accounts.name})`,
+        transferPairId: transactions.transferPairId,
       })
       .from(transactions)
       .innerJoin(accounts, eq(accounts.id, transactions.accountId))
@@ -221,7 +273,9 @@ export const getTransaction = defineRead({
         .where(eq(transactionTags.transactionId, transactionId))
         .orderBy(tags.name),
     ]);
-    return { ...row, splits: parts, tags: tagRows };
+    const { transferPairId, ...rest } = row;
+    const context = (await transferAndActivity(db, [row]))(row.accountId, row.description, transferPairId);
+    return { ...rest, ...context, splits: parts, tags: tagRows };
   },
 });
 
@@ -357,8 +411,7 @@ export const listInbox = defineRead({
       })
       .from(transactions)
       .where(
-        and(isNull(transactions.categoryId), eq(transactions.isSplit, false), inArray(transactions.accountId, budgetAccountIds(db))),
-      )
+awaitingCategory(db))
       .orderBy(desc(transactions.postedOn), transactions.id)
       .limit(limit);
 
@@ -401,8 +454,71 @@ export async function inboxCount(db: Db): Promise<number> {
   const [{ value }] = await db
     .select({ value: count() })
     .from(transactions)
-    .where(
-        and(isNull(transactions.categoryId), eq(transactions.isSplit, false), inArray(transactions.accountId, budgetAccountIds(db))),
-      );
+    .where(awaitingCategory(db));
   return value;
 }
+
+// --- Transfers between the owner's own accounts (#24) -----------------------
+
+export const matchTransfers = defineWrite({
+  name: "transactions.matchTransfers",
+  description:
+    "Pair transactions as the two sides of a transfer between the owner's own accounts (money moved, nothing " +
+    "spent or earned). Each pair needs exactly opposite amounts in two different accounts. Paired transactions " +
+    "leave the inbox and never count as spending or income.",
+  input: z.object({
+    pairs: z.array(z.object({ cashId: z.uuid(), investmentId: z.uuid() })).min(1).max(1000),
+  }),
+  apply: async (ctx, { pairs }) => {
+    const ids = pairs.flatMap((p) => [p.cashId, p.investmentId]);
+    const rows = await ctx.db
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        amountCents: transactions.amountCents,
+        pending: transactions.pending,
+        transferPairId: transactions.transferPairId,
+      })
+      .from(transactions)
+      .where(inArray(transactions.id, ids));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    let matched = 0;
+    for (const { cashId, investmentId } of pairs) {
+      const a = byId.get(cashId);
+      const b = byId.get(investmentId);
+      if (!a || !b) throw new NotFoundError("Transaction not found");
+      if (a.accountId === b.accountId) throw new Error("Both sides of a transfer can't be in the same account");
+      if (a.amountCents !== -b.amountCents) throw new Error("A transfer's two sides must have exactly opposite amounts");
+      // Pending rows can vanish when they post (import removes them), which
+      // would leave the other side pointing at nothing.
+      if (a.pending || b.pending) throw new Error("Pending transactions can't be paired; wait until they post");
+      // Already paired (e.g. by the owner in the meantime): leave it.
+      if (a.transferPairId || b.transferPairId) continue;
+      await ctx.update(transactions, a.id, { transferPairId: b.id });
+      await ctx.update(transactions, b.id, { transferPairId: a.id });
+      a.transferPairId = b.id;
+      b.transferPairId = a.id;
+      matched++;
+    }
+    return { matched };
+  },
+});
+
+export const unmatchTransfer = defineWrite({
+  name: "transactions.unmatchTransfer",
+  description:
+    "Mark a paired transfer as not a transfer: both sides are unpaired, return to the inbox if uncategorized, " +
+    "and the matcher won't pair either again.",
+  input: z.object({ transactionId: z.uuid() }),
+  apply: async (ctx, { transactionId }) => {
+    const [row] = await ctx.db
+      .select({ id: transactions.id, transferPairId: transactions.transferPairId })
+      .from(transactions)
+      .where(eq(transactions.id, transactionId));
+    if (!row) throw new NotFoundError("Transaction not found");
+    if (!row.transferPairId) throw new Error("This transaction isn't paired as a transfer");
+    await ctx.update(transactions, row.id, { transferPairId: null, transferRejected: true });
+    await ctx.update(transactions, row.transferPairId, { transferPairId: null, transferRejected: true });
+    return { unpaired: [row.id, row.transferPairId] };
+  },
+});

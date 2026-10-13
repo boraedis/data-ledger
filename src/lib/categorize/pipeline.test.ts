@@ -32,7 +32,9 @@ describe("runCategorization", () => {
     const result = await runCategorization(db);
     expect(result.byRules + result.byMemory).toBe(0);
     expect(result.remaining).toBeGreaterThan(200);
-    expect(await db.select().from(commandLog)).toHaveLength(0);
+    // The only write is the transfer matcher pairing the seed's brokerage
+    // contributions (#24); nothing was categorized.
+    expect((await db.select().from(commandLog)).map((c) => c.actor)).toEqual(["matcher"]);
   });
 
   it("applies rules as one logged, undoable command per rule", async () => {

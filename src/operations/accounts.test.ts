@@ -107,9 +107,11 @@ describe("budget filtering", () => {
     await update({ countsTowardBudgets: false });
     expect((await list(true)).some((t) => t.accountId === checkingId)).toBe(false);
     expect((await list(false)).some((t) => t.accountId === checkingId)).toBe(true);
-    // Sanity: the filter removed exactly that account's rows.
+    // Sanity: the filter keeps exactly the rows of accounts still in budgets
+    // (the seed's brokerage is out by default, like checking now).
+    const inBudgets = new Set((await db.select().from(accounts).where(eq(accounts.countsTowardBudgets, true))).map((a) => a.id));
     const all = await db.select().from(transactions);
-    expect((await list(true)).length).toBe(Math.min(500, all.filter((t) => t.accountId !== checkingId).length));
+    expect((await list(true)).length).toBe(Math.min(500, all.filter((t) => inBudgets.has(t.accountId)).length));
   });
 });
 
