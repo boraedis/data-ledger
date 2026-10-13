@@ -352,6 +352,62 @@ export const transactionSplits = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Recurring charges and alerts (#9).
+// ---------------------------------------------------------------------------
+
+// The owner's decisions about detected recurring charges. Detection itself
+// is computed when read (src/lib/recurring/detect.ts) from merchant, cadence
+// and amount, so improving it never needs a backfill; only what the owner
+// said is stored. A series is one merchant in one account.
+export const recurringStatus = pgEnum("recurring_status", ["confirmed", "dismissed"]);
+
+export const recurringSeries = pgTable(
+  "recurring_series",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    merchant: text("merchant").notNull(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    status: recurringStatus("status").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("recurring_series_merchant_account_idx").on(t.merchant, t.accountId)],
+);
+
+export const alertKind = pgEnum("alert_kind", [
+  "price_increase",
+  "duplicate_charge",
+  "overlapping_subscriptions",
+  "trial_converted",
+  "missing_charge",
+]);
+
+// Things worth the owner's attention, written by the nightly pipeline
+// (alerts.refresh) and read by the digest: Home in the app today, push or
+// email later (#29), which marks notifiedAt. dedupeKey makes each alert
+// happen once — a dismissed alert is never raised again for the same event.
+export const alerts = pgTable(
+  "alerts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    kind: alertKind("kind").notNull(),
+    dedupeKey: text("dedupe_key").notNull(),
+    merchant: text("merchant").notNull(),
+    accountId: uuid("account_id").references(() => accounts.id, { onDelete: "cascade" }),
+    transactionId: uuid("transaction_id").references(() => transactions.id, { onDelete: "set null" }),
+    title: text("title").notNull(),
+    detail: text("detail").notNull(),
+    // The day the thing happened (the charge, or the day a charge was due).
+    occurredOn: date("occurred_on").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
+    notifiedAt: timestamp("notified_at", { withTimezone: true }),
+  },
+  (t) => [uniqueIndex("alerts_dedupe_idx").on(t.dedupeKey), index("alerts_created_idx").on(t.createdAt)],
+);
+
+// ---------------------------------------------------------------------------
 // Shared expenses and reimbursements (#8).
 // ---------------------------------------------------------------------------
 

@@ -1,0 +1,134 @@
+import { getDb } from "@/lib/db";
+import { formatCents } from "@/lib/money";
+import { listAlerts, listRecurring } from "@/operations/recurring";
+import { read } from "@/operations/runtime";
+import { AlertList } from "./alert-list";
+import { CheckNow, StatusButtons } from "./controls";
+
+// Subscriptions and recurring bills (#9): what's tracked, what was
+// detected, and the alerts. Detection is rule-based and runs on read; the
+// nightly sync raises alerts, and "Check now" does the same on demand.
+
+export default async function SubscriptionsPage() {
+  const db = getDb();
+  const [series, open] = await Promise.all([read(db, listRecurring, {}), read(db, listAlerts, {})]);
+  const tracked = series.filter((s) => s.status === "confirmed");
+  const current = tracked.filter((s) => s.active);
+  const stopped = tracked.filter((s) => !s.active);
+  const suggested = series.filter((s) => s.status === "suggested" && s.active);
+  const dismissed = series.filter((s) => s.status === "dismissed");
+  const yearly = current.reduce((sum, s) => sum + s.annualizedCents, 0);
+  const amount = (s: (typeof series)[number]) => `${s.variable ? "about " : ""}${formatCents(s.typicalCents)}`;
+
+  return (
+    <div className="space-y-8">
+      <div className="space-y-1">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1 className="text-2xl font-semibold">Subscriptions</h1>
+          <CheckNow />
+        </div>
+        <p className="text-3xl font-semibold tabular-nums">
+          {formatCents(yearly)}
+          <span className="ml-2 text-base font-normal text-muted-foreground">a year, tracked</span>
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Recurring charges are found by merchant, cadence and amount. Confirm the ones to track: they get a next-charge
+          date, a yearly cost, and an alert if a charge goes missing. Alerts are raised after each nightly sync.
+        </p>
+      </div>
+
+      {open.length ? (
+        <section className="space-y-2">
+          <h2 className="text-lg font-medium">Alerts</h2>
+          <AlertList alerts={open} />
+        </section>
+      ) : null}
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-medium">Tracked</h2>
+        {current.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing tracked yet. Confirm a suggestion below.</p>
+        ) : (
+          <ul className="divide-y rounded-lg border text-sm">
+            {current.map((s) => (
+              <li key={`${s.merchant}|${s.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{s.merchant}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {amount(s)} {s.cadence} · {s.accountName} · next around {s.nextExpectedOn}
+                  </span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <span className="tabular-nums">{formatCents(s.annualizedCents)}/yr</span>
+                  <StatusButtons merchant={s.merchant} accountId={s.accountId} options={[{ label: "Stop tracking", status: null }]} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {suggested.length ? (
+        <section className="space-y-2">
+          <h2 className="text-lg font-medium">Looks recurring</h2>
+          <p className="text-xs text-muted-foreground">
+            Confirm subscriptions and bills you want tracked. Dismiss anything that isn&apos;t one, like a transfer to
+            savings; it won&apos;t be suggested or alerted on again.
+          </p>
+          <ul className="divide-y rounded-lg border text-sm">
+            {suggested.map((s) => (
+              <li key={`${s.merchant}|${s.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <span className="min-w-0">
+                  <span className="block truncate">{s.merchant}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {amount(s)} {s.cadence} · {s.accountName} · {s.charges} charges since {s.firstOn}
+                  </span>
+                </span>
+                <StatusButtons
+                  merchant={s.merchant}
+                  accountId={s.accountId}
+                  options={[
+                    { label: "Track", status: "confirmed", primary: true },
+                    { label: "Dismiss", status: "dismissed" },
+                  ]}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {stopped.length ? (
+        <section className="space-y-2">
+          <h2 className="text-lg font-medium">Stopped charging</h2>
+          <ul className="divide-y rounded-lg border text-sm text-muted-foreground">
+            {stopped.map((s) => (
+              <li key={`${s.merchant}|${s.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <span>
+                  {s.merchant} · last {formatCents(s.latestCents)} on {s.lastOn}
+                </span>
+                <StatusButtons merchant={s.merchant} accountId={s.accountId} options={[{ label: "Stop tracking", status: null }]} />
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {dismissed.length ? (
+        <details className="text-sm">
+          <summary className="cursor-pointer text-muted-foreground">Dismissed ({dismissed.length})</summary>
+          <ul className="mt-2 divide-y rounded-lg border">
+            {dismissed.map((s) => (
+              <li key={`${s.merchant}|${s.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <span className="text-muted-foreground">
+                  {s.merchant} · {s.accountName}
+                </span>
+                <StatusButtons merchant={s.merchant} accountId={s.accountId} options={[{ label: "Undo", status: null }]} />
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </div>
+  );
+}
