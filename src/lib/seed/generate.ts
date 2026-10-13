@@ -47,6 +47,8 @@ export type SeedTransaction = {
   amountCents: number; // negative = money out
   description: string;
   externalId: string;
+  // A purchase alert the bank hasn't reported yet (#30).
+  provisionalSource?: "email" | "apple_pay";
 };
 
 export type SeedCategory = { name: string; kind: "expense" | "income" | "transfer" };
@@ -162,13 +164,18 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
   add("card", addDays(start, 40), -9_999, "CLOUDLOCKER STORAGE ANNUAL PLAN");
   add("checking", addDays(start, 95), -18_650, "STATE MOTOR VEHICLES REGISTRATION RENEWAL");
 
-  // Day-to-day card spending.
+  // Day-to-day card spending. The bank reports a day behind, so today's
+  // purchases aren't in its data yet; one of them arrives below as a
+  // purchase alert instead.
+  const card = (day: Date, amountCents: number, description: string) => {
+    if (day < end) add("card", day, amountCents, description);
+  };
   for (let day = new Date(start); day <= end; day = addDays(day, 1)) {
-    if (random() < 0.55) add("card", day, -between(450, 925), "CORNER BEAN CAFE #12");
-    if (random() < 0.22) add("card", day, -between(3_800, 14_500), "QUILLFIELD MARKET #0412");
-    if (random() < 0.12) add("card", day, -between(1_100, 3_400), `ZIPRIDE *TRIP ${between(1000, 9999)}`);
+    if (random() < 0.55) card(day, -between(450, 925), "CORNER BEAN CAFE #12");
+    if (random() < 0.22) card(day, -between(3_800, 14_500), "QUILLFIELD MARKET #0412");
+    if (random() < 0.12) card(day, -between(1_100, 3_400), `ZIPRIDE *TRIP ${between(1000, 9999)}`);
     if (random() < 0.1) {
-      add("card", day, -between(1_800, 6_500), pick(["LUCKY NOODLE HOUSE", "THE PATIO GRILL", "SAFFRON & SALT"]));
+      card(day, -between(1_800, 6_500), pick(["LUCKY NOODLE HOUSE", "THE PATIO GRILL", "SAFFRON & SALT"]));
     }
 
     // Shared dinner: the owner pays, then one to three friends pay back
@@ -178,7 +185,7 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
       const guests = between(1, 3);
       const totalCents = between(9_000, 24_000);
       const shareCents = Math.round(totalCents / (guests + 1));
-      add("card", day, -totalCents, pick(["TRATTORIA VERDE", "HARBORSIDE OYSTER BAR", "SMOKE & EMBER BBQ"]));
+      card(day, -totalCents, pick(["TRATTORIA VERDE", "HARBORSIDE OYSTER BAR", "SMOKE & EMBER BBQ"]));
       const friends = [...FRIENDS].sort(() => random() - 0.5).slice(0, guests);
       for (const friend of friends) {
         add("p2p", addDays(day, between(0, 4)), shareCents, `PAYPEER PAYMENT FROM ${friend}`);
@@ -228,8 +235,19 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
     add("checking", day, sweep, "PAYPEER TRANSFER");
   }
 
+  // Provisional transactions (#30), from purchase alerts: one from today,
+  // still counting toward spending until the bank reports it, and one from
+  // ten days ago that the bank reported with a tip added. The amounts
+  // differ, so it wasn't matched automatically and waits for the owner.
+  add("card", addDays(end, -9), -5_040, "THE PATIO GRILL");
+
   txns.sort((a, b) => a.postedOn.localeCompare(b.postedOn) || a.description.localeCompare(b.description));
   const transactions: SeedTransaction[] = txns.map((t, i) => ({ ...t, externalId: `seed-${i}` }));
+  // Alerts never move a balance; they're added after the walk below.
+  const provisional: SeedTransaction[] = [
+    { accountKey: "card", postedOn: iso(end), amountCents: -1_675, description: "Saffron & Salt", externalId: "apple_pay:seed-1", provisionalSource: "apple_pay" },
+    { accountKey: "card", postedOn: iso(addDays(end, -10)), amountCents: -4_200, description: "THE PATIO GRILL", externalId: "email:seed-2", provisionalSource: "email" },
+  ];
 
   // Daily balances. Cash accounts follow their own transactions from the
   // opening balance. The card is reported negative when owed and the loan
@@ -258,5 +276,5 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
     snapshots.push({ accountKey: "auto", on, balanceCents: loan });
   }
 
-  return { accounts: SEED_ACCOUNTS, categories: SEED_CATEGORIES, transactions, snapshots, holdings };
+  return { accounts: SEED_ACCOUNTS, categories: SEED_CATEGORIES, transactions: [...transactions, ...provisional], snapshots, holdings };
 }

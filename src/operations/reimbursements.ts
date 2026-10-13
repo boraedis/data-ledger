@@ -130,6 +130,7 @@ export const match = defineWrite({
     if (!payment) throw new NotFoundError("Transaction not found");
     if (payment.amountCents <= 0) throw new Error("Only money received can pay someone back");
     if (payment.pending) throw new Error("Wait until it posts: a pending transaction can be replaced when it does");
+    if (payment.provisionalSource) throw new Error("Wait until the bank reports it: a provisional transaction is replaced when it does");
     const [{ cents: already }] = await ctx.db
       .select({ cents: sql<number>`coalesce(sum(${reimbursementMatches.amountCents}), 0)`.mapWith(Number) })
       .from(reimbursementMatches)
@@ -288,6 +289,7 @@ export const proposals = defineRead({
         and(
           sql`${transactions.amountCents} > 0`,
           eq(transactions.pending, false),
+          isNull(transactions.provisionalSource),
           eq(transactions.notReimbursement, false),
           isNull(transactions.transferPairId),
           gte(transactions.postedOn, since),

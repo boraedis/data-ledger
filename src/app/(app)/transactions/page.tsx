@@ -113,6 +113,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     {t.postedOn}
                     {t.experiencedOn ? ` (for ${t.experiencedOn})` : ""} · {accountName.get(t.accountId)}
                     {t.pending ? " · pending" : ""}
+                    {t.provisionalSource ? " · from an alert, not yet from the bank" : ""}
                   </span>
                   <span className="mt-0.5 flex flex-wrap gap-1 text-xs">
                     {t.isSplit ? (

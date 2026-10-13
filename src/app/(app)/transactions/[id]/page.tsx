@@ -13,6 +13,7 @@ import { listAccounts } from "@/operations/accounts";
 import { TransactionEditor } from "./editor";
 import { listPeople, transactionReimbursements } from "@/operations/reimbursements";
 import { SharePanel } from "./share-panel";
+import { ProvisionalNote } from "./provisional-note";
 import { TransferNote } from "./transfer-note";
 
 export default async function TransactionPage(props: PageProps<"/transactions/[id]">) {
@@ -53,6 +54,7 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
           {formatCents(txn.amountCents)}
         </p>
       </div>
+      {txn.provisionalSource ? <ProvisionalNote transactionId={txn.id} source={txn.provisionalSource} /> : null}
       {txn.transfer ? (
         <TransferNote
           transactionId={txn.id}
