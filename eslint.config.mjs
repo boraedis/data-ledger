@@ -34,6 +34,8 @@ const eslintConfig = defineConfig([
       // Tally's conversations and the nightly digest: what was said, not
       // the books. Ledger changes from Tally are proposals in command_log.
       "src/lib/tally/**",
+      // Push subscriptions: which devices get notifications, like sessions.
+      "src/lib/push/**",
       // Synthetic data loading, and tests setting up fixtures.
       "src/lib/seed/**",
       "src/lib/test-utils/**",

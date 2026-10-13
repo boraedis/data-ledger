@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -17,6 +17,17 @@ export const metadata: Metadata = {
   description: "A personal finance ledger.",
   // Nothing here is meant to be found; the proxy gates every page anyway.
   robots: { index: false, follow: false },
+  // Installed to an iPhone's home screen (#29): its own name and icon, and
+  // full-screen without Safari's toolbars.
+  appleWebApp: { capable: true, title: "Ledger", statusBarStyle: "default" },
+  icons: { apple: "/icons/apple-touch-icon.png" },
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "#ffffff" },
+    { media: "(prefers-color-scheme: dark)", color: "#171717" },
+  ],
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

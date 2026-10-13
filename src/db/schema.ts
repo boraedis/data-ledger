@@ -57,6 +57,26 @@ export const sessions = pgTable("sessions", {
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
 });
 
+// Devices that receive push notifications (#29): one row per browser or
+// home-screen install that said yes. Infrastructure like sessions, written
+// by src/lib/push directly. The endpoint is the push service's URL for
+// that device; p256dh and auth are the keys every payload is encrypted
+// with, so the push service carries notifications without reading them.
+// A device is revoked by deleting its row (Settings), or automatically
+// once the push service says the subscription is gone.
+export const pushSubscriptions = pgTable("push_subscriptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  endpoint: text("endpoint").notNull().unique(),
+  p256dh: text("p256dh").notNull(),
+  auth: text("auth").notNull(),
+  // "iPhone", "Mac · Safari": enough to tell devices apart in Settings.
+  label: text("label").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
+  // The last failure's HTTP status and a short reason; no payload.
+  lastError: text("last_error"),
+});
+
 export const challengePurpose = pgEnum("challenge_purpose", ["register", "login"]);
 
 // WebAuthn challenges are kept server-side and deleted on first use, so a
