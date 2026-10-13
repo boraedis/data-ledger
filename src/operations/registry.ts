@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { createManualAccount, deleteManualAccount, listAccounts, setManualValue, updateAccount } from "@/operations/accounts";
 import { budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
+import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goals";
 import { applySnapshot } from "@/operations/import";
 import { dismissAlert, listAlerts, listRecurring, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
 import {
@@ -21,7 +22,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { accounts, alerts, balanceSnapshots, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -64,6 +65,10 @@ export const operations: Operation[] = [
   setTarget,
   removeTarget,
   rebalance,
+  listGoals,
+  createGoal,
+  updateGoal,
+  archiveGoal,
   listRecurring,
   setRecurringStatus,
   refreshAlerts,
@@ -124,6 +129,8 @@ export const trackedTables = {
   reimbursements,
   recurring_series: recurringSeries,
   alerts,
+  goals,
+  goal_accounts: goalAccounts,
   reimbursement_matches: reimbursementMatches,
   holding_snapshots: holdingSnapshots,
   categories,

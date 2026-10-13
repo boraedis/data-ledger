@@ -1,6 +1,6 @@
 import { count, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { tags, transactionTags } from "@/db/schema";
+import { goals, tags, transactionTags } from "@/db/schema";
 import { defineRead, defineWrite } from "@/operations/define";
 import type { WriteContext } from "@/operations/tracked";
 
@@ -69,6 +69,8 @@ export const deleteTag = defineWrite({
   description: "Delete a tag and remove it from every transaction. Transactions are otherwise unchanged.",
   input: z.object({ tagId: z.uuid() }),
   apply: async (ctx, { tagId }) => {
+    const [goal] = await ctx.db.select({ name: goals.name }).from(goals).where(eq(goals.tagId, tagId));
+    if (goal) throw new Error(`The goal "${goal.name}" counts this tag's transfers; change its tag first`);
     // Unlinked through tracked writes first, rather than leaning on the
     // FK cascade, so undo restores every transaction's tag too.
     const links = await ctx.db.select({ id: transactionTags.id }).from(transactionTags).where(eq(transactionTags.tagId, tagId));

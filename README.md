@@ -193,6 +193,21 @@ the owner's own (see below).
   - **Reads:** `budgets.status` and `budgets.targets`. Budget figures come from transactions, not balances, so Tally may read them.
   - **Writes:** `budgets.setTarget`, `removeTarget` and `rebalance`. All are logged and undoable, and Tally's are proposals.
 
+### Savings goals
+
+**Goals** (#10) are something to save toward: a target, and optionally a date.
+
+- **Where progress comes from:**
+  - the **linked accounts' balances** (savings, or a brokerage for a down payment; never cards or loans);
+  - **transfers tagged** with the goal's tag. Tag the transfer *out* of your everyday account: it counts as `−amount`, so money moved back counts against the goal.
+  - A tagged transaction in a linked account is skipped, because it's already in that balance.
+  - Progress before the goal was set counts, so a goal starts from what's already saved.
+- **History:** progress is never stored. It's rebuilt from the daily balance snapshots (#25) plus cumulative tagged transfers, which gives every goal a chart. It isn't an operation, because it includes balances. `goals.list` and `goals.create`, `update` and `archive` carry only the definitions, so Tally can see and propose goals without seeing balances.
+- **Pace:**
+  - **With a date:** an even line from where you were when the goal was set to the target. You're *on track* within 1% of the target, *behind by $X* below that, and the page shows what it takes per month to finish on time.
+  - **Without a date:** the last 90 days' trend projects when you'd reach it.
+- **Sinking funds:** budgets (#7) and goals share the same pace math (`src/lib/pace.ts`). Budget targets with a sinking fund are also listed on the Goals page.
+
 ### Shared expenses and reimbursements
 
 Spending friends pay back mustn't inflate your spending, and their payments

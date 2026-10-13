@@ -23,6 +23,8 @@
 //   reach a budget. Shared expenses arrive here already net of what
 //   friends owe (#8, in transactions.spendingLines).
 
+import { elapsedShare, evenPace } from "@/lib/pace";
+
 export const BUFFER = "buffer" as const;
 export type TargetKey = string; // a category id, or BUFFER
 
@@ -210,10 +212,6 @@ export function periodsFor(
   return periods;
 }
 
-/** Days from `start` to `end`, inclusive. */
-function days(start: string, end: string): number {
-  return Math.round((Date.parse(end) - Date.parse(start)) / 86_400_000) + 1;
-}
 
 export type TargetStatus = PeriodStatus & {
   // Share of the period elapsed on the status date, 0–1.
@@ -266,15 +264,15 @@ export function budgetStatus(input: {
     const current = periods.find((p) => p.start <= on && on <= p.end);
     if (!current) continue;
 
-    const elapsedShare = Math.min(1, days(current.start, on) / days(current.start, current.end));
+    const elapsed = elapsedShare(current.start, current.end, on);
     const months = monthIndex(current.end) - monthIndex(current.start) + 1;
     const monthsStarted = monthIndex(on) - monthIndex(current.start) + 1;
     const multiMonth = months > 1;
     const setAsideMonthly = current.sinkingFund && multiMonth ? Math.round(current.targetCents / months) : null;
     targets.push({
       ...current,
-      elapsedShare,
-      paceCents: multiMonth ? Math.round(current.availableCents * elapsedShare) : null,
+      elapsedShare: elapsed,
+      paceCents: multiMonth ? evenPace(0, current.availableCents, elapsed) : null,
       setAsideMonthlyCents: setAsideMonthly,
       setAsideByNowCents: setAsideMonthly === null ? null : Math.min(current.targetCents, setAsideMonthly * monthsStarted),
     });
