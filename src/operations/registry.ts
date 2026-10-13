@@ -1,12 +1,13 @@
 import { z } from "zod";
 import { createManualAccount, deleteManualAccount, listAccounts, setManualValue, updateAccount } from "@/operations/accounts";
+import { budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
 import { applySnapshot } from "@/operations/import";
 import { investmentIncome } from "@/operations/investments";
 import { createCategory, deleteCategory, listCategories, moveCategory, renameCategory } from "@/operations/categories";
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { accounts, balanceSnapshots, categories, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { accounts, balanceSnapshots, budgetAdjustments, budgetTargets, categories, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -44,6 +45,11 @@ export const operations: Operation[] = [
   getTransaction,
   spendingLines,
   investmentIncome,
+  budgetStatus,
+  listTargets,
+  setTarget,
+  removeTarget,
+  rebalance,
   listInbox,
   setTransactionCategory,
   splitTransaction,
@@ -82,6 +88,8 @@ export function describeOperations() {
 export const trackedTables = {
   accounts,
   balance_snapshots: balanceSnapshots,
+  budget_targets: budgetTargets,
+  budget_adjustments: budgetAdjustments,
   holding_snapshots: holdingSnapshots,
   categories,
   rules,

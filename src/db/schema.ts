@@ -348,6 +348,63 @@ export const transactionSplits = pgTable(
   (t) => [index("transaction_splits_transaction_idx").on(t.transactionId)],
 );
 
+// ---------------------------------------------------------------------------
+// Budgets (#7): category targets with periods, rollover and one buffer.
+// ---------------------------------------------------------------------------
+
+// One version of a category's target. Targets are never edited in place
+// across periods: a change adds a version effective from the start of the
+// current period, so earlier periods keep the target they had
+// (src/lib/budgets/engine.ts). A version for the same category and start
+// date is a correction and is updated instead.
+//
+// categoryId null is the unallocated buffer: one amount every expense
+// category without its own target draws from, so "misc" never needs a
+// category of its own.
+export const budgetTargets = pgTable(
+  "budget_targets",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Restrict: categories.delete refuses while a target refers to it.
+    categoryId: uuid("category_id").references(() => categories.id, { onDelete: "restrict" }),
+    // First day this version applies; always the first of a month.
+    effectiveFrom: date("effective_from").notNull(),
+    // Spend allowed per period, positive cents. Null ends the target from
+    // effectiveFrom on (its history stays).
+    amountCents: bigint("amount_cents", { mode: "number" }),
+    // Period length in months: 1 monthly, 12 annual, anything else custom
+    // (3 quarterly, 6 twice a year).
+    periodMonths: integer("period_months").notNull().default(1),
+    // Periods are counted from this month (first of month): an annual
+    // target anchored on January runs Jan–Dec.
+    anchorOn: date("anchor_on").notNull(),
+    // Unspent budget (or overspend) carries into the next period.
+    rollover: boolean("rollover").notNull().default(false),
+    // Show the monthly set-aside for a multi-month target.
+    sinkingFund: boolean("sinking_fund").notNull().default(false),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [unique("budget_targets_category_from_unique").on(t.categoryId, t.effectiveFrom).nullsNotDistinct()],
+);
+
+// Mid-period rebalancing (budgets.rebalance): money moved between two
+// targets for the period containing `on` only. Written in pairs (−x from
+// one, +x to the other) sharing a rebalanceId. Targets themselves are
+// untouched, so next period starts clean.
+export const budgetAdjustments = pgTable(
+  "budget_adjustments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    rebalanceId: uuid("rebalance_id").notNull(),
+    // Null is the buffer, as in budget_targets.
+    categoryId: uuid("category_id").references(() => categories.id, { onDelete: "restrict" }),
+    on: date("on").notNull(),
+    amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("budget_adjustments_on_idx").on(t.on)],
+);
+
 // Free-form labels, orthogonal to categories ("vacation-2026",
 // "tax-deductible", "for Alex"). Unique ignoring case.
 export const tags = pgTable(
