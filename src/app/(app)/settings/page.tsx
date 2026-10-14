@@ -4,11 +4,16 @@ import { autoApplyThreshold } from "@/lib/categorize/pipeline";
 import { latestEval, recommendedThreshold } from "@/lib/model/evaluate";
 import { getModelStatus } from "@/lib/model/status";
 import { listDevices, pushConfig } from "@/lib/push/send";
+import { listTokens, listUnmappedCards } from "@/lib/shortcuts/tokens";
+import { listAccounts } from "@/operations/accounts";
+import { read } from "@/operations/runtime";
+import { headers } from "next/headers";
 import { getConnectionHealth } from "@/lib/sync/health";
 import { Connections } from "./connections";
 import { ModelStatusPanel } from "./model-status";
 import { AddPasskey } from "./add-passkey";
 import { Notifications } from "./notifications";
+import { ApplePay } from "./apple-pay";
 
 const dateFormat = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
@@ -17,13 +22,20 @@ export const maxDuration = 300;
 
 export default async function SettingsPage() {
   const db = getDb();
-  const [passkeys, health, model, lastEval, devices] = await Promise.all([
+  const [passkeys, health, model, lastEval, devices, tokens, unmapped, accts] = await Promise.all([
     listPasskeys(),
     getConnectionHealth(db),
     getModelStatus(db),
     latestEval(db),
     listDevices(db),
+    listTokens(db),
+    listUnmappedCards(db),
+    read(db, listAccounts, {}),
   ]);
+  // The URL the Shortcut posts to: this deployment's own origin.
+  const h = await headers();
+  const origin = process.env.WEBAUTHN_ORIGIN ?? `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host")}`;
+  const mappedNames = new Set(accts.map((a) => a.walletCardName?.toLowerCase()).filter(Boolean));
   const evaluation = lastEval ? { summary: lastEval, recommended: recommendedThreshold(lastEval.thresholds) } : null;
   return (
     <div className="space-y-6">
@@ -50,6 +62,23 @@ export default async function SettingsPage() {
             lastSent: d.lastSentAt ? dateFormat.format(d.lastSentAt) : null,
             lastError: d.lastError,
           }))}
+        />
+      </section>
+      <section id="apple-pay" className="space-y-3">
+        <h2 className="text-lg font-medium">Apple Pay alerts</h2>
+        <ApplePay
+          endpoint={`${origin}/api/shortcuts/purchase`}
+          tokens={tokens.map((t) => ({
+            id: t.id,
+            label: t.label,
+            created: dateFormat.format(t.createdAt),
+            lastUsed: t.lastUsedAt ? dateFormat.format(t.lastUsedAt) : null,
+          }))}
+          // Manual accounts hold a value, never transactions.
+          accounts={accts.filter((a) => !a.manual).map((a) => ({ id: a.id, name: a.name, walletCardName: a.walletCardName }))}
+          unmapped={unmapped
+            .filter((u) => !mappedNames.has(u.name.toLowerCase()))
+            .map((u) => ({ name: u.name, lastSeen: dateFormat.format(u.lastSeenAt) }))}
         />
       </section>
       <section className="space-y-3">

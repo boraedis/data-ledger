@@ -64,6 +64,11 @@ describe("proxy", () => {
     expect(proxy(new NextRequest("http://localhost/icons/other.png")).headers.get("location")).toBe("http://localhost/login");
   });
 
+  it("lets the Apple Pay Shortcut through to its own token check", () => {
+    expect(proxy(new NextRequest("http://localhost/api/shortcuts/purchase", { method: "POST" })).status).toBe(200);
+    expect(proxy(new NextRequest("http://localhost/api/shortcuts/other")).status).toBe(401);
+  });
+
   it("lets the sign-in routes through without a session", () => {
     expect(proxy(new NextRequest("http://localhost/login")).status).toBe(200);
     expect(proxy(new NextRequest("http://localhost/api/auth/login/options")).status).toBe(200);

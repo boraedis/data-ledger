@@ -16,6 +16,9 @@ const PUBLIC_PATHS = new Set([
   // Listed one by one, so a new bridge endpoint is a deliberate addition.
   "/api/bridge/v1/spend/daily",
   "/api/bridge/v1/recurring",
+  // The Apple Pay Shortcut (#32), which has no session; the route rejects
+  // anything without a Shortcut token from Settings.
+  "/api/shortcuts/purchase",
   // The installable app's pieces (#29): fetched by the browser and iOS
   // without a session (iOS fetches the manifest and icons on its own when
   // adding to the home screen). Static, no data in them.
@@ -42,7 +45,7 @@ function canonicalRedirect(request: NextRequest): URL | null {
   // Cron and chain calls carry their own secret and may arrive on a
   // deployment URL; a redirect there could mean the nightly job never runs.
   // The same goes for the bridge: a server client may not follow it.
-  if (/^\/api\/(cron|bridge)\//.test(request.nextUrl.pathname)) return null;
+  if (/^\/api\/(cron|bridge|shortcuts)\//.test(request.nextUrl.pathname)) return null;
   const canonical = new URL(origin);
   if (request.nextUrl.host === canonical.host) return null;
   return new URL(request.nextUrl.pathname + request.nextUrl.search, canonical);
