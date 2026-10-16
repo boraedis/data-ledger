@@ -3,6 +3,7 @@ import { createManualAccount, deleteManualAccount, listAccounts, setManualValue,
 import { budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
 import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goals";
 import { applySnapshot } from "@/operations/import";
+import { categoryChoices } from "@/operations/choices";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
 import { dismissAlert, listAlerts, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
 import {
@@ -88,6 +89,7 @@ export const operations: Operation[] = [
   proposals,
   transactionReimbursements,
   listInbox,
+  categoryChoices,
   setTransactionCategory,
   splitTransaction,
   setExperienceDate,

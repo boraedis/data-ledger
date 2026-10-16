@@ -100,7 +100,8 @@ export function purchaseNotification(body: PurchaseBody, outcome: Extract<Purcha
   return {
     title: `${body.merchant} · ${formatCents(Math.abs(outcome.amountCents))}${outcome.amountCents > 0 ? " refund" : ""}`,
     body: `${body.card} · tap to categorize`,
-    url: `/transactions/${outcome.transactionId}`,
+    // The quick-file screen (#34): file it in one tap.
+    url: `/transactions/${outcome.transactionId}/quick`,
     tag: `purchase-${outcome.transactionId}`,
   };
 }
