@@ -635,6 +635,26 @@ export const payStubLines = pgTable(
   (t) => [index("pay_stub_lines_stub_idx").on(t.payStubId)],
 );
 
+export const filingStatus = pgEnum("filing_status", ["single", "married_joint", "married_separate", "head_of_household"]);
+
+// The owner's own inputs to the tax estimate (#61), one row per tax year:
+// what pay stubs can't say. User data, set through taxes.setAssumptions;
+// never repo config. All amounts are yearly, positive cents.
+export const taxAssumptions = pgTable("tax_assumptions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  year: integer("year").notNull().unique(),
+  filingStatus: filingStatus("filing_status").notNull().default("single"),
+  // Taxable income not on these pay stubs: interest, side income, a
+  // spouse's wages on a joint return.
+  otherIncomeCents: bigint("other_income_cents", { mode: "number" }).notNull().default(0),
+  // Null takes the standard deduction; a number is the itemized total.
+  itemizedDeductionsCents: bigint("itemized_deductions_cents", { mode: "number" }),
+  creditsCents: bigint("credits_cents", { mode: "number" }).notNull().default(0),
+  // Federal tax paid outside payroll: estimated payments, or withholding
+  // on other income.
+  otherPaymentsCents: bigint("other_payments_cents", { mode: "number" }).notNull().default(0),
+});
+
 // ---------------------------------------------------------------------------
 // Shared expenses and reimbursements (#8).
 // ---------------------------------------------------------------------------

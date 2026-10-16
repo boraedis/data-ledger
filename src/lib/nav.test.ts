@@ -13,6 +13,7 @@ describe("navigation", () => {
     expect(pageFor("/transactions/3f1c")?.href).toBe("/transactions");
     expect(sectionFor("/owed")?.id).toBe("plan");
     expect(sectionFor("/pay")?.id).toBe("wealth");
+    expect(pageFor("/pay/taxes")?.label).toBe("Taxes");
     // Home matches only itself, not every path.
     expect(sectionFor("/settings")).toBeNull();
     expect(pageFor("/settings")?.label).toBe("Settings");

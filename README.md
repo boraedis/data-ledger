@@ -234,6 +234,16 @@ Each pay stub is recorded as structured income (#60, `payStubs.*`), so a paychec
 - **Linked to the deposit:** the deposit of exactly the net amount near the pay date is linked when there's only one candidate, both on save and nightly as `matcher`. Otherwise you pick it. Only posted deposits can be linked.
 - **Counted as gross:** a linked deposit counts in budgets as gross pay in the deposit's category, plus a negative line per deduction in that deduction's category (`transactions.spendingLines`). A deduction without a category is taken off the gross instead. The parts always add up to the deposit, so the net is never counted twice. Use a transfer category for a 401(k): it's savings, not spending.
 
+**Tax estimate** (#61, Wealth → Taxes, `/pay/taxes`): the year's position from these stubs. It's an estimate from your own numbers, not tax advice.
+- **Withholding:** per tax so far, with the stub count, and projected to year end at the pace of the last three stubs. The cadence comes from the pay dates. Insurance and retirement deductions are shown separately, since they aren't taxes.
+- **Federal balance:** wages less the usual pre-tax deductions (401(k), HSA, FSA, insurance), plus other income, less the standard or itemized deduction. That goes through the year's brackets and credits, and is set against withholding plus other payments, giving a likely refund or amount owed.
+- **Social Security and Medicare:** checked against what they should come to on your wages.
+- **Not modelled:** state income tax (only what's withheld is shown) and Additional Medicare Tax.
+- **Your inputs:** filing status, other income, itemized deductions, credits and other payments, stored per year through `taxes.setAssumptions`.
+- **Starting mid-year:** a year whose first stub starts after January says its figures are too low.
+- **Federal figures:** come from `src/lib/taxes/tables.ts`, one entry per year with its sources. A year without one gets the pace but no estimate. Add the next year when the IRS publishes it.
+- **Kept from Tally:** both operations are owner-only, so none of this reaches the model.
+
 ### Recurring charges and alerts
 
 **Detection** (#9; `src/lib/recurring/detect.ts`, rule-based) is computed each time it's read, from the last ~400 days of spending in budget accounts. Transfers (paired, or filed under a transfer category) never count.
