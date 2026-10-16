@@ -51,6 +51,19 @@ export type SeedTransaction = {
   provisionalSource?: "email" | "apple_pay";
 };
 
+// A synthetic pay stub (#60) for one of the seed's paychecks: invented
+// amounts that add up to that deposit exactly, and labels only.
+export type SeedPayStub = {
+  depositExternalId: string;
+  employer: string;
+  periodStart: string;
+  periodEnd: string;
+  payDate: string;
+  grossCents: number;
+  netCents: number;
+  lines: { kind: "federal_income_tax" | "state_income_tax" | "social_security" | "medicare" | "health_insurance" | "retirement_pretax"; label: string; amountCents: number }[];
+};
+
 export type SeedCategory = { name: string; kind: "expense" | "income" | "transfer" };
 
 export const SEED_ACCOUNTS: SeedAccount[] = [
@@ -276,5 +289,30 @@ export function generateSeed({ endDate, months = 6, seed = 42 }: { endDate: Date
     snapshots.push({ accountKey: "auto", on, balanceCents: loan });
   }
 
-  return { accounts: SEED_ACCOUNTS, categories: SEED_CATEGORIES, transactions: [...transactions, ...provisional], snapshots, holdings };
+  // Pay stubs for the last three paychecks. Fixed deductions; gross is
+  // whatever makes them add up to that deposit.
+  const deductions: SeedPayStub["lines"] = [
+    { kind: "federal_income_tax", label: "Fed Withholding", amountCents: 41_250 },
+    { kind: "state_income_tax", label: "State Withholding", amountCents: 13_480 },
+    { kind: "social_security", label: "OASDI", amountCents: 20_460 },
+    { kind: "medicare", label: "Medicare", amountCents: 4_785 },
+    { kind: "health_insurance", label: "Medical Pre-Tax", amountCents: 6_050 },
+    { kind: "retirement_pretax", label: "401K", amountCents: 19_800 },
+  ];
+  const withheld = deductions.reduce((sum, d) => sum + d.amountCents, 0);
+  const payStubs: SeedPayStub[] = transactions
+    .filter((t) => t.description.startsWith("ACME WIDGETS"))
+    .slice(-3)
+    .map((t) => ({
+      depositExternalId: t.externalId,
+      employer: "Acme Widgets",
+      periodStart: iso(addDays(new Date(`${t.postedOn}T00:00:00Z`), -19)),
+      periodEnd: iso(addDays(new Date(`${t.postedOn}T00:00:00Z`), -6)),
+      payDate: t.postedOn,
+      grossCents: t.amountCents + withheld,
+      netCents: t.amountCents,
+      lines: deductions,
+    }));
+
+  return { accounts: SEED_ACCOUNTS, categories: SEED_CATEGORIES, transactions: [...transactions, ...provisional], snapshots, holdings, payStubs };
 }

@@ -4,6 +4,8 @@ import {
   accounts,
   categories,
   categorySuggestions,
+  payStubLines,
+  payStubs,
   reimbursementMatches,
   reimbursements,
   tags,
@@ -14,6 +16,7 @@ import {
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { merchantMemory } from "@/lib/categorize/match";
 import { isInvestmentKind, investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
+import { expandDeposit } from "@/lib/pay/stubs";
 import { distribute } from "@/lib/reimbursements/match";
 import type { Db } from "@/db/types";
 import { budgetAccountIds } from "@/operations/accounts";
@@ -363,6 +366,37 @@ export function countsAsSpending(): SQL {
   ))`;
 }
 
+type Line = { transactionId: string; date: string; amountCents: number; categoryId: string };
+
+/**
+ * A deposit linked to a pay stub (#60) counts as the paycheck it was:
+ * gross pay in the deposit's category, and each deduction with a category
+ * as its own line (src/lib/pay/stubs.ts, expandDeposit). The parts add up
+ * to the deposit, so the net is never counted on top. Only a deposit
+ * counted whole: one the owner split themselves keeps their split.
+ */
+async function withPayStubs(db: Db, lines: Line[]): Promise<Line[]> {
+  const ids = [...new Set(lines.map((l) => l.transactionId))];
+  if (ids.length === 0) return lines;
+  const stubs = await db
+    .select({ id: payStubs.id, depositId: payStubs.depositTransactionId, grossCents: payStubs.grossCents })
+    .from(payStubs)
+    .where(inArray(payStubs.depositTransactionId, ids));
+  if (stubs.length === 0) return lines;
+  const stubLines = await db
+    .select({ payStubId: payStubLines.payStubId, amountCents: payStubLines.amountCents, categoryId: payStubLines.categoryId })
+    .from(payStubLines)
+    .where(inArray(payStubLines.payStubId, stubs.map((s) => s.id)));
+  const byDeposit = new Map(stubs.map((s) => [s.depositId!, { grossCents: s.grossCents, lines: stubLines.filter((l) => l.payStubId === s.id) }]));
+  const parts = new Map<string, number>();
+  for (const l of lines) parts.set(l.transactionId, (parts.get(l.transactionId) ?? 0) + 1);
+  return lines.flatMap((line) => {
+    const stub = byDeposit.get(line.transactionId);
+    if (!stub || parts.get(line.transactionId) !== 1) return [line];
+    return expandDeposit(line, stub).map((part) => ({ ...line, ...part }));
+  });
+}
+
 export const spendingLines = defineRead({
   name: "transactions.spendingLines",
   description:
@@ -370,7 +404,7 @@ export const spendingLines = defineRead({
     "per part of a split transaction. Dated by experience date when set, else posted date; from/to filter " +
     "on that date (inclusive). budgetOnly (default true) limits to accounts that count toward budgets. " +
     "A provisional transaction (from a purchase alert) counts until the bank's data for its account reaches " +
-    "its date. Net by default: what friends owe on a shared expense comes off it (your share is what counts), and the " +
+    "its date. A deposit linked to a pay stub counts as gross pay plus a line per deduction. Net by default: what friends owe on a shared expense comes off it (your share is what counts), and the " +
     "part of an incoming payment matched to a reimbursement is dropped (never income). gross: true returns " +
     "the amounts as charged.",
   input: z.object({
@@ -404,6 +438,7 @@ export const spendingLines = defineRead({
         .orderBy(transactionSplits.position),
     ]);
     let lines = [...whole, ...split].map((line) => ({ ...line, categoryId: line.categoryId! }));
+    lines = await withPayStubs(db, lines);
 
     if (!gross) {
       const { owedOff, matched } = await reimbursementAdjustments(db, [...new Set(lines.map((l) => l.transactionId))]);

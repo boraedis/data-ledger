@@ -1,5 +1,5 @@
 import { and, asc, count, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
-import { accounts, categories, categorySuggestions, rules, transactions } from "@/db/schema";
+import { accounts, categories, categorySuggestions, payStubs, rules, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import {
   classifierRequest,
@@ -14,6 +14,7 @@ import { chat, modelIsConfigured } from "@/lib/model/client";
 import { CASH_KINDS, INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { findTransferPairs } from "@/lib/investments/transfers";
 import { findMatches } from "@/lib/provisional/match";
+import { openDeposits } from "@/operations/pay";
 import { execute } from "@/operations/runtime";
 import { awaitingCategory } from "@/operations/transactions";
 
@@ -41,6 +42,8 @@ export type CategorizationResult = {
   transfers?: number;
   // Provisional transactions matched to their synced versions (#30).
   provisional?: number;
+  // Pay stubs linked to the deposit of their net pay (#60).
+  payStubs?: number;
   byRules: number;
   byMemory: number;
   byModel: number;
@@ -149,6 +152,30 @@ export async function matchProvisionalStep(db: Db): Promise<number> {
 }
 
 /**
+ * A pay stub entered before payday meets its deposit once the bank posts
+ * it (#60): exactly the net, near the pay date, and the only such deposit.
+ * Ambiguous ones are left for the owner to pick on the Pay page.
+ */
+export async function linkPayStubsStep(db: Db): Promise<number> {
+  const stubs = await db.select().from(payStubs).where(isNull(payStubs.depositTransactionId));
+  let linked = 0;
+  const claimed = new Set<string>();
+  for (const stub of stubs) {
+    const candidates = (await openDeposits(db, stub, stub.id)).filter((c) => !claimed.has(c.id));
+    if (candidates.length !== 1) continue;
+    claimed.add(candidates[0].id);
+    const result = await execute(db, {
+      operation: "payStubs.linkDeposit",
+      actor: "matcher",
+      reason: `Linked the ${stub.payDate} pay stub to its deposit`,
+      input: { payStubId: stub.id, depositTransactionId: candidates[0].id },
+    });
+    if (result.status === "applied") linked++;
+  }
+  return linked;
+}
+
+/**
  * Step 0: pair unambiguous transfers between cash and investment accounts,
  * as one undoable "matcher" command. Pending rows, rows already paired, and
  * rows the owner said aren't transfers are left alone; the cash side must
@@ -198,6 +225,7 @@ export async function runCategorization(
   { model }: { model?: ModelStepOptions | false } = {},
 ): Promise<CategorizationResult> {
   const provisional = await matchProvisionalStep(db);
+  const payStubsLinked = await linkPayStubsStep(db);
   const transfers = await matchTransfersStep(db);
   const candidates = await db
     .select({
@@ -211,7 +239,7 @@ export async function runCategorization(
     })
     .from(transactions)
     .where(awaitingCategory(db));
-  if (candidates.length === 0) return { provisional, transfers, byRules: 0, byMemory: 0, byModel: 0, modelSeen: 0, modelPending: 0, remaining: 0 };
+  if (candidates.length === 0) return { provisional, payStubs: payStubsLinked, transfers, byRules: 0, byMemory: 0, byModel: 0, modelSeen: 0, modelPending: 0, remaining: 0 };
 
   // 1. Rules.
   const activeRules = await db
@@ -266,6 +294,7 @@ export async function runCategorization(
 
   return {
     provisional,
+    payStubs: payStubsLinked,
     transfers,
     byRules,
     byMemory,
