@@ -61,7 +61,7 @@ describe("recordPurchase", () => {
     expect(purchaseNotification(body, first as never)).toEqual({
       title: "Lumen Bistro · $42.10",
       body: "Example Rewards · tap to categorize",
-      url: `/transactions/${row.id}`,
+      url: `/transactions/${row.id}/quick`,
       tag: `purchase-${row.id}`,
     });
   });
