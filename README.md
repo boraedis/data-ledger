@@ -225,6 +225,15 @@ mustn't look like income (#8).
 - **Owed to me** shows what each person still owes, with aging buckets (0–30, 31–60, 61–90, over 90 days since the expense), and every open item.
 - **Logging:** every change is a logged, undoable operation. Payment names and amounts are ordinary transaction data, so Tally may read them.
 
+### Pay stubs
+
+Each pay stub is recorded as structured income (#60, `payStubs.*`), so a paycheck is its gross pay and every deduction, not just the deposit. The Pay page lists them and shows the year's totals.
+- **What's stored:** an employer label, the period, the pay date, gross, each deduction and net. Each deduction has a kind, the stub's own label, positive cents and an optional category. Kinds are grouped into tax, insurance, retirement and savings, and other (`src/lib/pay/stubs.ts`). Amounts and labels only: an SSN, employer ID or address is never entered or stored.
+- **Checked on save:** gross minus the deductions must equal net exactly.
+- **Faster entry:** a new stub starts from the last one, moved on one period.
+- **Linked to the deposit:** the deposit of exactly the net amount near the pay date is linked when there's only one candidate, both on save and nightly as `matcher`. Otherwise you pick it. Only posted deposits can be linked.
+- **Counted as gross:** a linked deposit counts in budgets as gross pay in the deposit's category, plus a negative line per deduction in that deduction's category (`transactions.spendingLines`). A deduction without a category is taken off the gross instead. The parts always add up to the deposit, so the net is never counted twice. Use a transfer category for a 401(k): it's savings, not spending.
+
 ### Recurring charges and alerts
 
 **Detection** (#9; `src/lib/recurring/detect.ts`, rule-based) is computed each time it's read, from the last ~400 days of spending in budget accounts. Transfers (paired, or filed under a transfer category) never count.

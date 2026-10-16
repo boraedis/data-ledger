@@ -22,7 +22,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   const [problems, inbox] = await Promise.all([getConnectionHealth(db).then(healthProblems), inboxCount(db)]);
   return (
     <div className="flex min-h-svh flex-col">
-      {/* Wraps on phones rather than running off-screen: thirteen links and a
+      {/* Wraps on phones rather than running off-screen: fourteen links and a
           sign-out button don't fit on one 375px line. */}
       <header className="flex items-start justify-between gap-2 border-b px-4 py-2">
         <nav className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
@@ -40,6 +40,9 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           </Link>
           <Link href="/budgets" className="text-muted-foreground hover:text-foreground">
             Budgets
+          </Link>
+          <Link href="/pay" className="text-muted-foreground hover:text-foreground">
+            Pay
           </Link>
           <Link href="/goals" className="text-muted-foreground hover:text-foreground">
             Goals

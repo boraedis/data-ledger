@@ -563,6 +563,79 @@ export const alerts = pgTable(
 );
 
 // ---------------------------------------------------------------------------
+// Pay stubs (#60).
+// ---------------------------------------------------------------------------
+
+// What a deduction on a pay stub is. Grouped for reading (taxes, insurance,
+// retirement and benefits, other) in src/lib/pay/stubs.ts; the tax
+// estimate (#61) sums the tax kinds.
+export const payLineKind = pgEnum("pay_line_kind", [
+  "federal_income_tax",
+  "state_income_tax",
+  "local_income_tax",
+  "social_security",
+  "medicare",
+  "state_disability",
+  "health_insurance",
+  "dental_insurance",
+  "vision_insurance",
+  "retirement_pretax",
+  "retirement_roth",
+  "hsa",
+  "fsa",
+  "other",
+]);
+
+// One pay period's stub: gross pay, what was withheld, and the net that
+// reached the bank. Amounts and labels only. A stub's SSN, employer ID and
+// address are never entered or stored (AGENTS.md). Written through
+// payStubs.* operations, so every change is logged and undoable.
+export const payStubs = pgTable(
+  "pay_stubs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // The owner's name for the employer, a label like an account nickname.
+    employer: text("employer").notNull(),
+    periodStart: date("period_start").notNull(),
+    periodEnd: date("period_end").notNull(),
+    payDate: date("pay_date").notNull(),
+    grossCents: bigint("gross_cents", { mode: "number" }).notNull(),
+    // Gross minus every line, exactly: checked on save.
+    netCents: bigint("net_cents", { mode: "number" }).notNull(),
+    // The bank deposit of the net pay. While linked, budgets count the
+    // deposit as gross income less each deduction, never the net twice
+    // (transactions.spendingLines). Set null if the deposit is ever removed
+    // (a sync's pending row replaced); the stub stays.
+    depositTransactionId: uuid("deposit_transaction_id")
+      .unique()
+      .references(() => transactions.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("pay_stubs_pay_date_idx").on(t.payDate)],
+);
+
+// One deduction on a pay stub: a kind, the stub's own label for it
+// ("Fed Withholding", "401K"), and the amount withheld, positive cents.
+// The category is where it counts in budgets (Taxes, Health Insurance; a
+// transfer category for a 401(k), which isn't spending). Without one, it's
+// netted against gross instead.
+export const payStubLines = pgTable(
+  "pay_stub_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    payStubId: uuid("pay_stub_id")
+      .notNull()
+      .references(() => payStubs.id, { onDelete: "cascade" }),
+    kind: payLineKind("kind").notNull(),
+    label: text("label").notNull(),
+    amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+    categoryId: uuid("category_id").references(() => categories.id, { onDelete: "set null" }),
+    position: integer("position").notNull().default(0),
+  },
+  (t) => [index("pay_stub_lines_stub_idx").on(t.payStubId)],
+);
+
+// ---------------------------------------------------------------------------
 // Shared expenses and reimbursements (#8).
 // ---------------------------------------------------------------------------
 

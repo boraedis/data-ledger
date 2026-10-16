@@ -1,10 +1,10 @@
-import { count, eq, ne } from "drizzle-orm";
+import { count, eq, inArray, ne } from "drizzle-orm";
 import * as schema from "@/db/schema";
 import type { Db } from "@/db/types";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { generateSeed } from "@/lib/seed/generate";
 
-const { accounts, balanceSnapshots, categories, holdingSnapshots, transactions } = schema;
+const { accounts, balanceSnapshots, categories, holdingSnapshots, payStubLines, payStubs, transactions } = schema;
 
 export class RealDataPresentError extends Error {}
 
@@ -30,6 +30,14 @@ export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Da
 
     const data = generateSeed({ endDate });
 
+    // The previous seed's pay stubs go with their deposits (their lines
+    // cascade). Pay stubs not linked to a seed deposit are left alone.
+    const seedDeposits = tx
+      .select({ id: transactions.id })
+      .from(transactions)
+      .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .where(eq(accounts.source, "seed"));
+    await tx.delete(payStubs).where(inArray(payStubs.depositTransactionId, seedDeposits));
     // Deleting seed accounts cascades to their transactions.
     await tx.delete(accounts).where(eq(accounts.source, "seed"));
     await tx
@@ -66,6 +74,14 @@ export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Da
     }));
     for (let i = 0; i < rows.length; i += 500) {
       await tx.insert(transactions).values(rows.slice(i, i + 500));
+    }
+
+    const depositIds = new Map(
+      (await tx.select({ id: transactions.id, externalId: transactions.externalId }).from(transactions).where(inArray(transactions.externalId, data.payStubs.map((p) => p.depositExternalId)))).map((t) => [t.externalId, t.id]),
+    );
+    for (const { depositExternalId, lines, ...stub } of data.payStubs) {
+      const [row] = await tx.insert(payStubs).values({ ...stub, depositTransactionId: depositIds.get(depositExternalId) ?? null }).returning({ id: payStubs.id });
+      await tx.insert(payStubLines).values(lines.map((l, position) => ({ ...l, payStubId: row.id, position })));
     }
 
     const snapshots = data.snapshots.map(({ accountKey, ...s }) => ({ ...s, accountId: idByKey.get(accountKey)! }));

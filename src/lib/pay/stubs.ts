@@ -1,0 +1,102 @@
+import type { payLineKind } from "@/db/schema";
+
+// Pay stubs (#60), the parts with no database: what each deduction kind
+// is, the check that a stub adds up, and which deposit is its net pay.
+
+export type PayLineKind = (typeof payLineKind.enumValues)[number];
+export type PayLineGroup = "tax" | "insurance" | "retirement" | "other";
+
+export const PAY_LINE_KINDS: { kind: PayLineKind; label: string; group: PayLineGroup }[] = [
+  { kind: "federal_income_tax", label: "Federal income tax", group: "tax" },
+  { kind: "state_income_tax", label: "State income tax", group: "tax" },
+  { kind: "local_income_tax", label: "Local income tax", group: "tax" },
+  { kind: "social_security", label: "Social Security", group: "tax" },
+  { kind: "medicare", label: "Medicare", group: "tax" },
+  { kind: "state_disability", label: "State disability (SDI)", group: "tax" },
+  { kind: "health_insurance", label: "Health insurance", group: "insurance" },
+  { kind: "dental_insurance", label: "Dental insurance", group: "insurance" },
+  { kind: "vision_insurance", label: "Vision insurance", group: "insurance" },
+  { kind: "retirement_pretax", label: "Retirement (pre-tax, e.g. 401(k))", group: "retirement" },
+  { kind: "retirement_roth", label: "Retirement (Roth)", group: "retirement" },
+  { kind: "hsa", label: "HSA", group: "retirement" },
+  { kind: "fsa", label: "FSA", group: "other" },
+  { kind: "other", label: "Other", group: "other" },
+];
+
+export const GROUP_LABELS: Record<PayLineGroup, string> = {
+  tax: "Taxes",
+  insurance: "Insurance",
+  retirement: "Retirement & savings",
+  other: "Other deductions",
+};
+
+const byKind = new Map(PAY_LINE_KINDS.map((k) => [k.kind, k]));
+export const groupOf = (kind: PayLineKind): PayLineGroup => byKind.get(kind)?.group ?? "other";
+export const kindLabel = (kind: PayLineKind): string => byKind.get(kind)?.label ?? kind;
+
+/** Null when gross less the lines is exactly the net; otherwise what's off, for the owner to fix. */
+export function stubMismatch(grossCents: number, lines: { amountCents: number }[], netCents: number): string | null {
+  const withheld = lines.reduce((sum, l) => sum + l.amountCents, 0);
+  const expected = grossCents - withheld;
+  if (expected === netCents) return null;
+  const cents = (n: number) => `$${(n / 100).toFixed(2)}`;
+  return `Gross ${cents(grossCents)} less ${cents(withheld)} withheld is ${cents(expected)}, not the net ${cents(netCents)} (off by ${cents(Math.abs(expected - netCents))})`;
+}
+
+// How far a deposit's date can be from the pay date: banks post payroll a
+// day or two early or late around weekends and holidays.
+export const DEPOSIT_DAYS_BEFORE = 3;
+export const DEPOSIT_DAYS_AFTER = 5;
+
+const DAY_MS = 86_400_000;
+const offset = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS);
+
+export type DepositCandidate = { id: string; postedOn: string; amountCents: number };
+
+/**
+ * The deposits that could be this stub's net pay, best first: exactly the
+ * net amount, money in, near the pay date. Closest date first.
+ */
+export function depositCandidates(stub: { payDate: string; netCents: number }, deposits: DepositCandidate[]): DepositCandidate[] {
+  return deposits
+    .filter((d) => d.amountCents === stub.netCents)
+    .map((d) => ({ d, off: offset(stub.payDate, d.postedOn) }))
+    .filter(({ off }) => off >= -DEPOSIT_DAYS_BEFORE && off <= DEPOSIT_DAYS_AFTER)
+    .sort((a, b) => Math.abs(a.off) - Math.abs(b.off) || a.d.postedOn.localeCompare(b.d.postedOn))
+    .map(({ d }) => d);
+}
+
+/**
+ * What a linked deposit counts as in budgets: gross pay in the deposit's
+ * own category, and each deduction that has a category as its own line,
+ * negative (money that left the gross before it reached the bank). A
+ * deduction without a category is netted against gross instead. Either
+ * way the parts add up to the deposit exactly, so nothing is counted
+ * twice and nothing goes missing.
+ */
+export function expandDeposit(
+  deposit: { categoryId: string; amountCents: number },
+  stub: { grossCents: number; lines: { amountCents: number; categoryId: string | null }[] },
+): { categoryId: string; amountCents: number }[] {
+  const placed = stub.lines.filter((l): l is { amountCents: number; categoryId: string } => l.categoryId !== null);
+  const unplaced = stub.lines.filter((l) => l.categoryId === null).reduce((sum, l) => sum + l.amountCents, 0);
+  const parts = [
+    { categoryId: deposit.categoryId, amountCents: stub.grossCents - unplaced },
+    ...placed.map((l) => ({ categoryId: l.categoryId, amountCents: -l.amountCents })),
+  ];
+  // A stub that no longer matches its deposit (edited since) counts as
+  // the deposit alone rather than as numbers that don't add up.
+  const total = parts.reduce((sum, p) => sum + p.amountCents, 0);
+  return total === deposit.amountCents ? parts.filter((p) => p.amountCents !== 0) : [deposit];
+}
+
+/**
+ * A new stub's starting point: the last one moved on by one pay period
+ * (its own length), with the same deductions and amounts. Most paychecks
+ * repeat, so usually only what changed needs typing.
+ */
+export function nextPeriod(last: { periodStart: string; periodEnd: string; payDate: string }) {
+  const length = Math.round((Date.parse(last.periodEnd) - Date.parse(last.periodStart)) / DAY_MS) + 1;
+  const move = (on: string) => new Date(Date.parse(on) + length * DAY_MS).toISOString().slice(0, 10);
+  return { periodStart: move(last.periodStart), periodEnd: move(last.periodEnd), payDate: move(last.payDate) };
+}

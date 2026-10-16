@@ -3,6 +3,7 @@ import { createManualAccount, deleteManualAccount, listAccounts, setManualValue,
 import { budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
 import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goals";
 import { applySnapshot } from "@/operations/import";
+import { createPayStub, deletePayStub, linkPayDeposit, listPayStubs, payDepositCandidates, updatePayStub } from "@/operations/pay";
 import { categoryChoices } from "@/operations/choices";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
 import { dismissAlert, listAlerts, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
@@ -24,7 +25,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -99,6 +100,12 @@ export const operations: Operation[] = [
   matchProvisional,
   discardProvisional,
   createProvisional,
+  listPayStubs,
+  payDepositCandidates,
+  createPayStub,
+  updatePayStub,
+  deletePayStub,
+  linkPayDeposit,
   listTags,
   setTransactionTags,
   renameTag,
@@ -148,4 +155,6 @@ export const trackedTables = {
   tags,
   transaction_tags: transactionTags,
   category_suggestions: categorySuggestions,
+  pay_stubs: payStubs,
+  pay_stub_lines: payStubLines,
 } as const;
