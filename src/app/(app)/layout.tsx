@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { SignOutButton } from "@/components/auth/sign-out-button";
+import { TopBar } from "@/components/nav/top-bar";
 import { requireOwner } from "@/lib/auth/session";
 import { getDb } from "@/lib/db";
 import { getConnectionHealth, healthProblems } from "@/lib/sync/health";
@@ -22,58 +22,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   const [problems, inbox] = await Promise.all([getConnectionHealth(db).then(healthProblems), inboxCount(db)]);
   return (
     <div className="flex min-h-svh flex-col">
-      {/* Wraps on phones rather than running off-screen: fourteen links and a
-          sign-out button don't fit on one 375px line. */}
-      <header className="flex items-start justify-between gap-2 border-b px-4 py-2">
-        <nav className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-          <Link href="/" className="whitespace-nowrap font-semibold">
-            Data Ledger
-          </Link>
-          <Link href="/tally" className="text-muted-foreground hover:text-foreground">
-            Tally
-          </Link>
-          <Link href="/inbox" className="text-muted-foreground hover:text-foreground">
-            Inbox{inbox ? <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground">{inbox}</span> : null}
-          </Link>
-          <Link href="/transactions" className="text-muted-foreground hover:text-foreground">
-            Transactions
-          </Link>
-          <Link href="/budgets" className="text-muted-foreground hover:text-foreground">
-            Budgets
-          </Link>
-          <Link href="/pay" className="text-muted-foreground hover:text-foreground">
-            Pay
-          </Link>
-          <Link href="/goals" className="text-muted-foreground hover:text-foreground">
-            Goals
-          </Link>
-          <Link href="/subscriptions" className="text-muted-foreground hover:text-foreground">
-            Subscriptions
-          </Link>
-          <Link href="/owed" className="whitespace-nowrap text-muted-foreground hover:text-foreground">
-            Owed to me
-          </Link>
-          <Link href="/categories" className="text-muted-foreground hover:text-foreground">
-            Categories
-          </Link>
-          <Link href="/net-worth" className="whitespace-nowrap text-muted-foreground hover:text-foreground">
-            Net worth
-          </Link>
-          <Link href="/investments" className="text-muted-foreground hover:text-foreground">
-            Investments
-          </Link>
-          <Link href="/accounts" className="text-muted-foreground hover:text-foreground">
-            Accounts
-          </Link>
-          <Link href="/activity" className="text-muted-foreground hover:text-foreground">
-            Activity
-          </Link>
-          <Link href="/settings" className="text-muted-foreground hover:text-foreground">
-            Settings
-          </Link>
-        </nav>
-        <SignOutButton />
-      </header>
+      <TopBar inbox={inbox} />
       {problems.length ? (
         <Link
           href="/settings"
