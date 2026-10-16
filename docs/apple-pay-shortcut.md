@@ -12,11 +12,11 @@ It covers Apple Pay only. Physical card swipes and online purchases without Appl
 ## What you need
 
 - iOS 17 or later (the Shortcuts **Transaction** automation).
-- Data Ledger set up for notifications on the phone, if you want the alert (Settings → Notifications). The purchase is recorded either way.
+- Data Ledger set up for notifications on the phone, if you want the alert (Settings → **Notifications**). The purchase is recorded either way.
 
 ## 1. Create a token in Data Ledger
 
-1. **Create the token:** Settings → **Apple Pay alerts** → name the device (e.g. *iPhone*) → **Create token**.
+1. **Create the token:** Settings → **Apple Pay** → name the device (e.g. *iPhone*) → **Create token**.
 2. **Copy it now:** it starts with `dlsc_`, and it's shown only once. Only a hash of it is stored.
 3. **Note the endpoint URL** shown with it: `https://<your domain>/api/shortcuts/purchase`.
 
@@ -64,7 +64,7 @@ If nothing arrives, run the shortcut by hand from the Shortcuts app. The reply s
 
 | Reply | Meaning |
 |---|---|
-| `"status": "created"` | Recorded. If you didn't get a notification, check Settings → Notifications. |
+| `"status": "created"` | Recorded. If you didn't get a notification, check Settings → **Notifications**. |
 | `"status": "unmapped"` | The card's Wallet name isn't mapped yet (step 2). |
 | `"status": "duplicate"` | The same purchase was already sent. |
 | `"status": "already_synced"` | The bank reported it first, so nothing was added. |

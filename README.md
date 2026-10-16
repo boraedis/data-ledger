@@ -484,7 +484,7 @@ messages }`, in the app's own shapes (integer cents, `YYYY-MM-DD`). Nothing
 past that boundary knows which provider was used. SimpleFIN Bridge is the
 only implementation today.
 
-**Connecting:** Settings → Bank connections → paste a SimpleFIN setup
+**Connecting:** Settings → Connections → paste a SimpleFIN setup
 token. The server claims it (only ever against `bridge.simplefin.org` /
 `beta-bridge.simplefin.org`), stores the resulting access URL encrypted
 with AES-256-GCM, and runs the first sync right away. A token that's
