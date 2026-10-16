@@ -43,7 +43,7 @@ export async function forgetDevice(id: string): Promise<Result> {
 export async function sendTest(): Promise<Result> {
   if (!(await hasValidSession())) return { error: "Not signed in" };
   // Nothing from the ledger in it: it only proves delivery.
-  const result = await sendPush(getDb(), { title: "Data Ledger", body: "Test notification: this device will get alerts.", url: "/settings", tag: "test" });
+  const result = await sendPush(getDb(), { title: "Data Ledger", body: "Test notification: this device will get alerts.", url: "/settings?tab=notifications", tag: "test" });
   revalidatePath("/settings");
   if (result.sent === 0) return { error: result.failed ? "Sending failed; see the device list for the reason." : "No devices to send to." };
   return { ok: true, message: `Sent to ${result.sent} device${result.sent === 1 ? "" : "s"}${result.removed ? `; removed ${result.removed} that no longer exist` : ""}.` };
