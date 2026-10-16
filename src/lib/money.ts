@@ -4,7 +4,9 @@ const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" 
 export function formatCents(cents: number, currency = "USD"): string {
   const formatter =
     currency === "USD" ? usd : new Intl.NumberFormat("en-US", { style: "currency", currency });
-  return formatter.format(cents / 100);
+  // `|| 0` turns -0 (spending of nothing, negated) into 0: Intl would
+  // print "-$0.00".
+  return formatter.format((cents || 0) / 100);
 }
 
 /**
