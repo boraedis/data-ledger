@@ -77,6 +77,27 @@ export const pushSubscriptions = pgTable("push_subscriptions", {
   lastError: text("last_error"),
 });
 
+// Tokens the iOS Shortcut sends with each Apple Pay purchase (#32): one
+// per device, created and revoked in Settings. Only a SHA-256 of the token
+// is stored, as with sessions: a leaked copy of this table can't be used
+// to post purchases. Infrastructure, written by src/lib/shortcuts.
+export const shortcutTokens = pgTable("shortcut_tokens", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  label: text("label").notNull(),
+  tokenHash: text("token_hash").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+});
+
+// Wallet card names a purchase alert used that no account is mapped to
+// yet, so Settings can offer them instead of asking the owner to type the
+// exact name. Removed once mapped. Names only; the purchase itself isn't
+// kept (the daily sync brings it anyway).
+export const unmappedWalletCards = pgTable("unmapped_wallet_cards", {
+  name: text("name").primaryKey(),
+  lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const challengePurpose = pgEnum("challenge_purpose", ["register", "login"]);
 
 // WebAuthn challenges are kept server-side and deleted on first use, so a
@@ -206,7 +227,15 @@ export const accounts = pgTable("accounts", {
   balanceCents: bigint("balance_cents", { mode: "number" }),
   availableBalanceCents: bigint("available_balance_cents", { mode: "number" }),
   balanceAt: timestamp("balance_at", { withTimezone: true }),
-}, (t) => [uniqueIndex("accounts_connection_external_idx").on(t.connectionId, t.externalId)]);
+  // The card's name in Apple Wallet, which is all an Apple Pay purchase
+  // alert says about the card (#32). Set by the owner; it maps the alert
+  // to this account. Unique, ignoring case, so an alert never has two
+  // candidates.
+  walletCardName: text("wallet_card_name"),
+}, (t) => [
+  uniqueIndex("accounts_connection_external_idx").on(t.connectionId, t.externalId),
+  uniqueIndex("accounts_wallet_card_name_idx").on(sql`lower(${t.walletCardName})`),
+]);
 
 // One balance per account per day, recorded by every sync (#25). Banks only
 // ever report a balance "as of now", so history that isn't captured on the

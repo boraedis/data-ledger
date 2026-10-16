@@ -1,4 +1,4 @@
-import { and, count, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
 import { ACCOUNT_KINDS, accounts, balanceSnapshots, countsTowardBudgetsByDefault, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
@@ -8,7 +8,8 @@ export const listAccounts = defineRead({
   name: "accounts.list",
   description:
     "List all accounts with institution, kind (checking, savings, credit, payment_app, brokerage, retirement, " +
-    "loan, other_asset) and whether each counts toward budgets. `name` is the owner's name for the account if set.",
+    "loan, other_asset) and whether each counts toward budgets. `name` is the owner's name for the account if set. " +
+    "`walletCardName` is its card's name in Apple Wallet, if mapped for Apple Pay purchase alerts.",
   input: z.object({}),
   run: async (db) => {
     const rows = await db
@@ -20,6 +21,7 @@ export const listAccounts = defineRead({
         kind: accounts.type,
         countsTowardBudgets: accounts.countsTowardBudgets,
         source: accounts.source,
+        walletCardName: accounts.walletCardName,
       })
       .from(accounts);
     // Balances deliberately left out: this shape is what Tally sees, and
@@ -41,14 +43,16 @@ export const updateAccount = defineWrite({
   name: "accounts.update",
   description:
     "Change an account's kind, display name, or whether it counts toward budgets. Changing the kind also resets " +
-    "the budget flag to that kind's default unless countsTowardBudgets is given. displayName null restores the bank's name.",
+    "the budget flag to that kind's default unless countsTowardBudgets is given. displayName null restores the bank's name. " +
+    "walletCardName is the card's name in Apple Wallet, which maps Apple Pay purchase alerts to this account (null clears it).",
   input: z.object({
     accountId: z.uuid(),
     kind: z.enum(ACCOUNT_KINDS).optional(),
     displayName: z.string().trim().min(1).max(60).nullable().optional(),
     countsTowardBudgets: z.boolean().optional(),
+    walletCardName: z.string().trim().min(1).max(60).nullable().optional(),
   }),
-  apply: async (ctx, { accountId, kind, displayName, countsTowardBudgets }) => {
+  apply: async (ctx, { accountId, kind, displayName, countsTowardBudgets, walletCardName }) => {
     const set: Partial<typeof accounts.$inferInsert> = {};
     if (kind !== undefined) {
       set.type = kind;
@@ -59,6 +63,16 @@ export const updateAccount = defineWrite({
       set.countsTowardBudgets = countsTowardBudgets;
     }
     if (displayName !== undefined) set.displayName = displayName;
+    if (walletCardName !== undefined) {
+      if (walletCardName) {
+        const [clash] = await ctx.db
+          .select({ id: accounts.id })
+          .from(accounts)
+          .where(and(sql`lower(${accounts.walletCardName}) = lower(${walletCardName})`, ne(accounts.id, accountId)));
+        if (clash) throw new Error(`Another account already uses the Wallet card name "${walletCardName}"`);
+      }
+      set.walletCardName = walletCardName;
+    }
     if (Object.keys(set).length === 0) throw new Error("Nothing to change");
     // A manual account has no transactions, and its revaluations are never
     // spending, so no kind change puts it into budgets.

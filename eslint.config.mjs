@@ -36,6 +36,9 @@ const eslintConfig = defineConfig([
       "src/lib/tally/**",
       // Push subscriptions: which devices get notifications, like sessions.
       "src/lib/push/**",
+      // Shortcut tokens and the Wallet card names seen before they're
+      // mapped. The purchases themselves go through createProvisional.
+      "src/lib/shortcuts/**",
       // Synthetic data loading, and tests setting up fixtures.
       "src/lib/seed/**",
       "src/lib/test-utils/**",

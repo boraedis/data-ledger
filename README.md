@@ -252,6 +252,7 @@ Near-real-time purchase alerts (#28: bank emails #31, Apple Pay #32) can't wait 
 - **Never counted twice:** a provisional transaction counts as spending until the bank's data for its account reaches its date. From then on the bank's version counts, whether or not the two were matched.
 - **Review:** after a week without a match it's flagged, in the Inbox's "Waiting for the bank" and on Home. Usually the bank charged a different amount (a tip), so you pick the right charge from a short list. Otherwise it was declined or misread, and you discard it. Both are operations (`transactions.matchProvisional`, `transactions.discardProvisional`) and can be undone.
 - **Kept out of** transfer matching, recurring-charge detection and reimbursement payments, where a second copy of a purchase would mislead.
+- **Apple Pay** (#32): an iOS Shortcuts automation posts each purchase (merchant, amount, the card's Wallet name, the time) to `/api/shortcuts/purchase` with a per-device token from Settings, stored only as a hash and revocable there. The Wallet name maps to an account (`accounts.wallet_card_name`, set in Settings). An unmapped name isn't recorded, but is offered in Settings and sends a notification. A created purchase sends a push that opens it. Setup: [docs/apple-pay-shortcut.md](docs/apple-pay-shortcut.md).
 
 ### AI: one self-hosted model
 
