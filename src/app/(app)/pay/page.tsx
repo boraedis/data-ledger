@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
@@ -72,6 +73,9 @@ export default async function PayPage() {
               <dd className="tabular-nums">{formatCents(sum((s) => s.netCents))}</dd>
             </div>
           </dl>
+          <Link href="/pay/taxes" className="inline-block text-sm text-muted-foreground underline">
+            Year-end tax estimate →
+          </Link>
         </section>
       ) : null}
 

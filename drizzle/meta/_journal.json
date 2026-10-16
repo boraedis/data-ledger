@@ -162,6 +162,13 @@
       "when": 1792186110099,
       "tag": "0022_pay_stubs",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1792188518819,
+      "tag": "0023_tax_assumptions",
+      "breakpoints": true
     }
   ]
 }

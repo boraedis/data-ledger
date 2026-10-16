@@ -5,6 +5,7 @@ import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goa
 import { applySnapshot } from "@/operations/import";
 import { createPayStub, deletePayStub, linkPayDeposit, listPayStubs, payDepositCandidates, updatePayStub } from "@/operations/pay";
 import { categoryChoices } from "@/operations/choices";
+import { setTaxAssumptions, taxEstimate } from "@/operations/taxes";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
 import { dismissAlert, listAlerts, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
 import {
@@ -25,7 +26,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { taxAssumptions, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -106,6 +107,8 @@ export const operations: Operation[] = [
   updatePayStub,
   deletePayStub,
   linkPayDeposit,
+  taxEstimate,
+  setTaxAssumptions,
   listTags,
   setTransactionTags,
   renameTag,
@@ -157,4 +160,5 @@ export const trackedTables = {
   category_suggestions: categorySuggestions,
   pay_stubs: payStubs,
   pay_stub_lines: payStubLines,
+  tax_assumptions: taxAssumptions,
 } as const;
