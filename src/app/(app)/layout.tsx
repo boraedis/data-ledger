@@ -2,8 +2,10 @@ import Link from "next/link";
 import { TopBar } from "@/components/nav/top-bar";
 import { requireOwner } from "@/lib/auth/session";
 import { getDb } from "@/lib/db";
+import { modelIsConfigured } from "@/lib/model/client";
 import { getConnectionHealth, healthProblems } from "@/lib/sync/health";
 import { inboxCount } from "@/operations/transactions";
+import { TallyBubble } from "./tally/bubble";
 
 // Everything here is per-request, owner-only data; never prerender it. Without
 // this, `next build` starts rendering a page before the session check marks
@@ -31,7 +33,10 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           {problems.length === 1 ? problems[0] : `${problems[0]} (and ${problems.length - 1} more)`} — see Settings
         </Link>
       ) : null}
-      <main className="mx-auto w-full max-w-4xl flex-1 px-4 py-6">{children}</main>
+      {/* Bottom padding clears the Tally button, so it never sits over the
+          last control on a page. */}
+      <main className="mx-auto w-full max-w-4xl flex-1 px-4 pt-6 pb-24">{children}</main>
+      <TallyBubble configured={modelIsConfigured()} />
     </div>
   );
 }

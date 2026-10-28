@@ -4,19 +4,16 @@ import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { proposalLabel, toolLabel } from "@/lib/tally/format";
+import type { Item } from "@/lib/tally/history";
 import { decide } from "./actions";
 
 // The chat with Tally (#11). A turn streams in as JSON lines from
 // /api/tally: "waiting" while the model wakes (a cold start takes minutes,
 // so that's shown rather than a frozen spinner), text as it's written,
 // tools as they run, and proposals to approve or reject right here.
-
-export type Item =
-  | { kind: "user"; text: string }
-  | { kind: "assistant"; text: string }
-  | { kind: "tool"; operation: string; ok: boolean }
-  | { kind: "proposal"; commandId: string; operation: string; input: Record<string, unknown>; reason: string; status: string }
-  | { kind: "error"; text: string };
+// The same chat runs on the full page and in the panel on every other page
+// (#72); the variant changes only its layout and who follows the
+// conversation id (the URL there, the panel here).
 
 type Event =
   | { type: "conversation"; id: string }
@@ -59,13 +56,18 @@ function Prose({ text }: { text: string }) {
 }
 
 function ProposalCard({ item, onDecided }: { item: Extract<Item, { kind: "proposal" }>; onDecided: (status: string) => void }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const act = (approve: boolean) =>
     startTransition(async () => {
       const result = await decide(item.commandId, approve);
       if ("error" in result) setError(result.error);
-      else onDecided(result.status);
+      else {
+        onDecided(result.status);
+        // From the panel, the page underneath may show what just changed.
+        router.refresh();
+      }
     });
   return (
     <div className="space-y-2 rounded-lg border border-dashed p-3 text-sm">
@@ -93,7 +95,19 @@ function ProposalCard({ item, onDecided }: { item: Extract<Item, { kind: "propos
   );
 }
 
-export function Chat({ conversationId: initialId, initial }: { conversationId: string | null; initial: Item[] }) {
+export function Chat({
+  conversationId: initialId,
+  initial,
+  variant = "page",
+  onConversation,
+  onBusyChange,
+}: {
+  conversationId: string | null;
+  initial: Item[];
+  variant?: "page" | "panel";
+  onConversation?: (id: string) => void;
+  onBusyChange?: (busy: boolean) => void;
+}) {
   const router = useRouter();
   const [conversationId, setConversationId] = useState(initialId);
   const [items, setItems] = useState<Item[]>(initial);
@@ -102,6 +116,7 @@ export function Chat({ conversationId: initialId, initial }: { conversationId: s
   const [waitingSince, setWaitingSince] = useState<number | null>(null);
   const [, tick] = useState(0);
   const bottom = useRef<HTMLDivElement>(null);
+  const panel = variant === "panel";
 
   // A block body on purpose: newer browsers return a Promise from scroll
   // methods, and an effect must return nothing but a cleanup function.
@@ -119,6 +134,7 @@ export function Chat({ conversationId: initialId, initial }: { conversationId: s
     if (!text || busy) return;
     setDraft("");
     setBusy(true);
+    onBusyChange?.(true);
     setItems((all) => [...all, { kind: "user", text }]);
     let streaming = false;
     const apply = (event: Event) => {
@@ -126,8 +142,9 @@ export function Chat({ conversationId: initialId, initial }: { conversationId: s
         case "conversation":
           if (event.id !== conversationId) {
             setConversationId(event.id);
+            onConversation?.(event.id);
             // The URL follows the conversation without remounting the chat.
-            window.history.replaceState(null, "", `/tally?c=${event.id}`);
+            if (!panel) window.history.replaceState(null, "", `/tally?c=${event.id}`);
           }
           break;
         case "waiting":
@@ -186,16 +203,17 @@ export function Chat({ conversationId: initialId, initial }: { conversationId: s
     } finally {
       setWaitingSince(null);
       setBusy(false);
+      onBusyChange?.(false);
       // The conversation list picks up a new or renamed thread.
-      router.refresh();
+      if (!panel) router.refresh();
     }
   }
 
   const waitedSeconds = waitingSince === null ? 0 : Math.round((Date.now() - waitingSince) / 1000);
 
   return (
-    <div className="flex min-h-[60vh] flex-col gap-3">
-      <div className="flex-1 space-y-3">
+    <div className={panel ? "flex min-h-0 flex-1 flex-col" : "flex min-h-[60vh] flex-col gap-3"}>
+      <div className={panel ? "min-h-0 flex-1 space-y-3 overflow-y-auto p-4" : "flex-1 space-y-3"}>
         {items.length === 0 ? (
           <div className="space-y-2 text-sm text-muted-foreground">
             <p>Ask about your spending, budgets, subscriptions or what you&apos;re owed, or ask for a change. Changes come back as proposals for you to approve.</p>
@@ -251,7 +269,7 @@ export function Chat({ conversationId: initialId, initial }: { conversationId: s
         <div ref={bottom} />
       </div>
       <form
-        className="sticky bottom-0 flex gap-2 bg-background py-2"
+        className={panel ? "flex gap-2 border-t bg-background p-3" : "sticky bottom-0 flex gap-2 bg-background py-2"}
         onSubmit={(e) => {
           e.preventDefault();
           void send();
