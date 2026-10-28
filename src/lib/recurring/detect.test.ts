@@ -145,3 +145,28 @@ describe("cancelled subscriptions (#82)", () => {
     expect(alertsFor(series, status, TODAY)).toEqual([]);
   });
 });
+
+describe("renewal heads-up (#84)", () => {
+  // A yearly cloud storage plan: next charge expected 2027-03-12.
+  const plan = () => monthly("Cloudbox", ["2025-03-10", "2026-03-12"], 99);
+  const confirmed = new Map([[seriesKey("Cloudbox", "card"), "confirmed" as const]]);
+  const renewals = (charges: Charge[], on: string, status = confirmed) =>
+    alertsFor(detectSeries(charges, on), status, on).filter((a) => a.kind === "upcoming_renewal");
+
+  it("raises nothing 30 days out, then exactly one from 14 days out", () => {
+    expect(renewals(plan(), "2027-02-10")).toEqual([]);
+    expect(renewals(plan(), "2027-02-25")).toEqual([]); // 15 days
+    const keys = new Set(["2027-02-26", "2027-03-01", "2027-03-12"].flatMap((on) => renewals(plan(), on).map((a) => a.dedupeKey)));
+    expect([...keys]).toEqual([`upcoming_renewal|${seriesKey("Cloudbox", "card")}|2027-03-12`]);
+    expect(renewals(plan(), "2027-02-26")[0]).toMatchObject({ occurredOn: "2027-03-12", toCents: 9_900, cadence: "annual", variable: false });
+  });
+
+  it("only for tracked bills that renew quarterly or less often", () => {
+    expect(renewals(plan(), "2027-03-01", new Map())).toEqual([]);
+    const tunebox = monthly("Tunebox", MONTHS, 10.99);
+    expect(renewals(tunebox, "2026-06-25", new Map([[seriesKey("Tunebox", "card"), "confirmed" as const]]))).toEqual([]);
+    const quarterly = monthly("Water Co", ["2025-12-01", "2026-03-02", "2026-06-01"], [48.1, 61.2, 72.4]);
+    const [water] = renewals(quarterly, "2026-08-25", new Map([[seriesKey("Water Co", "card"), "confirmed" as const]]));
+    expect(water).toMatchObject({ occurredOn: "2026-09-01", variable: true });
+  });
+});

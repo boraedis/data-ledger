@@ -1,5 +1,6 @@
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
+import { billAnchor } from "@/lib/recurring/links";
 import { listAlerts, listCancelled, listRecurring } from "@/operations/recurring";
 import { read } from "@/operations/runtime";
 import { AlertList } from "./alert-list";
@@ -66,7 +67,7 @@ export default async function SubscriptionsPage() {
           </p>
           <ul className="divide-y rounded-lg border text-sm">
             {ended.map((s) => (
-              <li key={`${s.merchant}|${s.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+              <li key={`${s.merchant}|${s.accountId}`} id={billAnchor(s.merchant, s.accountId)} className="flex scroll-mt-4 flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <span className="min-w-0">
                   <span className="block truncate">{s.merchant}</span>
                   <span className="block text-xs text-muted-foreground">
@@ -92,7 +93,12 @@ export default async function SubscriptionsPage() {
         ) : (
           <ul className="divide-y rounded-lg border text-sm">
             {current.map((s) => (
-              <li key={`${s.merchant}|${s.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+              <li
+                key={`${s.merchant}|${s.accountId}`}
+                id={billAnchor(s.merchant, s.accountId)}
+                // Opened from a renewal alert (#84): the bill, marked.
+                className="flex scroll-mt-4 flex-wrap items-center justify-between gap-2 px-3 py-2 target:bg-primary/10"
+              >
                 <span className="min-w-0">
                   <span className="block truncate font-medium">{s.merchant}</span>
                   <span className="block text-xs text-muted-foreground">

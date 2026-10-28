@@ -15,8 +15,11 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 // alerts.list. Transaction-derived only, so Tally may read all of it.
 
 const today = () => new Date().toISOString().slice(0, 10);
-// A little over a year: enough for annual charges to show up twice.
-const LOOKBACK_DAYS = 400;
+// Two years and a bit. An annual bill needs two charges in the window to be
+// detected at all, and must stay detected until its next one: with one
+// year (+35 days, as before #84) it vanished a month after each charge,
+// so it dropped out of Tracked and its renewal could never be flagged.
+const LOOKBACK_DAYS = 2 * 365 + 40;
 
 /** Recent spending that could recur: posted, in budget accounts, not transfers. */
 async function loadCharges(db: Db, on: string) {
@@ -224,6 +227,11 @@ function message(draft: AlertDraft, accountName: string): { title: string; detai
           `Last charged ${formatCents(draft.fromCents!)} on ${draft.lastOn}${where}; the next was due around ${draft.occurredOn}. ` +
           `Cancelled, or a card problem? Answer it under Ended on Subscriptions.`,
       };
+    case "upcoming_renewal":
+      return {
+        title: `${m} renews around ${draft.occurredOn}`,
+        detail: `${draft.variable ? "About " : ""}${formatCents(draft.toCents!)} (${draft.cadence})${where}. Cancel before then if you don't want it.`,
+      };
     case "charged_after_cancel":
       return {
         title: `${m} charged after you cancelled`,
@@ -297,6 +305,7 @@ export const listAlerts = defineRead({
         title: alerts.title,
         detail: alerts.detail,
         merchant: alerts.merchant,
+        accountId: alerts.accountId,
         transactionId: alerts.transactionId,
         occurredOn: alerts.occurredOn,
         createdAt: alerts.createdAt,
