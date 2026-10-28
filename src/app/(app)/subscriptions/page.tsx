@@ -3,7 +3,7 @@ import { formatCents } from "@/lib/money";
 import { listAlerts, listCancelled, listRecurring } from "@/operations/recurring";
 import { read } from "@/operations/runtime";
 import { AlertList } from "./alert-list";
-import { CancelButton, CheckNow, StatusButtons } from "./controls";
+import { CancelButton, CheckNow, StatusButtons, StillActiveButton } from "./controls";
 
 // Subscriptions and recurring bills (#9): what's tracked, what was
 // detected, and the alerts. Detection is rule-based and runs on read; the
@@ -14,8 +14,11 @@ export default async function SubscriptionsPage() {
   const today = new Date().toISOString().slice(0, 10);
   const [series, open, cancelled] = await Promise.all([read(db, listRecurring, {}), read(db, listAlerts, {}), read(db, listCancelled, {})]);
   const tracked = series.filter((s) => s.status === "confirmed");
-  const current = tracked.filter((s) => s.active);
-  const stopped = tracked.filter((s) => !s.active);
+  // Ended (#83): went quiet, waiting for the owner to say cancelled or
+  // still active. Everything else tracked is current, including a quiet
+  // bill they've said is still active.
+  const ended = tracked.filter((s) => s.ended);
+  const current = tracked.filter((s) => !s.ended);
   const suggested = series.filter((s) => s.status === "suggested" && s.active);
   const dismissed = series.filter((s) => s.status === "dismissed");
   const yearly = current.reduce((sum, s) => sum + s.annualizedCents, 0);
@@ -54,6 +57,34 @@ export default async function SubscriptionsPage() {
         </section>
       ) : null}
 
+      {ended.length ? (
+        <section className="space-y-2">
+          <h2 className="text-lg font-medium">Ended</h2>
+          <p className="text-xs text-muted-foreground">
+            These stopped charging. If you cancelled, mark it, and a charge after that raises an alert. If it&apos;s still
+            active (a card problem, say), keep tracking it; this gap won&apos;t alert again.
+          </p>
+          <ul className="divide-y rounded-lg border text-sm">
+            {ended.map((s) => (
+              <li key={`${s.merchant}|${s.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
+                <span className="min-w-0">
+                  <span className="block truncate">{s.merchant}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Last {formatCents(s.latestCents)} on {s.lastOn} · {s.accountName} · next was due around {s.nextExpectedOn}
+                  </span>
+                </span>
+                <span className="flex flex-wrap items-center justify-end gap-1">
+                  {/* Cancelled after the last charge, most likely; editable. */}
+                  <CancelButton merchant={s.merchant} accountId={s.accountId} today={today} defaultOn={s.lastOn} label="Mark cancelled…" primary />
+                  <StillActiveButton merchant={s.merchant} accountId={s.accountId} />
+                  <StatusButtons merchant={s.merchant} accountId={s.accountId} options={[{ label: "Stop tracking", status: null }]} />
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Tracked</h2>
         {current.length === 0 ? (
@@ -65,7 +96,8 @@ export default async function SubscriptionsPage() {
                 <span className="min-w-0">
                   <span className="block truncate font-medium">{s.merchant}</span>
                   <span className="block text-xs text-muted-foreground">
-                    {amount(s)} {s.cadence} · {s.accountName} · next around {s.nextExpectedOn}
+                    {amount(s)} {s.cadence} · {s.accountName} ·{" "}
+                    {s.overdue ? `no charge since ${s.lastOn}, kept as still active` : `next around ${s.nextExpectedOn}`}
                   </span>
                 </span>
                 <span className="flex flex-wrap items-center justify-end gap-2">
@@ -100,25 +132,6 @@ export default async function SubscriptionsPage() {
                   {/* Already ended before it was ever tracked. */}
                   <CancelButton merchant={s.merchant} accountId={s.accountId} today={today} />
                   <StatusButtons merchant={s.merchant} accountId={s.accountId} options={[{ label: "Dismiss", status: "dismissed" }]} />
-                </span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      ) : null}
-
-      {stopped.length ? (
-        <section className="space-y-2">
-          <h2 className="text-lg font-medium">Stopped charging</h2>
-          <ul className="divide-y rounded-lg border text-sm text-muted-foreground">
-            {stopped.map((s) => (
-              <li key={`${s.merchant}|${s.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
-                <span>
-                  {s.merchant} · last {formatCents(s.latestCents)} on {s.lastOn}
-                </span>
-                <span className="flex flex-wrap items-center gap-1">
-                  <CancelButton merchant={s.merchant} accountId={s.accountId} today={today} />
-                  <StatusButtons merchant={s.merchant} accountId={s.accountId} options={[{ label: "Stop tracking", status: null }]} />
                 </span>
               </li>
             ))}

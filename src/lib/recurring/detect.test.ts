@@ -82,6 +82,29 @@ describe("alertsFor", () => {
     expect(alert).toMatchObject({ kind: "missing_charge", occurredOn: "2026-06-03" });
   });
 
+  it("raises one ended alert however many cycles are missed (#83)", () => {
+    const charges = monthly("Ironworks Gym", ["2026-01-03", "2026-02-03", "2026-03-03", "2026-04-03"], 45);
+    const confirmed = new Map([[seriesKey("Ironworks Gym", "card"), "confirmed" as const]]);
+    // Three missed cycles (May, Jun, Jul), checked nightly.
+    const keys = new Set(
+      ["2026-05-12", "2026-06-12", "2026-07-12", "2026-07-30"].flatMap((on) => alertsFor(detectSeries(charges, on), confirmed, on).map((a) => a.dedupeKey)),
+    );
+    expect([...keys]).toEqual([`missing_charge|${seriesKey("Ironworks Gym", "card")}|2026-05-03`]);
+    const [alert] = alertsFor(detectSeries(charges, "2026-05-12"), confirmed, "2026-05-12");
+    expect(alert).toMatchObject({ fromCents: 4_500, lastOn: "2026-04-03" });
+  });
+
+  it("stays quiet about a gap the owner called still active, until a new charge and a new gap", () => {
+    const key = seriesKey("Ironworks Gym", "card");
+    const confirmed = new Map([[key, "confirmed" as const]]);
+    const acked = new Map([[key, "2026-04-03"]]);
+    const before = monthly("Ironworks Gym", ["2026-01-03", "2026-02-03", "2026-03-03", "2026-04-03"], 45);
+    expect(alertsFor(detectSeries(before, "2026-06-12"), confirmed, "2026-06-12", acked)).toEqual([]);
+    // It charged again in June, then went quiet: that's a new gap.
+    const after = [...before, ...monthly("Ironworks Gym", ["2026-06-03"], 45)];
+    expect(alertsFor(detectSeries(after, "2026-07-20"), confirmed, "2026-07-20", acked).map((a) => a.occurredOn)).toEqual(["2026-07-03"]);
+  });
+
   it("raises nothing for a dismissed series", () => {
     const dismissed = new Map([[seriesKey("Streamflix", "card"), "dismissed" as const]]);
     expect(kinds(monthly("Streamflix", MONTHS, [15.49, 15.49, 15.49, 15.49, 15.49, 17.99]), dismissed)).toEqual([]);

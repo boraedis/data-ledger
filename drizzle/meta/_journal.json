@@ -176,6 +176,13 @@
       "when": 1793201935243,
       "tag": "0024_cancelled_subscriptions",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793202790559,
+      "tag": "0025_still_active",
+      "breakpoints": true
     }
   ]
 }

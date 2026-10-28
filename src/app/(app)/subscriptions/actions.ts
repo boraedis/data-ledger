@@ -30,6 +30,10 @@ export async function cancelSubscription(merchant: string, accountId: string, ca
   return run("alerts.refresh", {}, `Checked for charges after cancelling ${merchant}`);
 }
 
+export async function stillActive(merchant: string, accountId: string) {
+  return run("recurring.stillActive", { merchant, accountId }, `${merchant} is still active; keep tracking it`);
+}
+
 export async function dismissAlert(alertId: string, title: string) {
   return run("alerts.dismiss", { alertId }, `Dismissed alert: ${title}`);
 }

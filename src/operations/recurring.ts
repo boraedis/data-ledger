@@ -6,7 +6,7 @@ import { formatCents } from "@/lib/money";
 import { alertsFor, cancelGraceDays, chargesAfterCancel, detectSeries, seriesKey, type AlertDraft, type Series, type SeriesStatus } from "@/lib/recurring/detect";
 import { budgetAccountIds } from "@/operations/accounts";
 import { defineRead, defineWrite } from "@/operations/define";
-import { NotFoundError } from "@/operations/tracked";
+import { NotFoundError, type WriteContext } from "@/operations/tracked";
 
 // Recurring charges and alerts (#9). Detection is computed on read from
 // recent spending (src/lib/recurring/detect.ts); the owner's confirm,
@@ -48,6 +48,21 @@ async function decisions(db: Db) {
   return new Map(rows.map((r) => [seriesKey(r.merchant, r.accountId), r.status]));
 }
 
+/** Per series, the last charge as of the owner saying an ended bill is still active. */
+async function stillActive(db: Db) {
+  const rows = await db.select().from(recurringSeries);
+  return new Map(rows.filter((r) => r.stillActiveAfter).map((r) => [seriesKey(r.merchant, r.accountId), r.stillActiveAfter!]));
+}
+
+/** Clears a series' open "stopped charging" alert once the owner has answered it. */
+async function settleEndedAlerts(ctx: WriteContext, merchant: string, accountId: string) {
+  const open = await ctx.db
+    .select({ id: alerts.id })
+    .from(alerts)
+    .where(and(eq(alerts.kind, "missing_charge"), eq(alerts.merchant, merchant), eq(alerts.accountId, accountId), isNull(alerts.dismissedAt)));
+  for (const row of open) await ctx.update(alerts, row.id, { dismissedAt: new Date() });
+}
+
 async function cancellations(db: Db) {
   const rows = await db.select().from(recurringSeries).where(eq(recurringSeries.status, "cancelled"));
   return rows.map((r) => ({ merchant: r.merchant, accountId: r.accountId, cancelledOn: r.cancelledOn!, graceDays: r.cancelGraceDays ?? 7 }));
@@ -58,7 +73,7 @@ async function accountNames(db: Db) {
   return new Map(rows.map((r) => [r.id, r.name]));
 }
 
-function describe(series: Series, status: SeriesStatus | undefined, accountName: string) {
+function describe(series: Series, status: SeriesStatus | undefined, accountName: string, stillActiveAfter: string | undefined) {
   return {
     merchant: series.merchant,
     accountId: series.accountId,
@@ -74,6 +89,10 @@ function describe(series: Series, status: SeriesStatus | undefined, accountName:
     nextExpectedOn: series.nextExpectedOn,
     annualizedCents: series.annualizedCents,
     active: series.active,
+    overdue: series.overdue,
+    // A tracked bill that went quiet and hasn't been answered: under Ended.
+    // "Still active" answers it until a new charge comes.
+    ended: status === "confirmed" && series.overdue && stillActiveAfter !== series.lastOn,
   };
 }
 
@@ -82,11 +101,12 @@ export const listRecurring = defineRead({
   description:
     "Recurring charges detected from merchant, cadence and amount (one merchant in one account), with status " +
     "(suggested, confirmed by the owner as a subscription/bill, dismissed as not one, or cancelled by the owner), cadence, usual and latest amount " +
-    "in cents, next expected charge, and annualized cost. `active` is false when charges have stopped.",
+    "in cents, next expected charge, and annualized cost. `active` is false when charges have stopped; `ended` " +
+    "marks a tracked bill that went quiet and that the owner hasn't yet marked cancelled or still active.",
   input: z.object({ on: z.iso.date().optional() }),
   run: async (db, { on = today() }) => {
-    const [charges, status, names] = await Promise.all([loadCharges(db, on), decisions(db), accountNames(db)]);
-    return detectSeries(charges, on).map((s) => describe(s, status.get(s.key), names.get(s.accountId) ?? ""));
+    const [charges, status, acked, names] = await Promise.all([loadCharges(db, on), decisions(db), stillActive(db), accountNames(db)]);
+    return detectSeries(charges, on).map((s) => describe(s, status.get(s.key), names.get(s.accountId) ?? "", acked.get(s.key)));
   },
 });
 
@@ -105,8 +125,9 @@ export const setRecurringStatus = defineWrite({
       if (existing) await ctx.remove(recurringSeries, existing.id);
       return { status: "suggested" };
     }
-    // Leaving the cancelled state (tracked again, say) drops its snapshot.
-    if (existing) await ctx.update(recurringSeries, existing.id, { status, cancelledOn: null, cancelledAnnualCents: null, cancelGraceDays: null });
+    // A new decision starts clean: no cancellation snapshot, no "still
+    // active" from an earlier quiet spell.
+    if (existing) await ctx.update(recurringSeries, existing.id, { status, cancelledOn: null, cancelledAnnualCents: null, cancelGraceDays: null, stillActiveAfter: null });
     else await ctx.insert(recurringSeries, { merchant, accountId, status });
     return { status };
   },
@@ -123,14 +144,37 @@ export const cancelRecurring = defineWrite({
     // The cost and grace window are what it was as of the cancel date, kept.
     const series = detectSeries(await loadCharges(ctx.db, cancelledOn), cancelledOn).find((s) => s.key === seriesKey(merchant, accountId));
     if (!series) throw new NotFoundError(`No recurring charge from ${merchant} in that account`);
-    const values = { status: "cancelled" as const, cancelledOn, cancelledAnnualCents: series.annualizedCents, cancelGraceDays: cancelGraceDays(series) };
+    const values = { status: "cancelled" as const, cancelledOn, cancelledAnnualCents: series.annualizedCents, cancelGraceDays: cancelGraceDays(series), stillActiveAfter: null };
     const [existing] = await ctx.db
       .select()
       .from(recurringSeries)
       .where(and(eq(recurringSeries.merchant, merchant), eq(recurringSeries.accountId, accountId)));
     if (existing) await ctx.update(recurringSeries, existing.id, values);
     else await ctx.insert(recurringSeries, { merchant, accountId, ...values });
+    // Cancelling answers a "stopped charging" alert.
+    await settleEndedAlerts(ctx, merchant, accountId);
     return { status: "cancelled", cancelledOn, annualizedCents: series.annualizedCents };
+  },
+});
+
+export const markStillActive = defineWrite({
+  name: "recurring.stillActive",
+  description:
+    "For a tracked bill that stopped charging: the owner says it's still active (a card problem, say), so keep " +
+    "tracking it and stop alerting about this quiet spell. A new charge later ends the acknowledgement.",
+  input: z.object({ merchant: z.string().min(1), accountId: z.uuid(), on: z.iso.date().optional() }),
+  apply: async (ctx, { merchant, accountId, on = today() }) => {
+    const series = detectSeries(await loadCharges(ctx.db, on), on).find((s) => s.key === seriesKey(merchant, accountId));
+    if (!series) throw new NotFoundError(`No recurring charge from ${merchant} in that account`);
+    const values = { status: "confirmed" as const, stillActiveAfter: series.lastOn, cancelledOn: null, cancelledAnnualCents: null, cancelGraceDays: null };
+    const [existing] = await ctx.db
+      .select()
+      .from(recurringSeries)
+      .where(and(eq(recurringSeries.merchant, merchant), eq(recurringSeries.accountId, accountId)));
+    if (existing) await ctx.update(recurringSeries, existing.id, values);
+    else await ctx.insert(recurringSeries, { merchant, accountId, ...values });
+    await settleEndedAlerts(ctx, merchant, accountId);
+    return { status: "confirmed", stillActiveAfter: series.lastOn };
   },
 });
 
@@ -175,8 +219,10 @@ function message(draft: AlertDraft, accountName: string): { title: string; detai
       };
     case "missing_charge":
       return {
-        title: `${m} didn't charge`,
-        detail: `Usually ${formatCents(draft.toCents!)} ${draft.cadence}; it was due around ${draft.occurredOn}${where}. Cancelled, or a card problem?`,
+        title: `${m} stopped charging`,
+        detail:
+          `Last charged ${formatCents(draft.fromCents!)} on ${draft.lastOn}${where}; the next was due around ${draft.occurredOn}. ` +
+          `Cancelled, or a card problem? Answer it under Ended on Subscriptions.`,
       };
     case "charged_after_cancel":
       return {
@@ -192,8 +238,14 @@ export const refreshAlerts = defineWrite({
   allowedActors: ["matcher", "user"],
   input: z.object({ on: z.iso.date().optional() }),
   apply: async (ctx, { on = today() }) => {
-    const [charges, status, cancelled, names] = await Promise.all([loadCharges(ctx.db, on), decisions(ctx.db), cancellations(ctx.db), accountNames(ctx.db)]);
-    const drafts = [...alertsFor(detectSeries(charges, on), status, on), ...chargesAfterCancel(charges, cancelled)];
+    const [charges, status, cancelled, acked, names] = await Promise.all([
+      loadCharges(ctx.db, on),
+      decisions(ctx.db),
+      cancellations(ctx.db),
+      stillActive(ctx.db),
+      accountNames(ctx.db),
+    ]);
+    const drafts = [...alertsFor(detectSeries(charges, on), status, on, acked), ...chargesAfterCancel(charges, cancelled)];
     if (drafts.length === 0) return { raised: 0 };
     const known = new Set(
       (await ctx.db.select({ key: alerts.dedupeKey }).from(alerts).where(inArray(alerts.dedupeKey, drafts.map((d) => d.dedupeKey)))).map((r) => r.key),

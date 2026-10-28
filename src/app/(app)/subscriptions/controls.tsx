@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { cancelSubscription, checkNow, dismissAlert, setStatus } from "./actions";
+import { cancelSubscription, checkNow, dismissAlert, setStatus, stillActive } from "./actions";
 
 function useAction() {
   const [pending, startTransition] = useTransition();
@@ -40,16 +40,30 @@ export function StatusButtons({
   );
 }
 
-// "Cancelled…" opens a date (today unless changed): the day the
-// subscription was cancelled, after which a charge raises an alert.
-export function CancelButton({ merchant, accountId, today }: { merchant: string; accountId: string; today: string }) {
+// "Cancelled…" opens a date (today unless changed, or the day given): the
+// day the subscription was cancelled, after which a charge raises an alert.
+export function CancelButton({
+  merchant,
+  accountId,
+  today,
+  defaultOn = today,
+  label = "Cancelled…",
+  primary,
+}: {
+  merchant: string;
+  accountId: string;
+  today: string;
+  defaultOn?: string;
+  label?: string;
+  primary?: boolean;
+}) {
   const { pending, error, act } = useAction();
   const [open, setOpen] = useState(false);
-  const [on, setOn] = useState(today);
+  const [on, setOn] = useState(defaultOn);
   if (!open) {
     return (
-      <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => setOpen(true)}>
-        Cancelled…
+      <Button size="xs" variant={primary ? "default" : "ghost"} className={primary ? "" : "text-muted-foreground"} onClick={() => setOpen(true)}>
+        {label}
       </Button>
     );
   }
@@ -73,6 +87,18 @@ export function CancelButton({ merchant, accountId, today }: { merchant: string;
       </Button>
       {error ? <span className="text-xs text-destructive">{error}</span> : null}
     </form>
+  );
+}
+
+export function StillActiveButton({ merchant, accountId }: { merchant: string; accountId: string }) {
+  const { pending, error, act } = useAction();
+  return (
+    <>
+      <Button size="xs" variant="outline" disabled={pending} onClick={() => act(() => stillActive(merchant, accountId))}>
+        Still active
+      </Button>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+    </>
   );
 }
 

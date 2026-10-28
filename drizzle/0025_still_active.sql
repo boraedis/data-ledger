@@ -1,0 +1,1 @@
+ALTER TABLE "recurring_series" ADD COLUMN "still_active_after" date;
