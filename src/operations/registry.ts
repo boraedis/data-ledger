@@ -7,7 +7,7 @@ import { createPayStub, deletePayStub, linkPayDeposit, listPayStubs, payDepositC
 import { categoryChoices } from "@/operations/choices";
 import { setTaxAssumptions, taxEstimate } from "@/operations/taxes";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
-import { dismissAlert, listAlerts, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
+import { cancelRecurring, dismissAlert, listAlerts, listCancelled, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
 import {
   createPerson,
   dismissPayment,
@@ -74,6 +74,8 @@ export const operations: Operation[] = [
   updateGoal,
   archiveGoal,
   listRecurring,
+  listCancelled,
+  cancelRecurring,
   setRecurringStatus,
   refreshAlerts,
   markAlertsNotified,

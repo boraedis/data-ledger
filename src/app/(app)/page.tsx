@@ -74,7 +74,7 @@ export default async function HomePage() {
 
   const horizon = isoDay(new Date(today.getTime() + UPCOMING_DAYS * DAY_MS));
   const upcoming = recurring
-    .filter((r) => r.active && r.status !== "dismissed" && r.nextExpectedOn >= on && r.nextExpectedOn <= horizon)
+    .filter((r) => r.active && (r.status === "confirmed" || r.status === "suggested") && r.nextExpectedOn >= on && r.nextExpectedOn <= horizon)
     .sort((a, b) => a.nextExpectedOn.localeCompare(b.nextExpectedOn));
 
   return (

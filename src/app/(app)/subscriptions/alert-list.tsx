@@ -9,6 +9,7 @@ const KIND_LABEL: Record<string, string> = {
   overlapping_subscriptions: "Paying twice",
   trial_converted: "Trial ended",
   missing_charge: "Missing charge",
+  charged_after_cancel: "Charged after cancel",
 };
 
 export type AlertRow = { id: string; kind: string; title: string; detail: string; transactionId: string | null; occurredOn: string };
