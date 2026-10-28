@@ -68,7 +68,7 @@ export default async function NetWorthPage() {
                     just a minus sign. */}
                 <span className="h-2.5 rounded-sm bg-muted" aria-hidden>
                   <span
-                    className={`block h-full rounded-sm ${isLiability(k.kind) ? "bg-red-600/70 dark:bg-red-400/70" : "bg-foreground/70"}`}
+                    className={`block h-full rounded-sm ${isLiability(k.kind) ? "bg-negative/70" : "bg-primary"}`}
                     style={{ width: `${(Math.abs(k.cents) / largest) * 100}%` }}
                   />
                 </span>

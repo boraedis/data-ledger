@@ -90,7 +90,7 @@ export default async function OwedPage() {
                   <tr key={p.personId}>
                     <td className="py-1.5">{p.personName}</td>
                     {p.buckets.map((cents, i) => (
-                      <td key={i} className={`py-1.5 text-right ${cents && i >= 2 ? "text-red-700 dark:text-red-400" : ""}`}>
+                      <td key={i} className={`py-1.5 text-right ${cents && i >= 2 ? "text-negative" : ""}`}>
                         {cents ? formatCents(cents) : "—"}
                       </td>
                     ))}

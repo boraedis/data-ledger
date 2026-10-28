@@ -129,7 +129,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                       // uncategorized trade isn't waiting on anything.
                       <span className="rounded bg-secondary px-1.5">{ACTIVITY_LABELS[t.investmentActivity]}</span>
                     ) : (
-                      <span className="rounded bg-amber-500/15 px-1.5 text-amber-800 dark:text-amber-200">Uncategorized</span>
+                      <span className="rounded bg-warning/15 px-1.5 text-warning">Uncategorized</span>
                     )}
                     {t.sharedOwedCents ? (
                       <span className="rounded border px-1.5 text-muted-foreground">
@@ -148,7 +148,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     ))}
                   </span>
                 </span>
-                <span className={`shrink-0 tabular-nums ${t.amountCents > 0 ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
+                <span className={`shrink-0 tabular-nums ${t.amountCents > 0 ? "text-positive" : ""}`}>
                   {formatCents(t.amountCents)}
                 </span>
               </Link>

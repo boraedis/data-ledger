@@ -94,7 +94,7 @@ export function ApplePay({ endpoint, tokens, accounts, unmapped }: { endpoint: s
         <h3 className="font-medium">Wallet cards</h3>
         <p className="text-xs text-muted-foreground">An Apple Pay alert only names the card, as it appears in Wallet. Tell it which account that is.</p>
         {unmapped.length ? (
-          <ul className="divide-y rounded-lg border border-amber-500/40 bg-amber-500/5">
+          <ul className="divide-y rounded-lg border border-warning/40 bg-warning/5">
             {unmapped.map((u) => (
               <li key={u.name} className="flex flex-wrap items-center gap-2 px-3 py-2">
                 <span className="min-w-0 flex-1">

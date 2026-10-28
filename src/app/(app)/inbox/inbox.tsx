@@ -287,7 +287,7 @@ export function Inbox({ rows: serverRows, options, modelConfigured }: { rows: In
                     </span>
                   ) : null}
                 </span>
-                <span className={`shrink-0 tabular-nums ${row.amountCents > 0 ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
+                <span className={`shrink-0 tabular-nums ${row.amountCents > 0 ? "text-positive" : ""}`}>
                   {formatCents(row.amountCents)}
                 </span>
               </button>

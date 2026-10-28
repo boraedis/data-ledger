@@ -36,7 +36,7 @@ function Row({ row }: { row: ProvisionalRow }) {
     });
 
   return (
-    <li className={`space-y-2 px-3 py-2 text-sm ${row.stale ? "bg-amber-500/10" : ""}`}>
+    <li className={`space-y-2 px-3 py-2 text-sm ${row.stale ? "bg-warning/10" : ""}`}>
       <div className="flex items-start justify-between gap-3">
         <Link href={`/transactions/${row.id}`} className="min-w-0 flex-1 hover:underline">
           <span className="block truncate font-medium">{row.merchant ?? row.description}</span>
