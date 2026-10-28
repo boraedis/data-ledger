@@ -110,7 +110,7 @@ export function unmappedNotification(card: string) {
   return {
     title: `New Wallet card: ${card}`,
     body: "Pick its account in Settings to get Apple Pay alerts for it.",
-    url: "/settings#apple-pay",
+    url: "/settings?tab=apple-pay",
     tag: `card-${card}`,
   };
 }
