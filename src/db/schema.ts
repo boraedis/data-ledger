@@ -513,8 +513,10 @@ export const goalAccounts = pgTable(
 // The owner's decisions about detected recurring charges. Detection itself
 // is computed when read (src/lib/recurring/detect.ts) from merchant, cadence
 // and amount, so improving it never needs a backfill; only what the owner
-// said is stored. A series is one merchant in one account.
-export const recurringStatus = pgEnum("recurring_status", ["confirmed", "dismissed"]);
+// said is stored. A series is one merchant in one account. Dismissed means
+// "not a subscription"; cancelled (#82) means it was one and the owner
+// ended it, so a later charge is worth an alert.
+export const recurringStatus = pgEnum("recurring_status", ["confirmed", "dismissed", "cancelled"]);
 
 export const recurringSeries = pgTable(
   "recurring_series",
@@ -525,6 +527,12 @@ export const recurringSeries = pgTable(
       .notNull()
       .references(() => accounts.id, { onDelete: "cascade" }),
     status: recurringStatus("status").notNull(),
+    // Set only while cancelled. The yearly cost and grace window are a
+    // snapshot from cancel time: detection forgets a series once its charges
+    // age out, and "saved per year" shouldn't shrink when that happens.
+    cancelledOn: date("cancelled_on"),
+    cancelledAnnualCents: integer("cancelled_annual_cents"),
+    cancelGraceDays: integer("cancel_grace_days"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("recurring_series_merchant_account_idx").on(t.merchant, t.accountId)],
@@ -536,6 +544,7 @@ export const alertKind = pgEnum("alert_kind", [
   "overlapping_subscriptions",
   "trial_converted",
   "missing_charge",
+  "charged_after_cancel",
 ]);
 
 // Things worth the owner's attention, written by the nightly pipeline

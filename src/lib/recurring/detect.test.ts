@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alertsFor, detectSeries, seriesKey, type Charge } from "@/lib/recurring/detect";
+import { alertsFor, cancelGraceDays, chargesAfterCancel, detectSeries, seriesKey, type Charge } from "@/lib/recurring/detect";
 
 // Invented merchants and amounts. amountCents > 0 = spent.
 
@@ -85,5 +85,40 @@ describe("alertsFor", () => {
   it("raises nothing for a dismissed series", () => {
     const dismissed = new Map([[seriesKey("Streamflix", "card"), "dismissed" as const]]);
     expect(kinds(monthly("Streamflix", MONTHS, [15.49, 15.49, 15.49, 15.49, 15.49, 17.99]), dismissed)).toEqual([]);
+  });
+});
+
+describe("cancelled subscriptions (#82)", () => {
+  const cancelled = { merchant: "Streamflix", accountId: "card", cancelledOn: "2026-06-10", graceDays: 7 };
+
+  it("alerts once per charge after the cancel date and grace window", () => {
+    const charges = [
+      c("Streamflix", "2026-06-02", 17.99), // before cancelling
+      c("Streamflix", "2026-06-14", 17.99), // inside the grace window: a charge that posted late
+      c("Streamflix", "2026-07-02", 17.99),
+      c("Streamflix", "2026-08-02", 17.99),
+      c("Streamflix", "2026-07-02", 17.99, "checking"), // another account: not this series
+      c("Tunebox", "2026-07-07", 10.99),
+    ];
+    const drafts = chargesAfterCancel(charges, [cancelled]);
+    expect(drafts.map((d) => [d.occurredOn, d.dedupeKey])).toEqual([
+      ["2026-07-02", `charged_after_cancel|${charges[2].id}`],
+      ["2026-08-02", `charged_after_cancel|${charges[3].id}`],
+    ]);
+    expect(drafts[0]).toMatchObject({ kind: "charged_after_cancel", merchant: "Streamflix", toCents: 1_799, cancelledOn: "2026-06-10", transactionId: charges[2].id });
+  });
+
+  it("gives a variable bill a longer window for its final bill", () => {
+    expect(cancelGraceDays({ variable: false })).toBe(7);
+    expect(cancelGraceDays({ variable: true })).toBe(35);
+    const power = { merchant: "City Power", accountId: "checking", cancelledOn: "2026-06-10", graceDays: 35 };
+    expect(chargesAfterCancel([c("City Power", "2026-07-12", 48.2, "checking")], [power])).toEqual([]);
+    expect(chargesAfterCancel([c("City Power", "2026-07-16", 48.2, "checking")], [power])).toHaveLength(1);
+  });
+
+  it("raises no other alerts for a cancelled series", () => {
+    const status = new Map([[seriesKey("Streamflix", "card"), "cancelled" as const]]);
+    const series = detectSeries(monthly("Streamflix", MONTHS, [15.49, 15.49, 15.49, 15.49, 15.49, 17.99]), TODAY);
+    expect(alertsFor(series, status, TODAY)).toEqual([]);
   });
 });

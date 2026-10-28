@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { checkNow, dismissAlert, setStatus } from "./actions";
+import { cancelSubscription, checkNow, dismissAlert, setStatus } from "./actions";
 
 function useAction() {
   const [pending, startTransition] = useTransition();
@@ -37,6 +37,42 @@ export function StatusButtons({
       ))}
       {error ? <span className="text-xs text-destructive">{error}</span> : null}
     </span>
+  );
+}
+
+// "Cancelled…" opens a date (today unless changed): the day the
+// subscription was cancelled, after which a charge raises an alert.
+export function CancelButton({ merchant, accountId, today }: { merchant: string; accountId: string; today: string }) {
+  const { pending, error, act } = useAction();
+  const [open, setOpen] = useState(false);
+  const [on, setOn] = useState(today);
+  if (!open) {
+    return (
+      <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => setOpen(true)}>
+        Cancelled…
+      </Button>
+    );
+  }
+  return (
+    <form
+      className="flex flex-wrap items-center gap-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        act(() => cancelSubscription(merchant, accountId, on));
+      }}
+    >
+      <label className="flex items-center gap-1 text-xs whitespace-nowrap text-muted-foreground">
+        Cancelled on
+        <input type="date" required max={today} value={on} onChange={(e) => setOn(e.target.value)} className="rounded border bg-background px-1 py-0.5 text-xs" />
+      </label>
+      <Button type="submit" size="xs" disabled={pending}>
+        Mark cancelled
+      </Button>
+      <Button type="button" size="xs" variant="ghost" className="text-muted-foreground" disabled={pending} onClick={() => setOpen(false)}>
+        Back
+      </Button>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+    </form>
   );
 }
 

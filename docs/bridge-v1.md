@@ -108,7 +108,7 @@ Recurring charges as of today, taking no parameters.
 
 - **`status`:** `confirmed` means the owner marked it as a subscription
   or bill. `suggested` means the ledger detected it and the owner hasn't
-  decided. Charges the owner dismissed are left out.
+  decided. Charges the owner dismissed or cancelled are left out.
 - **`cadence`:** one of `weekly`, `biweekly`, `monthly`, `quarterly`,
   `semiannual` or `annual`.
 - **`active`:** `false` once charges have stopped.

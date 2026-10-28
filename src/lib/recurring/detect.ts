@@ -150,7 +150,7 @@ export function detectSeries(charges: Charge[], today: string): Series[] {
 // --- Alerts ---------------------------------------------------------------------
 
 export type AlertDraft = {
-  kind: "price_increase" | "duplicate_charge" | "overlapping_subscriptions" | "trial_converted" | "missing_charge";
+  kind: "price_increase" | "duplicate_charge" | "overlapping_subscriptions" | "trial_converted" | "missing_charge" | "charged_after_cancel";
   dedupeKey: string;
   merchant: string;
   accountId: string | null;
@@ -160,18 +160,22 @@ export type AlertDraft = {
   fromCents?: number;
   toCents?: number;
   cadence?: string;
+  cancelledOn?: string;
 };
 
+export type SeriesStatus = "confirmed" | "dismissed" | "cancelled";
+
 /**
- * Alerts for detected series, given the owner's decisions. Dismissed
- * series raise nothing. Missing-charge alerts need a confirmed series — a
+ * Alerts for detected series, given the owner's decisions. Dismissed and
+ * cancelled series raise nothing here (a cancelled one has its own check,
+ * chargesAfterCancel). Missing-charge alerts need a confirmed series — a
  * merely detected one may simply have ended. Each alert carries a
  * dedupeKey naming the event, so it's raised once.
  */
-export function alertsFor(series: Series[], status: Map<string, "confirmed" | "dismissed">, today: string): AlertDraft[] {
+export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, today: string): AlertDraft[] {
   const drafts: AlertDraft[] = [];
   const recent = (date: string) => daysBetween(date, today) <= RECENT_DAYS;
-  const live = series.filter((s) => status.get(s.key) !== "dismissed");
+  const live = series.filter((s) => status.get(s.key) !== "dismissed" && status.get(s.key) !== "cancelled");
 
   for (const s of live) {
     const occ = s.occurrences;
@@ -271,4 +275,42 @@ export function alertsFor(series: Series[], status: Map<string, "confirmed" | "d
     });
   }
   return drafts;
+}
+
+// --- Cancelled (#82) ------------------------------------------------------------
+
+export type Cancellation = { merchant: string; accountId: string; cancelledOn: string; graceDays: number };
+
+/**
+ * Days after cancelling during which a charge is still expected, not an
+ * alert. A fixed-price subscription doesn't prorate, so this only covers a
+ * charge made just before cancelling that posts a few days later; a
+ * variable bill (power, phone) sends a final bill for the last partial
+ * period, which arrives with the next statement.
+ */
+export const cancelGraceDays = (series: Pick<Series, "variable">) => (series.variable ? 35 : 7);
+
+/**
+ * One alert per charge from a cancelled series that posts after the cancel
+ * date plus its grace window. Read from the raw charges, not detection: a
+ * single stray charge after months of quiet no longer looks like a series.
+ */
+export function chargesAfterCancel(charges: Charge[], cancelled: Cancellation[]): AlertDraft[] {
+  const byKey = new Map(cancelled.map((c) => [seriesKey(c.merchant, c.accountId), c]));
+  return charges.flatMap((charge): AlertDraft[] => {
+    const c = byKey.get(seriesKey(charge.merchant, charge.accountId));
+    if (!c || charge.amountCents <= 0 || charge.date <= addDays(c.cancelledOn, c.graceDays)) return [];
+    return [
+      {
+        kind: "charged_after_cancel",
+        dedupeKey: `charged_after_cancel|${charge.id}`,
+        merchant: charge.merchant,
+        accountId: charge.accountId,
+        transactionId: charge.id,
+        occurredOn: charge.date,
+        toCents: charge.amountCents,
+        cancelledOn: c.cancelledOn,
+      },
+    ];
+  });
 }
