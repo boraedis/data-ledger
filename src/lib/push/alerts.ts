@@ -2,6 +2,7 @@ import { and, gte, isNull } from "drizzle-orm";
 import { alerts, pushSubscriptions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { pushIsConfigured, sendPush, type SendDeps } from "@/lib/push/send";
+import { billHref } from "@/lib/recurring/links";
 import { execute } from "@/operations/runtime";
 
 // Nightly alerts (#9) as push notifications (#29): after the sync raises
@@ -23,7 +24,7 @@ export async function notifyNewAlerts(db: Db, deps: SendDeps = {}, now = new Dat
   if (!device) return { notified: 0 };
 
   const fresh = await db
-    .select({ id: alerts.id, title: alerts.title, detail: alerts.detail })
+    .select({ id: alerts.id, kind: alerts.kind, merchant: alerts.merchant, accountId: alerts.accountId, title: alerts.title, detail: alerts.detail })
     .from(alerts)
     .where(and(isNull(alerts.notifiedAt), isNull(alerts.dismissedAt), gte(alerts.createdAt, new Date(now.getTime() - RECENT_MS))))
     .orderBy(alerts.createdAt);
@@ -32,7 +33,9 @@ export async function notifyNewAlerts(db: Db, deps: SendDeps = {}, now = new Dat
   let delivered = false;
   if (fresh.length <= MAX_SEPARATE) {
     for (const alert of fresh) {
-      const result = await sendPush(db, { title: alert.title, body: alert.detail, url: "/", tag: `alert-${alert.id}` }, deps);
+      // A renewal heads-up (#84) opens the bill, where it can be cancelled.
+      const url = alert.kind === "upcoming_renewal" && alert.accountId ? billHref(alert.merchant, alert.accountId) : "/";
+      const result = await sendPush(db, { title: alert.title, body: alert.detail, url, tag: `alert-${alert.id}` }, deps);
       delivered ||= result.sent > 0;
     }
   } else {

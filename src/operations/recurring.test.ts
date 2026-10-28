@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { accounts, alerts } from "@/db/schema";
+import { accounts, alerts, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
@@ -129,6 +129,27 @@ describe("recurring charges", () => {
     await out("alerts.refresh", { on: later }, "matcher");
     await run("recurring.cancel", { merchant: "Tunebox Music Subscr", accountId: cardId, cancelledOn: "2026-06-07" });
     expect((await out<Alert[]>("alerts.list")).some((a) => a.kind === "missing_charge")).toBe(false);
+  });
+
+  it("keeps an annual bill tracked through the year and flags its renewal once (#84)", async () => {
+    // A yearly plan, charged in July two years running; next expected 2027-07-13.
+    for (const [postedOn, externalId] of [["2025-07-14", "cloud-1"], ["2026-07-13", "cloud-2"]]) {
+      await db.insert(transactions).values({ accountId: cardId, postedOn, amountCents: -11_900, description: "CLOUDBOX STORAGE ANNUAL", merchant: "Cloudbox Storage", externalId });
+    }
+    await run("recurring.setStatus", { merchant: "Cloudbox Storage", accountId: cardId, status: "confirmed" });
+    const cloudbox = async (on: string) => (await out<Recurring[]>("recurring.list", { on })).find((r) => r.merchant === "Cloudbox Storage");
+    // Eleven months on, still detected (with one year of history it wasn't).
+    expect(await cloudbox("2027-06-13")).toMatchObject({ status: "confirmed", cadence: "annual", nextExpectedOn: "2027-07-13" });
+
+    const renewals = async () => (await out<Alert[]>("alerts.list")).filter((a) => a.kind === "upcoming_renewal");
+    await out("alerts.refresh", { on: "2027-06-13" }, "matcher"); // 30 days out
+    expect(await renewals()).toEqual([]);
+    await out("alerts.refresh", { on: "2027-06-29" }, "matcher"); // 14 days out
+    await out("alerts.refresh", { on: "2027-07-05" }, "matcher");
+    const [alert] = await renewals();
+    expect((await renewals()).length).toBe(1);
+    expect(alert.title).toBe("Cloudbox Storage renews around 2027-07-13");
+    expect((alert as Alert & { detail: string }).detail).toMatch(/^\$119\.00 \(annual\) on .+\. Cancel before then if you don't want it\.$/);
   });
 
   it("won't cancel something that isn't recurring, and Tally's cancel is a proposal", async () => {

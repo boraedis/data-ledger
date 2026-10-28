@@ -28,6 +28,13 @@ const addDays = (date: string, days: number) => new Date(Date.parse(date) + Math
 // Charges this close are the same occurrence (or a duplicate of it).
 const SAME_OCCURRENCE_DAYS = 3;
 const VARIABLE_SPREAD = 0.25;
+// A heads-up this many days before a tracked bill renews (#84), for bills
+// that renew quarterly or less often: a large charge it's worth deciding
+// on. A monthly bill would raise twelve a year per subscription, and a
+// weekly one is never more than seven days out.
+export const RENEWAL_NOTICE_DAYS = 14;
+const RENEWAL_MIN_CADENCE_DAYS = 90;
+
 // Alerts are about now: a price rise from last year isn't news. Matches the
 // first sync's 90-day backfill, so a new connection's recent events count.
 const RECENT_DAYS = 90;
@@ -155,7 +162,7 @@ export function detectSeries(charges: Charge[], today: string): Series[] {
 // --- Alerts ---------------------------------------------------------------------
 
 export type AlertDraft = {
-  kind: "price_increase" | "duplicate_charge" | "overlapping_subscriptions" | "trial_converted" | "missing_charge" | "charged_after_cancel";
+  kind: "price_increase" | "duplicate_charge" | "overlapping_subscriptions" | "trial_converted" | "missing_charge" | "charged_after_cancel" | "upcoming_renewal";
   dedupeKey: string;
   merchant: string;
   accountId: string | null;
@@ -167,6 +174,7 @@ export type AlertDraft = {
   cadence?: string;
   cancelledOn?: string;
   lastOn?: string;
+  variable?: boolean;
 };
 
 export type SeriesStatus = "confirmed" | "dismissed" | "cancelled";
@@ -268,6 +276,25 @@ export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, t
         cadence: s.cadence.name,
       });
     }
+  }
+
+  // Renewal coming up: a tracked bill that renews quarterly or less often,
+  // within the notice window of its next charge. Named by that date, so
+  // it's raised once per renewal however many nights it's checked.
+  for (const s of live) {
+    const until = daysBetween(today, s.nextExpectedOn);
+    if (status.get(s.key) !== "confirmed" || s.cadence.days < RENEWAL_MIN_CADENCE_DAYS || !s.active || until < 0 || until > RENEWAL_NOTICE_DAYS) continue;
+    drafts.push({
+      kind: "upcoming_renewal",
+      dedupeKey: `upcoming_renewal|${s.key}|${s.nextExpectedOn}`,
+      merchant: s.merchant,
+      accountId: s.accountId,
+      transactionId: null,
+      occurredOn: s.nextExpectedOn,
+      toCents: s.typicalCents,
+      cadence: s.cadence.name,
+      variable: s.variable,
+    });
   }
 
   // Overlapping: the same merchant billing in two accounts at once.

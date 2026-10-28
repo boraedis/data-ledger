@@ -183,6 +183,13 @@
       "when": 1793202790559,
       "tag": "0025_still_active",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793203439780,
+      "tag": "0026_upcoming_renewal",
+      "breakpoints": true
     }
   ]
 }

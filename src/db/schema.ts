@@ -549,6 +549,7 @@ export const alertKind = pgEnum("alert_kind", [
   "trial_converted",
   "missing_charge",
   "charged_after_cancel",
+  "upcoming_renewal",
 ]);
 
 // Things worth the owner's attention, written by the nightly pipeline
