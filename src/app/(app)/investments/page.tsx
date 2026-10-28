@@ -20,7 +20,7 @@ function signedCents(cents: number) {
 function Gain({ gainCents, basisCents }: { gainCents: number; basisCents: number }) {
   // Color carries direction, and the sign repeats it for anyone who can't
   // tell the two hues apart.
-  const tone = gainCents > 0 ? "text-emerald-700 dark:text-emerald-400" : gainCents < 0 ? "text-red-700 dark:text-red-400" : "";
+  const tone = gainCents > 0 ? "text-positive" : gainCents < 0 ? "text-negative" : "";
   return (
     <span className={`tabular-nums ${tone}`}>
       {signedCents(gainCents)}
@@ -42,7 +42,7 @@ function Allocation({ slices }: { slices: AllocationSlice[] }) {
             {s.label}
           </span>
           <span className="h-2.5 rounded-sm bg-muted" aria-hidden>
-            <span className="block h-full rounded-sm bg-foreground/70" style={{ width: `${(Math.max(0, s.cents) / largest) * 100}%` }} />
+            <span className="block h-full rounded-sm bg-primary" style={{ width: `${(Math.max(0, s.cents) / largest) * 100}%` }} />
           </span>
           <span className="text-right tabular-nums">
             {percent(s.share)} <span className="text-muted-foreground">· {formatCents(s.cents)}</span>

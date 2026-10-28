@@ -341,6 +341,16 @@ public there. The contract for the Diary side is
   field is chosen by name in `src/lib/bridge/v1.ts`. No ids beyond
   categories, and no descriptions, accounts or balances.
 
+## Design
+
+The visual identity is **"Ledger"** (#70): warm paper and ink, hairline rules (a double rule under the top bar), tabular figures everywhere, and one accent, ledger green, for actions, meters and the main chart line.
+- **Tokens:** every colour is a token in `src/app/globals.css`, with shadcn/ui's tokens restyled rather than its components replaced.
+- **Status colours:** `positive` (money in, on track), `warning` (needs a look) and `negative` (over, behind, a liability). Pages use only these and the base tokens, never a raw Tailwind palette colour.
+- **Charts:** follow `--chart-1…5`, starting from the accent.
+- **Type:** headings in Source Serif 4, everything else in Geist.
+- **Dark theme:** "ink paper", the same ledger at night. It follows the system setting (`prefers-color-scheme`), and so do the browser theme colours.
+- **Contrast:** body, muted and status text are all at least 4.5:1 against their background in both themes.
+
 ## Stack
 
 Same as Data Diary, so the new learning is finance and agents rather than

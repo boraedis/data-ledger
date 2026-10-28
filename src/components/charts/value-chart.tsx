@@ -130,7 +130,7 @@ export function ValueChart({ series, label, height = 220 }: { series: ValuePoint
               <div className="flex flex-wrap items-baseline gap-x-3 text-sm">
                 <span className="text-lg font-semibold tabular-nums">{formatCents(shown.cents)}</span>
                 {visible.length > 1 ? (
-                  <span className={`tabular-nums ${change < 0 ? "text-red-700 dark:text-red-400" : "text-muted-foreground"}`}>
+                  <span className={`tabular-nums ${change < 0 ? "text-negative" : "text-muted-foreground"}`}>
                     {change >= 0 ? "+" : "−"}
                     {formatCents(Math.abs(change))} since {formatDay(first.on, false)}
                   </span>
@@ -155,7 +155,7 @@ export function ValueChart({ series, label, height = 220 }: { series: ValuePoint
                   setHover(null);
                 }}
                 className={`px-2.5 py-1 first:rounded-l-md last:rounded-r-md ${
-                  range === r.key ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground"
+                  range === r.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
                 }`}
               >
                 {r.label}
@@ -186,7 +186,7 @@ export function ValueChart({ series, label, height = 220 }: { series: ValuePoint
                 strokeDasharray={t === 0 ? undefined : "2 3"}
               />
             ))}
-            <path d={geometry.path} fill="none" className="stroke-foreground" strokeWidth={1.75} strokeLinejoin="round" />
+            <path d={geometry.path} fill="none" className="stroke-primary" strokeWidth={1.75} strokeLinejoin="round" />
             {/* Labels after the line, with a background-colored halo, so a
                 label stays legible where the line runs through it. */}
             {geometry.ticks.map((t) => (
@@ -202,7 +202,7 @@ export function ValueChart({ series, label, height = 220 }: { series: ValuePoint
               </text>
             ))}
             {visible.length === 1 ? (
-              <circle cx={geometry.x(0)} cy={geometry.y(visible[0].cents)} r={3.5} className="fill-foreground" />
+              <circle cx={geometry.x(0)} cy={geometry.y(visible[0].cents)} r={3.5} className="fill-primary" />
             ) : null}
             {hover !== null ? (
               <g>
@@ -213,7 +213,7 @@ export function ValueChart({ series, label, height = 220 }: { series: ValuePoint
                   y2={HEIGHT - PAD.bottom}
                   className="stroke-foreground/40"
                 />
-                <circle cx={geometry.x(hover)} cy={geometry.y(visible[hover].cents)} r={3.5} className="fill-foreground" />
+                <circle cx={geometry.x(hover)} cy={geometry.y(visible[hover].cents)} r={3.5} className="fill-primary" />
               </g>
             ) : null}
             <text x={PAD.left} y={HEIGHT - 6} className="fill-muted-foreground text-[10px]">

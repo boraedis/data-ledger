@@ -17,9 +17,9 @@ export function AlertList({ alerts }: { alerts: AlertRow[] }) {
   return (
     <ul className="space-y-2">
       {alerts.map((a) => (
-        <li key={a.id} className="flex items-start justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm">
+        <li key={a.id} className="flex items-start justify-between gap-3 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm">
           <span className="min-w-0">
-            <span className="mr-2 rounded bg-amber-500/15 px-1.5 text-xs text-amber-800 dark:text-amber-200">{KIND_LABEL[a.kind] ?? a.kind}</span>
+            <span className="mr-2 rounded bg-warning/15 px-1.5 text-xs text-warning">{KIND_LABEL[a.kind] ?? a.kind}</span>
             {a.transactionId ? (
               <Link href={`/transactions/${a.transactionId}`} className="font-medium underline-offset-2 hover:underline">
                 {a.title}

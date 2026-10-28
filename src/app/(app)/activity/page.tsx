@@ -5,8 +5,8 @@ import { CommandActions } from "./command-actions";
 const when = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
 const statusStyle: Record<string, string> = {
-  proposed: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  applied: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+  proposed: "bg-warning/15 text-warning",
+  applied: "bg-positive/15 text-positive",
   rejected: "bg-muted text-muted-foreground",
   undone: "bg-muted text-muted-foreground line-through",
 };

@@ -50,7 +50,7 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
             {txn.investmentActivity ? ` · ${ACTIVITY_LABELS[txn.investmentActivity]}` : ""}
           </p>
         </div>
-        <p className={`shrink-0 text-xl tabular-nums ${txn.amountCents > 0 ? "text-emerald-700 dark:text-emerald-400" : ""}`}>
+        <p className={`shrink-0 text-xl tabular-nums ${txn.amountCents > 0 ? "text-positive" : ""}`}>
           {formatCents(txn.amountCents)}
         </p>
       </div>

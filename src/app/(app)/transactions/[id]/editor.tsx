@@ -122,7 +122,7 @@ function SplitEditor({ txn, options }: { txn: Txn; options: CategoryOption[] }) 
         >
           Add part
         </Button>
-        <span className={remaining === 0 ? "text-muted-foreground" : "text-amber-700 dark:text-amber-300"}>
+        <span className={remaining === 0 ? "text-muted-foreground" : "text-warning"}>
           {remaining === 0
             ? `All ${formatCents(total)} assigned`
             : remaining > 0

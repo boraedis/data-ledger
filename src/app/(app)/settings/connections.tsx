@@ -46,7 +46,7 @@ function ConnectionCard({ connection }: { connection: ConnectionHealth }) {
       </div>
       <Feedback result={result} />
       {connection.messages.map((m, i) => (
-        <p key={i} className="text-xs text-amber-700 dark:text-amber-300">
+        <p key={i} className="text-xs text-warning">
           {m.message}
         </p>
       ))}
@@ -55,13 +55,13 @@ function ConnectionCard({ connection }: { connection: ConnectionHealth }) {
           <p className="flex items-center gap-2 font-medium">
             {inst.institution}
             {inst.messages.length || inst.stale ? (
-              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs text-amber-700 dark:text-amber-300">
+              <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs text-warning">
                 needs attention
               </span>
             ) : null}
           </p>
           {inst.messages.map((m, i) => (
-            <p key={i} className="text-xs text-amber-700 dark:text-amber-300">
+            <p key={i} className="text-xs text-warning">
               {m.message}
             </p>
           ))}

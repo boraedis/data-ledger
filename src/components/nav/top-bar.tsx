@@ -28,7 +28,7 @@ export function TopBar({ inbox }: { inbox: number }) {
   const isCurrent = (s: NavSection) => s.id === section?.id;
 
   return (
-    <header className="border-b" onKeyDown={(e) => e.key === "Escape" && close()}>
+    <header className="rule-double" onKeyDown={(e) => e.key === "Escape" && close()}>
       <div className="flex h-12 items-center gap-3 px-4">
         <Link href="/" className="shrink-0 font-semibold" onClick={close}>
           Data Ledger
@@ -113,7 +113,7 @@ export function TopBar({ inbox }: { inbox: number }) {
               key={p.href}
               href={p.href}
               aria-current={page?.href === p.href ? "page" : undefined}
-              className={`-mb-px border-b-2 py-1.5 ${page?.href === p.href ? "border-foreground font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+              className={`-mb-px border-b-2 py-1.5 ${page?.href === p.href ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
             >
               {p.label}
             </Link>

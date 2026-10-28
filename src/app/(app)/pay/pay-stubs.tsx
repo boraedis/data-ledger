@@ -50,7 +50,7 @@ function StubCard({ stub, options }: { stub: Stub; options: CategoryOption[] }) 
             Linked to its deposit ✓
           </Link>
         ) : (
-          <span className="text-amber-700 dark:text-amber-300">Not linked to a deposit yet: budgets count only the deposit until it is.</span>
+          <span className="text-warning">Not linked to a deposit yet: budgets count only the deposit until it is.</span>
         )}
       </p>
       {open ? (

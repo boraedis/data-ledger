@@ -68,7 +68,7 @@ export default async function TaxesPage(props: PageProps<"/pay/taxes">) {
       ) : (
         <>
           {estimate.missingEarlierPay ? (
-            <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-800 dark:text-amber-200">
+            <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
               Your first {year} pay stub starts {estimate.firstPeriodStart}, so pay before then isn&apos;t counted and this year&apos;s figures are too
               low. Add the earlier stubs on <Link className="underline" href="/pay">Pay</Link> (or that pay&apos;s gross as other income below) for a
               real estimate.
@@ -146,7 +146,7 @@ export default async function TaxesPage(props: PageProps<"/pay/taxes">) {
                 <Line label="Medicare, withheld at this pace" cents={estimate.fica.medicare.projectedCents} />
               </dl>
               {estimate.fica.socialSecurity.projectedCents > estimate.fica.socialSecurity.expectedCents + 100 ? (
-                <p className="text-amber-700 dark:text-amber-300">
+                <p className="text-warning">
                   More Social Security is being withheld than the wage base allows. With two jobs, the excess comes back when you file.
                 </p>
               ) : null}

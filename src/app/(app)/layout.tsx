@@ -26,7 +26,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       {problems.length ? (
         <Link
           href="/settings"
-          className="block border-b border-amber-500/40 bg-amber-500/10 px-4 py-2 text-sm text-amber-800 dark:text-amber-200"
+          className="block border-b border-warning/40 bg-warning/10 px-4 py-2 text-sm text-warning"
         >
           {problems.length === 1 ? problems[0] : `${problems[0]} (and ${problems.length - 1} more)`} — see Settings
         </Link>

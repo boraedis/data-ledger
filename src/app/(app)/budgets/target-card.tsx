@@ -61,7 +61,7 @@ export function TargetCard({ target: t, editable }: { target: CardTarget; editab
 
       <div className="relative h-2.5 rounded-sm bg-muted" aria-hidden>
         <div
-          className={`h-full rounded-sm ${over ? "bg-red-600/80 dark:bg-red-400/80" : "bg-foreground/70"}`}
+          className={`h-full rounded-sm ${over ? "bg-negative/80" : "bg-primary"}`}
           style={{ width: `${spentWidth}%` }}
         />
         {over && t.availableCents > 0 ? (
@@ -71,19 +71,19 @@ export function TargetCard({ target: t, editable }: { target: CardTarget; editab
         ) : null}
         {paceAt !== null ? (
           // Where spending would be today at an even pace through the period.
-          <div className="absolute -top-1 h-4.5 w-0.5 bg-amber-600" style={{ left: `calc(${Math.min(paceAt, 100)}% - 1px)` }} />
+          <div className="absolute -top-1 h-4.5 w-0.5 bg-warning" style={{ left: `calc(${Math.min(paceAt, 100)}% - 1px)` }} />
         ) : null}
       </div>
 
       <div className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground tabular-nums">
         <span>{parts.join(" ")}</span>
-        <span className={over ? "font-medium text-red-700 dark:text-red-400" : ""}>
+        <span className={over ? "font-medium text-negative" : ""}>
           {over ? `${formatCents(-t.remainingCents)} over` : `${formatCents(t.remainingCents)} left`}
         </span>
       </div>
       {t.paceCents !== null ? (
         <p className="text-xs text-muted-foreground tabular-nums">
-          <span className="mr-1 inline-block h-2 w-0.5 bg-amber-600 align-middle" aria-hidden />
+          <span className="mr-1 inline-block h-2 w-0.5 bg-warning align-middle" aria-hidden />
           Even pace to date: {formatCents(t.paceCents)} ({t.spentCents <= t.paceCents ? "under" : "ahead of"} pace)
           {t.setAsideMonthlyCents !== null
             ? ` · Set aside ${formatCents(t.setAsideMonthlyCents)}/month; ${formatCents(t.setAsideByNowCents ?? 0)} by now`

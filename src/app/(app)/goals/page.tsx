@@ -21,13 +21,13 @@ function statusLine(g: GoalProgress): { text: string; tone: string } {
   const s = g.status;
   switch (s.kind) {
     case "reached":
-      return { text: "Reached", tone: "text-emerald-700 dark:text-emerald-400" };
+      return { text: "Reached", tone: "text-positive" };
     case "on_track":
-      return { text: `On track (pace: ${formatCents(s.expectedCents)} by today)`, tone: "text-emerald-700 dark:text-emerald-400" };
+      return { text: `On track (pace: ${formatCents(s.expectedCents)} by today)`, tone: "text-positive" };
     case "behind":
-      return { text: `Behind by ${formatCents(s.shortCents)} (pace: ${formatCents(s.expectedCents)} by today)`, tone: "text-red-700 dark:text-red-400" };
+      return { text: `Behind by ${formatCents(s.shortCents)} (pace: ${formatCents(s.expectedCents)} by today)`, tone: "text-negative" };
     case "overdue":
-      return { text: `Past its date, ${formatCents(g.targetCents - g.currentCents)} short`, tone: "text-red-700 dark:text-red-400" };
+      return { text: `Past its date, ${formatCents(g.targetCents - g.currentCents)} short`, tone: "text-negative" };
     case "no_date":
       return {
         text: s.projectedOn ? `At the last 90 days' pace, reached around ${s.projectedOn}` : "Not growing over the last 90 days",
@@ -75,7 +75,7 @@ export default async function GoalsPage() {
               </p>
             </div>
             <div className="h-2.5 rounded-sm bg-muted" aria-hidden>
-              <div className="h-full rounded-sm bg-foreground/70" style={{ width: `${pct * 100}%` }} />
+              <div className="h-full rounded-sm bg-primary" style={{ width: `${pct * 100}%` }} />
             </div>
             <div className="flex flex-wrap justify-between gap-x-3 text-xs">
               <span className={status.tone}>{status.text}</span>
