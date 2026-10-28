@@ -8,7 +8,7 @@ const KIND_LABEL: Record<string, string> = {
   duplicate_charge: "Duplicate charge",
   overlapping_subscriptions: "Paying twice",
   trial_converted: "Trial ended",
-  missing_charge: "Missing charge",
+  missing_charge: "Stopped charging",
   charged_after_cancel: "Charged after cancel",
 };
 

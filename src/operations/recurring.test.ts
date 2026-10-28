@@ -61,7 +61,7 @@ describe("recurring charges", () => {
     await run("recurring.setStatus", { merchant: "Tunebox Music Subscr", accountId: cardId, status: "confirmed" });
     expect(await out<{ raised: number }>("alerts.refresh", { on: later }, "matcher")).toMatchObject({ raised: 1 });
     const missing = (await out<Alert[]>("alerts.list")).find((a) => a.kind === "missing_charge")!;
-    expect(missing.title).toBe("Tunebox Music Subscr didn't charge");
+    expect(missing.title).toBe("Tunebox Music Subscr stopped charging");
     const list = await out<Recurring[]>("recurring.list", { on: later });
     expect(list.find((r) => r.merchant === "Tunebox Music Subscr" && r.accountId === cardId)!.status).toBe("confirmed");
   });
@@ -103,6 +103,32 @@ describe("recurring charges", () => {
     // Tracking it again drops the cancellation.
     await run("recurring.setStatus", { merchant: "Streamflix", accountId: cardId, status: "confirmed" });
     expect(await out("recurring.cancelled")).toEqual([]);
+  });
+
+  it("shows a quiet tracked bill as ended until the owner answers it (#83)", async () => {
+    const later = "2026-07-25"; // Tunebox on the card was due around Jul 7
+    const tunebox = async () => (await out<(Recurring & { ended: boolean })[]>("recurring.list", { on: later })).find((r) => r.merchant === "Tunebox Music Subscr" && r.accountId === cardId)!;
+    await run("recurring.setStatus", { merchant: "Tunebox Music Subscr", accountId: cardId, status: "confirmed" });
+    expect((await tunebox()).ended).toBe(true);
+    await out("alerts.refresh", { on: later }, "matcher");
+    expect((await out<Alert[]>("alerts.list")).filter((a) => a.kind === "missing_charge")).toHaveLength(1);
+
+    // Still active: back in Tracked, its alert settled, and no new one for this gap.
+    expect(await out("recurring.stillActive", { merchant: "Tunebox Music Subscr", accountId: cardId, on: later })).toEqual({
+      status: "confirmed",
+      stillActiveAfter: "2026-06-07",
+    });
+    expect(await tunebox()).toMatchObject({ status: "confirmed", ended: false, overdue: true });
+    expect((await out<Alert[]>("alerts.list")).some((a) => a.kind === "missing_charge")).toBe(false);
+    expect(await out<{ raised: number }>("alerts.refresh", { on: "2026-08-25" }, "matcher")).toEqual({ raised: 0 });
+  });
+
+  it("settles the ended alert when the bill is marked cancelled", async () => {
+    const later = "2026-07-25";
+    await run("recurring.setStatus", { merchant: "Tunebox Music Subscr", accountId: cardId, status: "confirmed" });
+    await out("alerts.refresh", { on: later }, "matcher");
+    await run("recurring.cancel", { merchant: "Tunebox Music Subscr", accountId: cardId, cancelledOn: "2026-06-07" });
+    expect((await out<Alert[]>("alerts.list")).some((a) => a.kind === "missing_charge")).toBe(false);
   });
 
   it("won't cancel something that isn't recurring, and Tally's cancel is a proposal", async () => {

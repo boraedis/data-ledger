@@ -56,6 +56,10 @@ export type Series = {
   annualizedCents: number;
   // Charged within its cadence (plus tolerance) of today.
   active: boolean;
+  // Past its next expected charge by more than the tolerance: for a tracked
+  // bill, it has gone quiet (#83). Sooner than !active, which allows twice
+  // the tolerance before a series stops counting as current.
+  overdue: boolean;
 };
 
 export const seriesKey = (merchant: string, accountId: string) => `${merchant}|${accountId}`;
@@ -142,6 +146,7 @@ export function detectSeries(charges: Charge[], today: string): Series[] {
       nextExpectedOn: nextAfter(last.date, cadence),
       annualizedCents: typicalCents * cadence.perYear,
       active: daysBetween(last.date, today) <= cadence.days + cadence.tolerance * 2,
+      overdue: daysBetween(nextAfter(last.date, cadence), today) > cadence.tolerance,
     });
   }
   return series.sort((a, b) => b.annualizedCents - a.annualizedCents);
@@ -161,6 +166,7 @@ export type AlertDraft = {
   toCents?: number;
   cadence?: string;
   cancelledOn?: string;
+  lastOn?: string;
 };
 
 export type SeriesStatus = "confirmed" | "dismissed" | "cancelled";
@@ -168,11 +174,13 @@ export type SeriesStatus = "confirmed" | "dismissed" | "cancelled";
 /**
  * Alerts for detected series, given the owner's decisions. Dismissed and
  * cancelled series raise nothing here (a cancelled one has its own check,
- * chargesAfterCancel). Missing-charge alerts need a confirmed series — a
+ * chargesAfterCancel). `stillActive` holds, per series, the last charge as
+ * of the owner saying an ended bill is still active: that quiet spell
+ * raises nothing more. Missing-charge alerts need a confirmed series — a
  * merely detected one may simply have ended. Each alert carries a
  * dedupeKey naming the event, so it's raised once.
  */
-export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, today: string): AlertDraft[] {
+export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, today: string, stillActive = new Map<string, string>()): AlertDraft[] {
   const drafts: AlertDraft[] = [];
   const recent = (date: string) => daysBetween(date, today) <= RECENT_DAYS;
   const live = series.filter((s) => status.get(s.key) !== "dismissed" && status.get(s.key) !== "cancelled");
@@ -241,9 +249,12 @@ export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, t
       }
     }
 
-    // Missing: a confirmed series past its due date plus tolerance.
+    // Ended: a confirmed series past its due date plus tolerance. One alert
+    // per quiet spell, not per missed cycle: the due date stays the one
+    // after the last charge however many cycles go by, and it names the
+    // alert.
     const due = s.nextExpectedOn;
-    if (status.get(s.key) === "confirmed" && daysBetween(due, today) > s.cadence.tolerance && recent(due)) {
+    if (status.get(s.key) === "confirmed" && s.overdue && recent(due) && stillActive.get(s.key) !== s.lastOn) {
       drafts.push({
         kind: "missing_charge",
         dedupeKey: `missing_charge|${s.key}|${due}`,
@@ -251,6 +262,8 @@ export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, t
         accountId: s.accountId,
         transactionId: null,
         occurredOn: due,
+        fromCents: s.latestCents,
+        lastOn: s.lastOn,
         toCents: s.typicalCents,
         cadence: s.cadence.name,
       });

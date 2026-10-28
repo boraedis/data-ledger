@@ -533,6 +533,10 @@ export const recurringSeries = pgTable(
     cancelledOn: date("cancelled_on"),
     cancelledAnnualCents: integer("cancelled_annual_cents"),
     cancelGraceDays: integer("cancel_grace_days"),
+    // "Still active" on an ended bill (#83): the last charge as of then.
+    // That quiet spell stays acknowledged; once a new charge comes, a later
+    // gap is news again.
+    stillActiveAfter: date("still_active_after"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("recurring_series_merchant_account_idx").on(t.merchant, t.accountId)],
