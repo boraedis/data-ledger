@@ -136,7 +136,7 @@ export default async function SettingsPage(props: PageProps<"/settings">) {
             key={t.id}
             href={settingsHref(t.id)}
             aria-current={t.id === tab ? "page" : undefined}
-            className={`-mb-px border-b-2 py-1.5 ${t.id === tab ? "border-foreground font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
+            className={`-mb-px border-b-2 py-1.5 ${t.id === tab ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
           >
             {t.label}
           </Link>
