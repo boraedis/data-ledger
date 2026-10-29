@@ -616,16 +616,33 @@ export const payStubs = pgTable(
     grossCents: bigint("gross_cents", { mode: "number" }).notNull(),
     // Gross minus every line, exactly: checked on save.
     netCents: bigint("net_cents", { mode: "number" }).notNull(),
-    // The bank deposit of the net pay. While linked, budgets count the
-    // deposit as gross income less each deduction, never the net twice
-    // (transactions.spendingLines). Set null if the deposit is ever removed
-    // (a sync's pending row replaced); the stub stays.
-    depositTransactionId: uuid("deposit_transaction_id")
-      .unique()
-      .references(() => transactions.id, { onDelete: "set null" }),
+    // The deposits of the net pay are in pay_stub_deposits: one, or
+    // several when pay is split across accounts (#91).
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("pay_stubs_pay_date_idx").on(t.payDate)],
+);
+
+// The bank deposits of a stub's net pay (#91): usually one, several when
+// pay is split across accounts (a fixed amount to savings, the rest to
+// checking). Linked, they add up to the net exactly, and budgets count the
+// paycheck as gross income less each deduction, never the net twice
+// (transactions.spendingLines). A deposit is one stub's at most. If the
+// bank removes one (a pending row replaced), its link goes and the stub
+// counts as unlinked until it's linked again.
+export const payStubDeposits = pgTable(
+  "pay_stub_deposits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    payStubId: uuid("pay_stub_id")
+      .notNull()
+      .references(() => payStubs.id, { onDelete: "cascade" }),
+    transactionId: uuid("transaction_id")
+      .notNull()
+      .unique()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+  },
+  (t) => [index("pay_stub_deposits_stub_idx").on(t.payStubId)],
 );
 
 // One deduction on a pay stub: a kind, the stub's own label for it

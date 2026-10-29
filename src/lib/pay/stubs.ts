@@ -51,19 +51,51 @@ export const DEPOSIT_DAYS_AFTER = 5;
 const DAY_MS = 86_400_000;
 const offset = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS);
 
-export type DepositCandidate = { id: string; postedOn: string; amountCents: number };
+export type DepositCandidate = { id: string; postedOn: string; amountCents: number; accountId: string; merchant: string | null };
+
+// Pay split across accounts (#91) is two deposits, three at most (savings,
+// checking, one more), each in its own account.
+const MAX_SPLIT = 3;
 
 /**
- * The deposits that could be this stub's net pay, best first: exactly the
- * net amount, money in, near the pay date. Closest date first.
+ * The ways deposits could make up this stub's net pay, best first: a single
+ * deposit of exactly the net, then pay split across accounts. A split is
+ * two or three money-in deposits near the pay date, each in a different
+ * account, all from the same payer (the same merchant name: payroll
+ * deposits share the employer's descriptor), adding up to the net exactly.
+ * Within each size, closest to the pay date first. Each match lists its
+ * largest deposit first.
+ *
+ * `anyPayer` drops the same-payer rule, for the owner to choose from when a
+ * bank names the two halves of a paycheck differently. Never for linking
+ * automatically: two unrelated deposits can add up to a net by chance.
  */
-export function depositCandidates(stub: { payDate: string; netCents: number }, deposits: DepositCandidate[]): DepositCandidate[] {
-  return deposits
-    .filter((d) => d.amountCents === stub.netCents)
+export function depositMatches(
+  stub: { payDate: string; netCents: number },
+  deposits: DepositCandidate[],
+  { anyPayer = false }: { anyPayer?: boolean } = {},
+): DepositCandidate[][] {
+  const near = deposits
     .map((d) => ({ d, off: offset(stub.payDate, d.postedOn) }))
-    .filter(({ off }) => off >= -DEPOSIT_DAYS_BEFORE && off <= DEPOSIT_DAYS_AFTER)
-    .sort((a, b) => Math.abs(a.off) - Math.abs(b.off) || a.d.postedOn.localeCompare(b.d.postedOn))
-    .map(({ d }) => d);
+    .filter(({ d, off }) => d.amountCents > 0 && d.amountCents <= stub.netCents && off >= -DEPOSIT_DAYS_BEFORE && off <= DEPOSIT_DAYS_AFTER);
+  const distance = (set: typeof near) => set.reduce((sum, x) => sum + Math.abs(x.off), 0);
+
+  const matches: (typeof near)[] = near.filter((x) => x.d.amountCents === stub.netCents).map((x) => [x]);
+  const parts = near.filter((x) => x.d.amountCents < stub.netCents && (anyPayer || x.d.merchant));
+  const grow = (set: typeof near, from: number, sum: number) => {
+    if (set.length >= 2 && sum === stub.netCents) matches.push(set);
+    if (set.length === MAX_SPLIT || sum >= stub.netCents) return;
+    for (let i = from; i < parts.length; i++) {
+      const next = parts[i];
+      if (set.length && ((!anyPayer && next.d.merchant !== set[0].d.merchant) || set.some((x) => x.d.accountId === next.d.accountId))) continue;
+      grow([...set, next], i + 1, sum + next.d.amountCents);
+    }
+  };
+  grow([], 0, 0);
+
+  return matches
+    .sort((a, b) => a.length - b.length || distance(a) - distance(b) || a[0].d.postedOn.localeCompare(b[0].d.postedOn))
+    .map((set) => set.map((x) => x.d).sort((a, b) => b.amountCents - a.amountCents || a.id.localeCompare(b.id)));
 }
 
 /**

@@ -1,8 +1,8 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lte, ne, notInArray } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { categories, payLineKind, payStubLines, payStubs, transactions } from "@/db/schema";
+import { accounts, categories, payLineKind, payStubDeposits, payStubLines, payStubs, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { DEPOSIT_DAYS_AFTER, DEPOSIT_DAYS_BEFORE, depositCandidates, groupOf, stubMismatch, type PayLineGroup } from "@/lib/pay/stubs";
+import { DEPOSIT_DAYS_AFTER, DEPOSIT_DAYS_BEFORE, depositMatches, groupOf, stubMismatch, type PayLineGroup } from "@/lib/pay/stubs";
 import { defineRead, defineWrite } from "@/operations/define";
 import { NotFoundError, type WriteContext } from "@/operations/tracked";
 
@@ -27,23 +27,30 @@ const stubFields = z.object({
   grossCents: z.number().int().min(1),
   netCents: z.number().int().min(0),
   lines: z.array(line).max(30),
-  // Omitted: link the deposit automatically if exactly one fits. Null: no
-  // link. An id: that deposit, which must be the net pay.
-  depositTransactionId: z.uuid().nullable().optional(),
+  // Omitted: link automatically if exactly one way fits (one deposit, or
+  // pay split across accounts). Null: no link. Ids: those deposits, which
+  // must add up to the net pay.
+  depositTransactionIds: z.array(z.uuid()).min(1).max(3).nullable().optional(),
 });
 
-/** Posted deposits near the pay date for exactly the net, not already another stub's. */
-export async function openDeposits(db: Db, stub: { payDate: string; netCents: number }, exceptStubId?: string) {
+/**
+ * The ways posted deposits near the pay date could make up the net (#91):
+ * one deposit of exactly the net, or pay split across accounts. Deposits
+ * already another stub's are left out. `anyPayer`: also splits whose
+ * deposits name different payers, for the owner to choose from only.
+ */
+export async function openDeposits(db: Db, stub: { payDate: string; netCents: number }, exceptStubId?: string, { anyPayer = false } = {}) {
   const linked = db
-    .select({ id: payStubs.depositTransactionId })
-    .from(payStubs)
-    .where(and(isNotNull(payStubs.depositTransactionId), exceptStubId ? ne(payStubs.id, exceptStubId) : undefined));
+    .select({ id: payStubDeposits.transactionId })
+    .from(payStubDeposits)
+    .where(exceptStubId ? ne(payStubDeposits.payStubId, exceptStubId) : undefined);
   const rows = await db
-    .select({ id: transactions.id, postedOn: transactions.postedOn, amountCents: transactions.amountCents })
+    .select({ id: transactions.id, postedOn: transactions.postedOn, amountCents: transactions.amountCents, accountId: transactions.accountId, merchant: transactions.merchant })
     .from(transactions)
     .where(
       and(
-        eq(transactions.amountCents, stub.netCents),
+        gt(transactions.amountCents, 0),
+        lte(transactions.amountCents, stub.netCents),
         eq(transactions.pending, false),
         isNull(transactions.provisionalSource),
         gte(transactions.postedOn, shift(stub.payDate, -DEPOSIT_DAYS_BEFORE)),
@@ -51,22 +58,45 @@ export async function openDeposits(db: Db, stub: { payDate: string; netCents: nu
         notInArray(transactions.id, linked),
       ),
     );
-  return depositCandidates(stub, rows);
+  return depositMatches(stub, rows, { anyPayer });
 }
 
-async function checkDeposit(ctx: WriteContext, depositId: string, stub: { payDate: string; netCents: number }, exceptStubId?: string) {
-  const [deposit] = await ctx.db.select().from(transactions).where(eq(transactions.id, depositId));
-  if (!deposit) throw new NotFoundError("Deposit not found");
-  // A pending or provisional row is replaced when the bank settles it; the
-  // link would quietly fall off.
-  if (deposit.pending || deposit.provisionalSource) throw new Error("Link the deposit once the bank has posted it");
-  if (deposit.amountCents !== stub.netCents) throw new Error("The deposit must be exactly the net pay");
-  if (deposit.isSplit) throw new Error("That deposit is split; unsplit it first, since the pay stub says what it's made of");
+async function checkDeposits(ctx: WriteContext, depositIds: string[], stub: { netCents: number }, exceptStubId?: string) {
+  if (new Set(depositIds).size !== depositIds.length) throw new Error("The same deposit is listed twice");
+  const deposits = await ctx.db.select().from(transactions).where(inArray(transactions.id, depositIds));
+  if (deposits.length !== depositIds.length) throw new NotFoundError("Deposit not found");
+  for (const deposit of deposits) {
+    // A pending or provisional row is replaced when the bank settles it; the
+    // link would quietly fall off.
+    if (deposit.pending || deposit.provisionalSource) throw new Error("Link the deposit once the bank has posted it");
+    if (deposit.amountCents <= 0) throw new Error("A deposit is money in");
+    if (deposit.isSplit) throw new Error("That deposit is split; unsplit it first, since the pay stub says what it's made of");
+  }
+  const total = deposits.reduce((sum, d) => sum + d.amountCents, 0);
+  if (total !== stub.netCents) {
+    throw new Error(depositIds.length === 1 ? "The deposit must be exactly the net pay" : "The deposits must add up to exactly the net pay");
+  }
   const [other] = await ctx.db
-    .select({ id: payStubs.id })
-    .from(payStubs)
-    .where(and(eq(payStubs.depositTransactionId, depositId), exceptStubId ? ne(payStubs.id, exceptStubId) : undefined));
+    .select({ id: payStubDeposits.id })
+    .from(payStubDeposits)
+    .where(and(inArray(payStubDeposits.transactionId, depositIds), exceptStubId ? ne(payStubDeposits.payStubId, exceptStubId) : undefined));
   if (other) throw new Error("That deposit is already another pay stub's net pay");
+}
+
+/** The deposit ids linked to each stub. */
+async function linkedDeposits(db: Db, stubIds: string[]): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (stubIds.length === 0) return result;
+  const rows = await db.select().from(payStubDeposits).where(inArray(payStubDeposits.payStubId, stubIds));
+  for (const r of rows) result.set(r.payStubId, [...(result.get(r.payStubId) ?? []), r.transactionId]);
+  return result;
+}
+
+/** Makes a stub's links exactly these deposits, through tracked writes. */
+async function setDeposits(ctx: WriteContext, payStubId: string, depositIds: string[]) {
+  const current = await ctx.db.select().from(payStubDeposits).where(eq(payStubDeposits.payStubId, payStubId));
+  for (const row of current) if (!depositIds.includes(row.transactionId)) await ctx.remove(payStubDeposits, row.id);
+  for (const id of depositIds) if (!current.some((r) => r.transactionId === id)) await ctx.insert(payStubDeposits, { payStubId, transactionId: id });
 }
 
 async function validate(ctx: WriteContext, input: z.infer<typeof stubFields>) {
@@ -80,16 +110,26 @@ async function validate(ctx: WriteContext, input: z.infer<typeof stubFields>) {
   }
 }
 
-async function resolveDeposit(ctx: WriteContext, input: z.infer<typeof stubFields>, exceptStubId?: string): Promise<string | null> {
-  if (input.depositTransactionId === null) return null;
-  if (input.depositTransactionId) {
-    await checkDeposit(ctx, input.depositTransactionId, input, exceptStubId);
-    return input.depositTransactionId;
+async function resolveDeposits(ctx: WriteContext, input: z.infer<typeof stubFields>, exceptStubId?: string): Promise<string[]> {
+  if (input.depositTransactionIds === null) return [];
+  if (input.depositTransactionIds) {
+    await checkDeposits(ctx, input.depositTransactionIds, input, exceptStubId);
+    return input.depositTransactionIds;
   }
   // Only an unambiguous match is linked automatically.
-  const candidates = await openDeposits(ctx.db, input, exceptStubId);
-  return candidates.length === 1 ? candidates[0].id : null;
+  const matches = await openDeposits(ctx.db, input, exceptStubId);
+  return matches.length === 1 ? matches[0].map((d) => d.id) : [];
 }
+
+/** The stub's own columns from an input: everything but its lines and deposits. */
+const stubColumns = (input: z.infer<typeof stubFields>) => ({
+  employer: input.employer,
+  periodStart: input.periodStart,
+  periodEnd: input.periodEnd,
+  payDate: input.payDate,
+  grossCents: input.grossCents,
+  netCents: input.netCents,
+});
 
 async function writeLines(ctx: WriteContext, payStubId: string, lines: z.infer<typeof line>[]) {
   for (const [position, l] of lines.entries()) {
@@ -102,16 +142,17 @@ export const createPayStub = defineWrite({
   description:
     "Record a pay stub: employer label, pay period, pay date, gross pay, each deduction (kind, the stub's label, " +
     "positive cents, optionally the category it counts under in budgets) and net pay. Gross minus deductions must " +
-    "equal net exactly. The net-pay deposit is linked automatically when exactly one posted deposit matches; then " +
-    "budgets count gross pay and each deduction instead of the net.",
+    "equal net exactly. The net-pay deposits are linked automatically when exactly one way fits: one deposit of the " +
+    "net, or pay split across accounts (two or three deposits from the same payer adding up to it); then budgets " +
+    "count gross pay and each deduction instead of the net.",
   input: stubFields,
   apply: async (ctx, input) => {
     await validate(ctx, input);
-    const depositTransactionId = await resolveDeposit(ctx, input);
-    const { lines, ...fields } = input;
-    const row = await ctx.insert(payStubs, { ...fields, depositTransactionId });
-    await writeLines(ctx, row.id, lines);
-    return { payStubId: row.id, depositTransactionId };
+    const depositTransactionIds = await resolveDeposits(ctx, input);
+    const row = await ctx.insert(payStubs, stubColumns(input));
+    await writeLines(ctx, row.id, input.lines);
+    await setDeposits(ctx, row.id, depositTransactionIds);
+    return { payStubId: row.id, depositTransactionIds };
   },
 });
 
@@ -123,21 +164,25 @@ export const updatePayStub = defineWrite({
     const [existing] = await ctx.db.select().from(payStubs).where(eq(payStubs.id, payStubId));
     if (!existing) throw new NotFoundError("Pay stub not found");
     await validate(ctx, input);
-    // Omitted: keep the current link if the deposit still fits the
-    // (possibly edited) net, else look again.
-    let depositTransactionId: string | null;
-    if (input.depositTransactionId === undefined && existing.depositTransactionId) {
-      const [still] = await ctx.db.select({ amountCents: transactions.amountCents }).from(transactions).where(eq(transactions.id, existing.depositTransactionId));
-      depositTransactionId = still?.amountCents === input.netCents ? existing.depositTransactionId : await resolveDeposit(ctx, input, payStubId);
+    // Omitted: keep the current links if they still add up to the (possibly
+    // edited) net, else look again.
+    let depositTransactionIds: string[];
+    const current = (await linkedDeposits(ctx.db, [payStubId])).get(payStubId) ?? [];
+    if (input.depositTransactionIds === undefined && current.length) {
+      const [still] = await ctx.db
+        .select({ total: sql<number>`coalesce(sum(${transactions.amountCents}), 0)`.mapWith(Number) })
+        .from(transactions)
+        .where(inArray(transactions.id, current));
+      depositTransactionIds = still.total === input.netCents ? current : await resolveDeposits(ctx, input, payStubId);
     } else {
-      depositTransactionId = await resolveDeposit(ctx, input, payStubId);
+      depositTransactionIds = await resolveDeposits(ctx, input, payStubId);
     }
-    const { lines, ...fields } = input;
-    await ctx.update(payStubs, payStubId, { ...fields, depositTransactionId });
+    await ctx.update(payStubs, payStubId, stubColumns(input));
+    await setDeposits(ctx, payStubId, depositTransactionIds);
     const old = await ctx.db.select({ id: payStubLines.id }).from(payStubLines).where(eq(payStubLines.payStubId, payStubId));
     for (const l of old) await ctx.remove(payStubLines, l.id);
-    await writeLines(ctx, payStubId, lines);
-    return { payStubId, depositTransactionId };
+    await writeLines(ctx, payStubId, input.lines);
+    return { payStubId, depositTransactionIds };
   },
 });
 
@@ -152,6 +197,7 @@ export const deletePayStub = defineWrite({
     // where undo can't see.
     const lines = await ctx.db.select({ id: payStubLines.id }).from(payStubLines).where(eq(payStubLines.payStubId, payStubId));
     for (const l of lines) await ctx.remove(payStubLines, l.id);
+    await setDeposits(ctx, payStubId, []);
     await ctx.remove(payStubs, payStubId);
     return { deleted: 1 };
   },
@@ -159,14 +205,16 @@ export const deletePayStub = defineWrite({
 
 export const linkPayDeposit = defineWrite({
   name: "payStubs.linkDeposit",
-  description: "Link a pay stub to the bank deposit of its net pay (exactly the net amount), or unlink it (null).",
-  input: z.object({ payStubId: z.uuid(), depositTransactionId: z.uuid().nullable() }),
-  apply: async (ctx, { payStubId, depositTransactionId }) => {
+  description:
+    "Link a pay stub to the bank deposits of its net pay: one deposit of exactly the net, or several (pay split " +
+    "across accounts) adding up to it. Null unlinks.",
+  input: z.object({ payStubId: z.uuid(), depositTransactionIds: z.array(z.uuid()).min(1).max(3).nullable() }),
+  apply: async (ctx, { payStubId, depositTransactionIds }) => {
     const [stub] = await ctx.db.select().from(payStubs).where(eq(payStubs.id, payStubId));
     if (!stub) throw new NotFoundError("Pay stub not found");
-    if (depositTransactionId) await checkDeposit(ctx, depositTransactionId, stub, payStubId);
-    if (stub.depositTransactionId !== depositTransactionId) await ctx.update(payStubs, payStubId, { depositTransactionId });
-    return { payStubId, depositTransactionId };
+    if (depositTransactionIds) await checkDeposits(ctx, depositTransactionIds, stub, payStubId);
+    await setDeposits(ctx, payStubId, depositTransactionIds ?? []);
+    return { payStubId, depositTransactionIds: depositTransactionIds ?? [] };
   },
 });
 
@@ -175,7 +223,8 @@ export const listPayStubs = defineRead({
   description:
     "Pay stubs, newest pay date first, optionally for one calendar year: employer label, period, pay date, gross, " +
     "net, each deduction (kind, group: tax / insurance / retirement / other, label, amount, category), totals per " +
-    "group, and the linked net-pay deposit if any. Amounts are integer cents.",
+    "group, and the linked net-pay deposits if any (more than one when pay is split across accounts: each with its " +
+    "date, amount and account name). Amounts are integer cents.",
   input: z.object({ year: z.number().int().min(2000).max(2100).optional() }),
   run: async (db, { year }) => {
     const stubs = await db
@@ -184,11 +233,23 @@ export const listPayStubs = defineRead({
       .where(year ? and(gte(payStubs.payDate, `${year}-01-01`), lte(payStubs.payDate, `${year}-12-31`)) : undefined)
       .orderBy(desc(payStubs.payDate), desc(payStubs.createdAt));
     if (stubs.length === 0) return [];
-    const lines = await db
-      .select()
-      .from(payStubLines)
-      .where(inArray(payStubLines.payStubId, stubs.map((s) => s.id)))
-      .orderBy(asc(payStubLines.position));
+    const ids = stubs.map((s) => s.id);
+    const [lines, deposits] = await Promise.all([
+      db.select().from(payStubLines).where(inArray(payStubLines.payStubId, ids)).orderBy(asc(payStubLines.position)),
+      db
+        .select({
+          payStubId: payStubDeposits.payStubId,
+          id: transactions.id,
+          postedOn: transactions.postedOn,
+          amountCents: transactions.amountCents,
+          accountName: sql<string>`coalesce(${accounts.displayName}, ${accounts.name})`,
+        })
+        .from(payStubDeposits)
+        .innerJoin(transactions, eq(transactions.id, payStubDeposits.transactionId))
+        .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+        .where(inArray(payStubDeposits.payStubId, ids))
+        .orderBy(desc(transactions.amountCents)),
+    ]);
     return stubs.map((s) => {
       const own = lines.filter((l) => l.payStubId === s.id);
       const totals: Record<PayLineGroup, number> = { tax: 0, insurance: 0, retirement: 0, other: 0 };
@@ -201,7 +262,7 @@ export const listPayStubs = defineRead({
         payDate: s.payDate,
         grossCents: s.grossCents,
         netCents: s.netCents,
-        depositTransactionId: s.depositTransactionId,
+        deposits: deposits.filter((d) => d.payStubId === s.id).map((d) => ({ id: d.id, postedOn: d.postedOn, amountCents: d.amountCents, accountName: d.accountName })),
         lines: own.map((l) => ({ kind: l.kind, group: groupOf(l.kind), label: l.label, amountCents: l.amountCents, categoryId: l.categoryId })),
         totals,
       };
@@ -211,7 +272,9 @@ export const listPayStubs = defineRead({
 
 export const payDepositCandidates = defineRead({
   name: "payStubs.depositCandidates",
-  description: "Posted deposits that could be a pay stub's net pay: exactly the net amount, near the pay date, not already linked.",
+  description:
+    "The ways posted deposits near the pay date could be a pay stub's net pay, best first: one deposit of exactly " +
+    "the net, or pay split across accounts (two or three deposits from the same payer adding up to it). Not already linked.",
   input: z.object({ payDate: z.iso.date(), netCents: z.number().int().min(1), payStubId: z.uuid().optional() }),
   run: (db, { payDate, netCents, payStubId }) => openDeposits(db, { payDate, netCents }, payStubId),
 });

@@ -4,6 +4,7 @@ import {
   accounts,
   categories,
   categorySuggestions,
+  payStubDeposits,
   payStubLines,
   payStubs,
   reimbursementMatches,
@@ -369,29 +370,47 @@ export function countsAsSpending(): SQL {
 type Line = { transactionId: string; date: string; amountCents: number; categoryId: string; accountId: string; merchant: string | null };
 
 /**
- * A deposit linked to a pay stub (#60) counts as the paycheck it was:
- * gross pay in the deposit's category, and each deduction with a category
- * as its own line (src/lib/pay/stubs.ts, expandDeposit). The parts add up
- * to the deposit, so the net is never counted on top. Only a deposit
- * counted whole: one the owner split themselves keeps their split.
+ * A paycheck linked to a pay stub (#60) counts as what it was: gross pay
+ * in the deposit's category, and each deduction with a category as its
+ * own line (src/lib/pay/stubs.ts, expandDeposit). Pay split across
+ * accounts (#91) expands onto its largest deposit, less the others, which
+ * count as they are; together the parts still add up to every deposit, so
+ * the net is never counted on top. Only while the links still add up to
+ * the net (a deposit the bank removed leaves the rest counting as plain
+ * deposits), and only a deposit counted whole: one the owner split
+ * themselves keeps their split.
  */
 async function withPayStubs(db: Db, lines: Line[]): Promise<Line[]> {
   const ids = [...new Set(lines.map((l) => l.transactionId))];
   if (ids.length === 0) return lines;
-  const stubs = await db
-    .select({ id: payStubs.id, depositId: payStubs.depositTransactionId, grossCents: payStubs.grossCents })
-    .from(payStubs)
-    .where(inArray(payStubs.depositTransactionId, ids));
-  if (stubs.length === 0) return lines;
-  const stubLines = await db
-    .select({ payStubId: payStubLines.payStubId, amountCents: payStubLines.amountCents, categoryId: payStubLines.categoryId })
-    .from(payStubLines)
-    .where(inArray(payStubLines.payStubId, stubs.map((s) => s.id)));
-  const byDeposit = new Map(stubs.map((s) => [s.depositId!, { grossCents: s.grossCents, lines: stubLines.filter((l) => l.payStubId === s.id) }]));
+  const touching = db.select({ id: payStubDeposits.payStubId }).from(payStubDeposits).where(inArray(payStubDeposits.transactionId, ids));
+  const links = await db
+    .select({ payStubId: payStubDeposits.payStubId, transactionId: payStubDeposits.transactionId, amountCents: transactions.amountCents })
+    .from(payStubDeposits)
+    .innerJoin(transactions, eq(transactions.id, payStubDeposits.transactionId))
+    .where(inArray(payStubDeposits.payStubId, touching));
+  if (links.length === 0) return lines;
+  const stubIds = [...new Set(links.map((l) => l.payStubId))];
+  const [stubs, stubLines] = await Promise.all([
+    db.select({ id: payStubs.id, grossCents: payStubs.grossCents, netCents: payStubs.netCents }).from(payStubs).where(inArray(payStubs.id, stubIds)),
+    db
+      .select({ payStubId: payStubLines.payStubId, amountCents: payStubLines.amountCents, categoryId: payStubLines.categoryId })
+      .from(payStubLines)
+      .where(inArray(payStubLines.payStubId, stubIds)),
+  ]);
+
+  // Per stub, its primary deposit (the largest) and what the others add up to.
+  const byPrimary = new Map<string, { grossCents: number; lines: typeof stubLines }>();
+  for (const stub of stubs) {
+    const own = links.filter((l) => l.payStubId === stub.id).sort((a, b) => b.amountCents - a.amountCents || a.transactionId.localeCompare(b.transactionId));
+    if (own.reduce((sum, l) => sum + l.amountCents, 0) !== stub.netCents) continue;
+    const others = own.slice(1).reduce((sum, l) => sum + l.amountCents, 0);
+    byPrimary.set(own[0].transactionId, { grossCents: stub.grossCents - others, lines: stubLines.filter((l) => l.payStubId === stub.id) });
+  }
   const parts = new Map<string, number>();
   for (const l of lines) parts.set(l.transactionId, (parts.get(l.transactionId) ?? 0) + 1);
   return lines.flatMap((line) => {
-    const stub = byDeposit.get(line.transactionId);
+    const stub = byPrimary.get(line.transactionId);
     if (!stub || parts.get(line.transactionId) !== 1) return [line];
     return expandDeposit(line, stub).map((part) => ({ ...line, ...part }));
   });
