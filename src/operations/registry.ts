@@ -39,6 +39,7 @@ import {
   setTransactionCategory,
   spendingLines,
   splitTransaction,
+  uncategorizedSpend,
   unmatchTransfer,
 } from "@/operations/transactions";
 
@@ -63,6 +64,7 @@ export const operations: Operation[] = [
   listTransactions,
   getTransaction,
   spendingLines,
+  uncategorizedSpend,
   investmentIncome,
   budgetStatus,
   listTargets,
