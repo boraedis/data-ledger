@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cadenceDays, estimateYear, remainingPaychecks, type EstimateStub } from "@/lib/taxes/estimate";
+import { DEFAULT_ASSUMPTIONS, cadenceDays, estimateYear, remainingPaychecks, type EstimateStub } from "@/lib/taxes/estimate";
 
 // Synthetic biweekly stubs: $4,000 gross, $400 federal, $248 Social
 // Security, $58 Medicare, $100 pre-tax health, $200 401(k).
@@ -65,6 +65,7 @@ describe("estimateYear", () => {
 
   it("uses what the owner enters: status, other income, itemized deductions, credits, payments", () => {
     const e = estimateYear(2026, stubs, {
+      ...DEFAULT_ASSUMPTIONS,
       filingStatus: "married_joint",
       otherIncomeCents: 100_000,
       itemizedDeductionsCents: 4_000_000,
@@ -88,5 +89,51 @@ describe("estimateYear", () => {
     expect(e.federal).toBeNull();
     expect(e.gross.ytdCents).toBe(1_200_000);
     expect(estimateYear(2026, [])).toBeNull();
+  });
+});
+
+describe("employer-paid benefits (#92)", () => {
+  // The same 20 biweekly stubs, now with a memo box: a $120 401(k) match,
+  // a $50 HSA contribution from the employer, $9 of life insurance cost,
+  // and $6 of imputed income for coverage over $50,000. Plus $75 of the
+  // owner's own HSA contribution through payroll.
+  const withBenefits = biweekly("2026-01-09", 20).map((s) => ({
+    ...s,
+    lines: [...s.lines, { kind: "hsa" as const, amountCents: 7_500 }],
+    employer: [
+      { kind: "retirement_match" as const, amountCents: 12_000 },
+      { kind: "hsa" as const, amountCents: 5_000 },
+      { kind: "life_insurance" as const, amountCents: 900 },
+      { kind: "imputed_income" as const, amountCents: 600 },
+    ],
+  }));
+
+  it("totals what the employer paid on top, imputed income apart", () => {
+    const { employer } = estimateYear(2026, withBenefits)!;
+    expect(employer.lines.map((l) => [l.kind, l.ytdCents, l.projectedCents])).toEqual([
+      ["retirement_match", 240_000, 312_000],
+      ["hsa", 100_000, 130_000],
+      ["life_insurance", 18_000, 23_400],
+    ]);
+    expect(employer.total).toEqual({ ytdCents: 358_000, projectedCents: 465_400 });
+    expect(employer.imputed).toEqual({ ytdCents: 12_000, projectedCents: 15_600 });
+  });
+
+  it("taxes imputed income as wages, for income tax and Social Security and Medicare", () => {
+    const plain = estimateYear(2026, biweekly("2026-01-09", 20).map((s) => ({ ...s, lines: [...s.lines, { kind: "hsa" as const, amountCents: 7_500 }] })))!;
+    const e = estimateYear(2026, withBenefits)!;
+    expect(e.federal!.wagesCents - plain.federal!.wagesCents).toBe(15_600);
+    // FICA wages: 104,000 gross + 156 imputed - 2,600 health - 1,950 HSA.
+    expect(e.fica!.medicare.expectedCents).toBe(Math.round((10_400_000 + 15_600 - 260_000 - 195_000) * 0.0145));
+    // The match, the HSA money and the life insurance cost are never wages here.
+    expect(e.gross).toEqual(plain.gross);
+  });
+
+  it("measures your and your employer's HSA contributions against the year's limit", () => {
+    // Projected: 26 x ($75 + $50) = $3,250.
+    expect(estimateYear(2026, withBenefits)!.hsa).toMatchObject({ projectedCents: 325_000, limitCents: null });
+    expect(estimateYear(2026, withBenefits, { ...DEFAULT_ASSUMPTIONS, hsaCoverage: "self" })!.hsa!.limitCents).toBe(440_000);
+    expect(estimateYear(2026, withBenefits, { ...DEFAULT_ASSUMPTIONS, hsaCoverage: "family", hsaCatchUp: true })!.hsa!.limitCents).toBe(975_000);
+    expect(estimateYear(2026, biweekly("2026-01-09", 3))!.hsa).toBeNull();
   });
 });

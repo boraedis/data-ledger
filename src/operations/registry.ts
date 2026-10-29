@@ -26,7 +26,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { taxAssumptions, payStubDeposits, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { taxAssumptions, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -166,5 +166,6 @@ export const trackedTables = {
   pay_stubs: payStubs,
   pay_stub_lines: payStubLines,
   pay_stub_deposits: payStubDeposits,
+  pay_stub_employer_lines: payStubEmployerLines,
   tax_assumptions: taxAssumptions,
 } as const;

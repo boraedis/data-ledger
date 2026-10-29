@@ -197,6 +197,13 @@
       "when": 1793312201374,
       "tag": "0027_pay_stub_deposits",
       "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793313404547,
+      "tag": "0028_employer_benefits",
+      "breakpoints": true
     }
   ]
 }

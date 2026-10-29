@@ -33,6 +33,15 @@ it("estimates from the pay stubs with default assumptions, then with the owner's
   expect((await read(db, taxEstimate, { year: 2026 })).assumptions.creditsCents).toBe(100_000);
 });
 
+it("saves HSA coverage, which sets the limit the estimate checks against (#92)", async () => {
+  await execute(db, { operation: "taxes.setAssumptions", actor: "user", reason: "Test", input: { ...assumptions, hsaCoverage: "family", hsaCatchUp: true } });
+  const { assumptions: saved } = await read(db, taxEstimate, { year: 2026 });
+  expect(saved).toMatchObject({ hsaCoverage: "family", hsaCatchUp: true });
+  // Left out, as by an older client: no HSA plan.
+  await execute(db, { operation: "taxes.setAssumptions", actor: "user", reason: "Test", input: assumptions });
+  expect((await read(db, taxEstimate, { year: 2026 })).assumptions).toMatchObject({ hsaCoverage: null, hsaCatchUp: false });
+});
+
 it("is the owner's alone: never a Tally tool, and refused to Tally", async () => {
   const names = toolSpecs().map((t) => t.name);
   expect(names).not.toContain("taxes__estimate");

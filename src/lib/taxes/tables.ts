@@ -41,6 +41,15 @@ export const FEDERAL: Record<number, YearTable> = {
   },
 };
 
+// HSA contribution limits (#92), yours and your employer's together, in
+// dollars: IRS Rev. Proc. 2024-25 (2025) and Rev. Proc. 2025-19 (2026).
+// The catch-up for 55 and older is set by statute, not indexed.
+export const HSA_LIMITS: Record<number, { self: number; family: number }> = {
+  2025: { self: 4_300, family: 8_550 },
+  2026: { self: 4_400, family: 8_750 },
+};
+export const HSA_CATCH_UP = 1_000;
+
 export const SOCIAL_SECURITY_RATE = 0.062;
 export const MEDICARE_RATE = 0.0145;
 
