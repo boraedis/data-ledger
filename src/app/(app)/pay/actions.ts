@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { getDb } from "@/lib/db";
 import { hasValidSession } from "@/lib/auth/session";
+import { listAccounts } from "@/operations/accounts";
 import { openDeposits } from "@/operations/pay";
+import { read } from "@/operations/runtime";
 import { executeAsOwner } from "@/operations/server";
 
 // Pay stubs (#60), as the owner: logged and undoable.
@@ -17,8 +19,9 @@ export type StubFields = {
   grossCents: number;
   netCents: number;
   lines: StubLine[];
-  // Undefined: link automatically if exactly one deposit fits.
-  depositTransactionId?: string | null;
+  // Undefined: link automatically if exactly one way fits (one deposit, or
+  // pay split across accounts).
+  depositTransactionIds?: string[] | null;
 };
 type Result = { error: string } | undefined;
 
@@ -47,13 +50,29 @@ export async function deleteStub(payStubId: string, payDate: string) {
   return run("payStubs.delete", { payStubId }, `Deleted the ${payDate} pay stub`);
 }
 
-export async function linkDeposit(payStubId: string, depositTransactionId: string | null) {
-  return run("payStubs.linkDeposit", { payStubId, depositTransactionId }, depositTransactionId ? "Linked a pay stub to its deposit" : "Unlinked a pay stub's deposit");
+export async function linkDeposits(payStubId: string, depositTransactionIds: string[] | null) {
+  return run(
+    "payStubs.linkDeposit",
+    { payStubId, depositTransactionIds },
+    depositTransactionIds ? "Linked a pay stub to its deposits" : "Unlinked a pay stub's deposits",
+  );
 }
 
-/** Deposits the form can offer for a pay date and net: dates and amounts only. */
-export async function findDeposits(payDate: string, netCents: number, payStubId?: string) {
+export type DepositMatch = { ids: string[]; parts: { postedOn: string; amountCents: number; accountName: string }[] };
+
+/**
+ * The ways deposits could make up a pay date's net, for the form to offer:
+ * one deposit, or pay split across accounts. Dates, amounts and account
+ * names only.
+ */
+export async function findDeposits(payDate: string, netCents: number, payStubId?: string): Promise<DepositMatch[]> {
   if (!(await hasValidSession())) return [];
   if (!/^\d{4}-\d{2}-\d{2}$/.test(payDate) || !Number.isSafeInteger(netCents) || netCents <= 0) return [];
-  return openDeposits(getDb(), { payDate, netCents }, payStubId);
+  const db = getDb();
+  const [matches, accts] = await Promise.all([openDeposits(db, { payDate, netCents }, payStubId), read(db, listAccounts, {})]);
+  const names = new Map(accts.map((a) => [a.id, a.name]));
+  return matches.map((m) => ({
+    ids: m.map((d) => d.id),
+    parts: m.map((d) => ({ postedOn: d.postedOn, amountCents: d.amountCents, accountName: names.get(d.accountId) ?? "" })),
+  }));
 }

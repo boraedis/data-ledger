@@ -4,7 +4,7 @@ import type { Db } from "@/db/types";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { generateSeed } from "@/lib/seed/generate";
 
-const { accounts, balanceSnapshots, categories, holdingSnapshots, payStubLines, payStubs, transactions } = schema;
+const { accounts, balanceSnapshots, categories, holdingSnapshots, payStubDeposits, payStubLines, payStubs, transactions } = schema;
 
 export class RealDataPresentError extends Error {}
 
@@ -37,7 +37,8 @@ export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Da
       .from(transactions)
       .innerJoin(accounts, eq(accounts.id, transactions.accountId))
       .where(eq(accounts.source, "seed"));
-    await tx.delete(payStubs).where(inArray(payStubs.depositTransactionId, seedDeposits));
+    const seedStubs = tx.select({ id: payStubDeposits.payStubId }).from(payStubDeposits).where(inArray(payStubDeposits.transactionId, seedDeposits));
+    await tx.delete(payStubs).where(inArray(payStubs.id, seedStubs));
     // Deleting seed accounts cascades to their transactions.
     await tx.delete(accounts).where(eq(accounts.source, "seed"));
     await tx
@@ -80,7 +81,9 @@ export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Da
       (await tx.select({ id: transactions.id, externalId: transactions.externalId }).from(transactions).where(inArray(transactions.externalId, data.payStubs.map((p) => p.depositExternalId)))).map((t) => [t.externalId, t.id]),
     );
     for (const { depositExternalId, lines, ...stub } of data.payStubs) {
-      const [row] = await tx.insert(payStubs).values({ ...stub, depositTransactionId: depositIds.get(depositExternalId) ?? null }).returning({ id: payStubs.id });
+      const [row] = await tx.insert(payStubs).values(stub).returning({ id: payStubs.id });
+      const depositId = depositIds.get(depositExternalId);
+      if (depositId) await tx.insert(payStubDeposits).values({ payStubId: row.id, transactionId: depositId });
       await tx.insert(payStubLines).values(lines.map((l, position) => ({ ...l, payStubId: row.id, position })));
     }
 

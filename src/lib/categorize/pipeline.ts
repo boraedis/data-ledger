@@ -1,5 +1,5 @@
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
-import { accounts, categories, categorySuggestions, payStubs, rules, transactions } from "@/db/schema";
+import { and, asc, count, desc, eq, inArray, isNotNull, isNull, notInArray } from "drizzle-orm";
+import { accounts, categories, categorySuggestions, payStubDeposits, payStubs, rules, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import {
   classifierRequest,
@@ -152,23 +152,26 @@ export async function matchProvisionalStep(db: Db): Promise<number> {
 }
 
 /**
- * A pay stub entered before payday meets its deposit once the bank posts
- * it (#60): exactly the net, near the pay date, and the only such deposit.
- * Ambiguous ones are left for the owner to pick on the Pay page.
+ * A pay stub entered before payday meets its deposits once the bank posts
+ * them (#60): one deposit of exactly the net, or pay split across accounts
+ * (#91), near the pay date, and the only way that fits. Ambiguous ones are
+ * left for the owner to pick on the Pay page.
  */
 export async function linkPayStubsStep(db: Db): Promise<number> {
-  const stubs = await db.select().from(payStubs).where(isNull(payStubs.depositTransactionId));
+  const linkedStubs = db.select({ id: payStubDeposits.payStubId }).from(payStubDeposits);
+  const stubs = await db.select().from(payStubs).where(notInArray(payStubs.id, linkedStubs));
   let linked = 0;
   const claimed = new Set<string>();
   for (const stub of stubs) {
-    const candidates = (await openDeposits(db, stub, stub.id)).filter((c) => !claimed.has(c.id));
-    if (candidates.length !== 1) continue;
-    claimed.add(candidates[0].id);
+    const matches = (await openDeposits(db, stub, stub.id)).filter((m) => m.every((d) => !claimed.has(d.id)));
+    if (matches.length !== 1) continue;
+    const ids = matches[0].map((d) => d.id);
+    for (const id of ids) claimed.add(id);
     const result = await execute(db, {
       operation: "payStubs.linkDeposit",
       actor: "matcher",
-      reason: `Linked the ${stub.payDate} pay stub to its deposit`,
-      input: { payStubId: stub.id, depositTransactionId: candidates[0].id },
+      reason: `Linked the ${stub.payDate} pay stub to its ${ids.length === 1 ? "deposit" : `${ids.length} deposits`}`,
+      input: { payStubId: stub.id, depositTransactionIds: ids },
     });
     if (result.status === "applied") linked++;
   }

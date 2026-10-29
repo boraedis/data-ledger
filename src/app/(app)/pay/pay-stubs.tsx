@@ -11,7 +11,7 @@ import { StubForm, type FormStub } from "./stub-form";
 
 type Stub = Omit<FormStub, "lines"> & {
   id: string;
-  depositTransactionId: string | null;
+  deposits: { id: string; postedOn: string; amountCents: number; accountName: string }[];
   totals: Record<PayLineGroup, number>;
   lines: (FormStub["lines"][number] & { group: PayLineGroup; categoryLabel: string | null })[];
 };
@@ -45,10 +45,23 @@ function StubCard({ stub, options }: { stub: Stub; options: CategoryOption[] }) 
         </span>
       </button>
       <p className="text-xs">
-        {stub.depositTransactionId ? (
-          <Link href={`/transactions/${stub.depositTransactionId}`} className="text-muted-foreground underline">
+        {stub.deposits.length === 1 ? (
+          <Link href={`/transactions/${stub.deposits[0].id}`} className="text-muted-foreground underline">
             Linked to its deposit ✓
           </Link>
+        ) : stub.deposits.length ? (
+          // Pay split across accounts (#91): each part, where it went.
+          <span className="text-muted-foreground">
+            Linked to {stub.deposits.length} deposits ✓{" "}
+            {stub.deposits.map((d, i) => (
+              <span key={d.id}>
+                {i ? " + " : ""}
+                <Link href={`/transactions/${d.id}`} className="underline">
+                  {formatCents(d.amountCents)} to {d.accountName}
+                </Link>
+              </span>
+            ))}
+          </span>
         ) : (
           <span className="text-warning">Not linked to a deposit yet: budgets count only the deposit until it is.</span>
         )}

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import type { CategoryOption } from "@/lib/categorize/labels";
 import { formatCents, parseAmountCents } from "@/lib/money";
 import { PAY_LINE_KINDS } from "@/lib/pay/stubs";
-import { createStub, findDeposits, updateStub, type StubFields } from "./actions";
+import { createStub, findDeposits, updateStub, type DepositMatch, type StubFields } from "./actions";
 
 // Adding or editing a pay stub (#60). Pay stubs repeat, so a new one starts
 // from the last one: the same deductions and categories, dates moved on by
@@ -15,10 +15,16 @@ import { createStub, findDeposits, updateStub, type StubFields } from "./actions
 // on purpose.
 
 type Line = { kind: string; label: string; amount: string; categoryId: string };
-export type FormStub = Omit<StubFields, "lines" | "depositTransactionId"> & { lines: { kind: string; label: string; amountCents: number; categoryId: string | null }[] };
+export type FormStub = Omit<StubFields, "lines" | "depositTransactionIds"> & { lines: { kind: string; label: string; amountCents: number; categoryId: string | null }[] };
 
 const input = "h-9 min-w-0 rounded-md border bg-background px-2 text-sm";
 const dollars = (cents: number) => (cents / 100).toFixed(2);
+
+/** "$2,450.00 on 2026-06-12", or for pay split across accounts, each part and where it went. */
+function matchLabel(match: DepositMatch): string {
+  if (match.parts.length === 1) return `${formatCents(match.parts[0].amountCents)} on ${match.parts[0].postedOn}`;
+  return `${match.parts.map((p) => `${formatCents(p.amountCents)} to ${p.accountName}`).join(" + ")} (${match.parts[0].postedOn})`;
+}
 
 function centsOf(text: string): number | null {
   try {
@@ -49,7 +55,7 @@ export function StubForm({
   const [lines, setLines] = useState<Line[]>(
     initial.lines.map((l) => ({ kind: l.kind, label: l.label, amount: dollars(l.amountCents), categoryId: l.categoryId ?? "" })),
   );
-  const [deposits, setDeposits] = useState<{ id: string; postedOn: string; amountCents: number }[]>([]);
+  const [deposits, setDeposits] = useState<DepositMatch[]>([]);
   const [deposit, setDeposit] = useState<string>("auto");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -85,7 +91,7 @@ export function StubForm({
         grossCents: grossCents!,
         netCents: netCents!,
         lines: lines.map((l, i) => ({ kind: l.kind, label: l.label, amountCents: lineCents[i]!, categoryId: l.categoryId || null })),
-        ...(deposit === "auto" ? {} : { depositTransactionId: deposit === "none" ? null : deposit }),
+        ...(deposit === "auto" ? {} : { depositTransactionIds: deposit === "none" ? null : deposit.split(",") }),
       };
       const result = payStubId ? await updateStub(payStubId, fields) : await createStub(fields);
       if (result?.error) setError(result.error);
@@ -176,14 +182,14 @@ export function StubForm({
 
       {adds ? (
         <label className="block space-y-1">
-          <span className="text-xs text-muted-foreground">Deposit of the net pay</span>
+          <span className="text-xs text-muted-foreground">Deposit of the net pay (split across accounts is fine)</span>
           <select value={deposit} onChange={(e) => setDeposit(e.target.value)} className={`${input} w-full sm:w-auto`}>
             <option value="auto">
-              {deposits.length === 1 ? `Link automatically (${deposits[0].postedOn})` : deposits.length ? "Pick one below…" : "None yet: link when it posts"}
+              {deposits.length === 1 ? `Link automatically: ${matchLabel(deposits[0])}` : deposits.length ? "Pick one below…" : "None yet: link when it posts"}
             </option>
             {deposits.map((d) => (
-              <option key={d.id} value={d.id}>
-                {formatCents(d.amountCents)} on {d.postedOn}
+              <option key={d.ids.join(",")} value={d.ids.join(",")}>
+                {matchLabel(d)}
               </option>
             ))}
             <option value="none">Don&apos;t link</option>
