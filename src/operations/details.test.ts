@@ -7,7 +7,7 @@ import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
 import { execute, read, undoCommand } from "@/operations/runtime";
 import { listTags } from "@/operations/tags";
-import { getTransaction, listInbox, listTransactions, spendingLines } from "@/operations/transactions";
+import { getTransaction, listInbox, listTransactions, spendingLines, uncategorizedSpend } from "@/operations/transactions";
 
 // Splits, tags and experience dates (#6 phase 2) on PGlite over the
 // synthetic seed. All data invented.
@@ -109,6 +109,36 @@ describe("spending lines", () => {
     expect(new Set(lines.map((l) => l.categoryId))).toEqual(new Set([cat.Groceries, cat.Dining]));
     // Nothing else is categorized yet, so nothing else appears anywhere.
     expect(await read(db, spendingLines, {})).toHaveLength(2);
+  });
+
+  it("carries each line's account and merchant, for the Spending page (#66)", async () => {
+    await user("transactions.split", { transactionId: grocery.id, parts: twoParts() });
+    const lines = await read(db, spendingLines, {});
+    expect(lines.map((l) => [l.accountId, l.merchant])).toEqual([
+      [grocery.accountId, "Quillfield Market"],
+      [grocery.accountId, "Quillfield Market"],
+    ]);
+  });
+
+  it("totals uncategorized money out separately: not splits, transfers, categorized or money in", async () => {
+    const june = { from: "2026-06-01", to: "2026-06-30" };
+    const before = await read(db, uncategorizedSpend, june);
+    expect(before.count).toBeGreaterThan(0);
+    const inJune = (t: typeof transactions.$inferSelect) => t.postedOn >= june.from && t.postedOn <= june.to;
+    const [juneGrocery] = (await db.select().from(transactions).where(eq(transactions.merchant, "Quillfield Market"))).filter(inJune);
+    const [juneCafe] = (await db.select().from(transactions).where(eq(transactions.merchant, "Corner Bean Cafe"))).filter(inJune);
+
+    await user("transactions.setCategory", { transactionId: juneCafe.id, categoryId: cat.Dining });
+    await user("transactions.split", {
+      transactionId: juneGrocery.id,
+      parts: [
+        { amountCents: Math.trunc(juneGrocery.amountCents / 2), categoryId: cat.Groceries },
+        { amountCents: juneGrocery.amountCents - Math.trunc(juneGrocery.amountCents / 2), categoryId: cat.Dining },
+      ],
+    });
+    const after = await read(db, uncategorizedSpend, june);
+    expect(after.count).toBe(before.count - 2);
+    expect(after.cents).toBe(before.cents + juneCafe.amountCents + juneGrocery.amountCents);
   });
 
   it("clearing the experience date returns it to the posted date", async () => {

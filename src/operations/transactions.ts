@@ -366,7 +366,7 @@ export function countsAsSpending(): SQL {
   ))`;
 }
 
-type Line = { transactionId: string; date: string; amountCents: number; categoryId: string };
+type Line = { transactionId: string; date: string; amountCents: number; categoryId: string; accountId: string; merchant: string | null };
 
 /**
  * A deposit linked to a pay stub (#60) counts as the paycheck it was:
@@ -404,7 +404,8 @@ export const spendingLines = defineRead({
     "per part of a split transaction. Dated by experience date when set, else posted date; from/to filter " +
     "on that date (inclusive). budgetOnly (default true) limits to accounts that count toward budgets. " +
     "A provisional transaction (from a purchase alert) counts until the bank's data for its account reaches " +
-    "its date. A deposit linked to a pay stub counts as gross pay plus a line per deduction. Net by default: what friends owe on a shared expense comes off it (your share is what counts), and the " +
+    "its date. A deposit linked to a pay stub counts as gross pay plus a line per deduction. Each line carries " +
+    "its transaction's account id and merchant name, for grouping (the Spending page). Net by default: what friends owe on a shared expense comes off it (your share is what counts), and the " +
     "part of an incoming payment matched to a reimbursement is dropped (never income). gross: true returns " +
     "the amounts as charged.",
   input: z.object({
@@ -427,11 +428,25 @@ export const spendingLines = defineRead({
 
     const [whole, split] = await Promise.all([
       db
-        .select({ transactionId: transactions.id, date: effective, amountCents: transactions.amountCents, categoryId: transactions.categoryId })
+        .select({
+          transactionId: transactions.id,
+          date: effective,
+          amountCents: transactions.amountCents,
+          categoryId: transactions.categoryId,
+          accountId: transactions.accountId,
+          merchant: transactions.merchant,
+        })
         .from(transactions)
         .where(and(isNotNull(transactions.categoryId), ...filters)),
       db
-        .select({ transactionId: transactions.id, date: effective, amountCents: transactionSplits.amountCents, categoryId: transactionSplits.categoryId })
+        .select({
+          transactionId: transactions.id,
+          date: effective,
+          amountCents: transactionSplits.amountCents,
+          categoryId: transactionSplits.categoryId,
+          accountId: transactions.accountId,
+          merchant: transactions.merchant,
+        })
         .from(transactionSplits)
         .innerJoin(transactions, eq(transactions.id, transactionSplits.transactionId))
         .where(and(...filters))
@@ -457,6 +472,34 @@ export const spendingLines = defineRead({
       });
     }
     return lines.sort((a, b) => b.date.localeCompare(a.date));
+  },
+});
+
+export const uncategorizedSpend = defineRead({
+  name: "transactions.uncategorizedSpend",
+  description:
+    "Money out that isn't categorized yet, between two dates (inclusive, by experience date when set): how many " +
+    "transactions and their total in cents (positive). It isn't in spendingLines, so the Spending page shows it " +
+    "separately rather than hiding it. Budget accounts only; transfers and split transactions aren't counted.",
+  input: z.object({ from: z.iso.date(), to: z.iso.date() }),
+  run: async (db, { from, to }) => {
+    const effective = sql<string>`coalesce(${transactions.experiencedOn}, ${transactions.postedOn})`;
+    const [row] = await db
+      .select({ count: count(), cents: sql<number>`coalesce(-sum(${transactions.amountCents}), 0)`.mapWith(Number) })
+      .from(transactions)
+      .where(
+        and(
+          isNull(transactions.categoryId),
+          eq(transactions.isSplit, false),
+          isNull(transactions.transferPairId),
+          sql`${transactions.amountCents} < 0`,
+          sql`${effective} >= ${from}`,
+          sql`${effective} <= ${to}`,
+          inArray(transactions.accountId, budgetAccountIds(db)),
+          countsAsSpending(),
+        ),
+      );
+    return { count: row.count, cents: row.cents };
   },
 });
 
