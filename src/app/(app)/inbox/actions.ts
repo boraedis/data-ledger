@@ -12,9 +12,10 @@ function failure(error: unknown): { error: string } {
 }
 
 /**
- * The owner categorizes one transaction, then the pipeline runs again so
- * merchant memory immediately picks up anything else from the same
- * merchant — the inbox shrinks as you go instead of asking twice.
+ * The owner categorizes one transaction (or confirms its suggestion), then
+ * the pipeline runs again so any rule picks up the rest. Merchant memory
+ * only suggests (#86): the next one from this merchant arrives with this
+ * category pre-selected.
  */
 export async function categorize(transactionId: string, categoryId: string): Promise<Result> {
   try {
@@ -26,7 +27,29 @@ export async function categorize(transactionId: string, categoryId: string): Pro
         reason: "Categorized in the inbox",
       });
       const result = await runCategorization(db);
-      return result.byRules + result.byMemory;
+      return result.byRules;
+    });
+    revalidatePath("/inbox");
+    return { ok: true, autoCategorized };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+/**
+ * Confirms a set of inbox suggestions at once (#86), as the owner: one
+ * command, so Activity shows one entry and one undo puts them all back.
+ */
+export async function confirmSuggestions(assignments: { transactionId: string; categoryId: string }[]): Promise<Result> {
+  try {
+    const autoCategorized = await asOwner(async (db) => {
+      await execute(db, {
+        operation: "transactions.setCategories",
+        input: { assignments },
+        actor: "user",
+        reason: `Confirmed ${assignments.length} suggested categor${assignments.length === 1 ? "y" : "ies"} in the inbox`,
+      });
+      return (await runCategorization(db)).byRules;
     });
     revalidatePath("/inbox");
     return { ok: true, autoCategorized };
@@ -46,7 +69,7 @@ export async function createMerchantRule(merchant: string, categoryId: string): 
         reason: `Rule created from the inbox for ${merchant}`,
       });
       const result = await runCategorization(db);
-      return result.byRules + result.byMemory;
+      return result.byRules;
     });
     revalidatePath("/inbox");
     revalidatePath("/categories");
@@ -59,7 +82,7 @@ export async function createMerchantRule(merchant: string, categoryId: string): 
 /**
  * Sends what rules and memory couldn't handle to the model, as many
  * batches as fit in this request's time (a cold start alone is ~3.5 min).
- * Confident answers are applied; the rest come back as suggestions.
+ * Its answers come back as suggestions to confirm (#86).
  */
 export async function askModel(): Promise<{ error: string } | { ok: true; message: string }> {
   try {
@@ -72,8 +95,7 @@ export async function askModel(): Promise<{ error: string } | { ok: true; messag
       // a minute or two usually finds the model awake.
       return { error: `${result.modelError}. It keeps waking up in the background — try again in a minute or two.` };
     }
-    const parts = [`The model looked at ${result.modelSeen}`, `categorized ${result.byModel} confidently`];
-    if (result.modelSeen > result.byModel) parts.push(`left ${result.modelSeen - result.byModel} as suggestions`);
+    const parts = [`The model looked at ${result.modelSeen} and left its suggestions to confirm`];
     if (result.modelError) parts.push(`stopped early: ${result.modelError}`);
     return { ok: true, message: parts.join(", ") + "." };
   } catch (error) {

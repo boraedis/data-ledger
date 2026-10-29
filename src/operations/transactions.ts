@@ -202,6 +202,32 @@ export const setTransactionCategory = defineWrite({
   },
 });
 
+export const setCategories = defineWrite({
+  name: "transactions.setCategories",
+  description:
+    "Categorize a set of uncategorized transactions at once: confirming the inbox's suggestions (#86). One " +
+    "entry in Activity, undone together. A transaction categorized or split since is left as it is.",
+  input: z.object({
+    assignments: z.array(z.object({ transactionId: z.uuid(), categoryId: z.uuid() })).min(1).max(500),
+  }),
+  apply: async (ctx, { assignments }) => {
+    await assertCategoriesExist(ctx, [...new Set(assignments.map((a) => a.categoryId))]);
+    const current = await ctx.db
+      .select({ id: transactions.id, categoryId: transactions.categoryId, isSplit: transactions.isSplit })
+      .from(transactions)
+      .where(inArray(transactions.id, assignments.map((a) => a.transactionId)));
+    const open = new Set(current.filter((t) => t.categoryId === null && !t.isSplit).map((t) => t.id));
+    let applied = 0;
+    for (const { transactionId, categoryId } of assignments) {
+      if (!open.has(transactionId)) continue;
+      open.delete(transactionId);
+      await ctx.update(transactions, transactionId, { categoryId });
+      applied++;
+    }
+    return { applied };
+  },
+});
+
 export const splitTransaction = defineWrite({
   name: "transactions.split",
   description:
@@ -525,12 +551,12 @@ export const uncategorizedSpend = defineRead({
 export const applyCategories = defineWrite({
   name: "transactions.applyCategories",
   description:
-    "Pipeline only: categorize a batch of uncategorized transactions (one rule's, merchant memory's or the model's results).",
-  // The categorization pipeline runs this once per rule (as rule:<id>), once
-  // for merchant memory and once for the model's confident answers, so
+    "Pipeline only: categorize a batch of uncategorized transactions (one rule's matches).",
+  // The categorization pipeline runs this once per rule (as rule:<id>), so
   // Activity shows "Rule X categorized 23 transactions" as one undoable
-  // entry rather than 23.
-  allowedActors: ["rule:*", "memory", "model"],
+  // entry rather than 23. Rules only (#86): merchant memory and the model
+  // suggest, and the owner confirms (transactions.setCategories).
+  allowedActors: ["rule:*"],
   input: z.object({
     assignments: z.array(z.object({ transactionId: z.uuid(), categoryId: z.uuid() })).min(1).max(5000),
   }),
@@ -601,7 +627,8 @@ export const listInbox = defineRead({
   name: "transactions.inbox",
   description:
     "Uncategorized transactions in accounts that count toward budgets, newest first, each with a suggested " +
-    "category: from merchant memory when the merchant's history is mixed, else from the model when it had one.",
+    "category for the owner to confirm: from merchant memory when the merchant has history (suggestionAgrees: " +
+    "its recent categories all agree), else from the model when it had one (with its confidence).",
   input: z.object({ limit: z.number().int().min(1).max(500).default(100) }),
   run: async (db, { limit }) => {
     const rows = await db
@@ -644,13 +671,13 @@ awaitingCategory(db))
       // The owner's own history beats the model's guess.
       const verdict = row.merchant ? merchantMemory(byMerchant.get(row.merchant) ?? []) : { kind: "none" as const };
       if (verdict.kind !== "none") {
-        return { ...row, suggestedCategoryId: verdict.categoryId, suggestionSource: "memory" as const, suggestionConfidence: null };
+        return { ...row, suggestedCategoryId: verdict.categoryId, suggestionSource: "memory" as const, suggestionConfidence: null, suggestionAgrees: verdict.kind === "apply" };
       }
       const model = modelByTxn.get(row.id);
       if (model?.categoryId) {
-        return { ...row, suggestedCategoryId: model.categoryId, suggestionSource: "model" as const, suggestionConfidence: model.confidence };
+        return { ...row, suggestedCategoryId: model.categoryId, suggestionSource: "model" as const, suggestionConfidence: model.confidence, suggestionAgrees: false };
       }
-      return { ...row, suggestedCategoryId: null, suggestionSource: null, suggestionConfidence: null };
+      return { ...row, suggestedCategoryId: null, suggestionSource: null, suggestionConfidence: null, suggestionAgrees: false };
     });
   },
 });

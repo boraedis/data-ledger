@@ -38,7 +38,7 @@ async function handle(request: Request) {
     }
     // Counts only — never transaction details — in Vercel's logs.
     console.log(
-      `classify link ${depth}: model applied ${result.byModel}, saw ${result.modelSeen}, pending ${result.modelPending}` +
+      `classify link ${depth}: model suggested for ${result.modelSeen}, pending ${result.modelPending}` +
         `${result.modelError ? `, error: ${result.modelError}` : ""}${result.continued ? ", continuing" : ""}`,
     );
   });
