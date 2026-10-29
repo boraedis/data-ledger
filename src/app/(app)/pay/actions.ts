@@ -19,6 +19,8 @@ export type StubFields = {
   grossCents: number;
   netCents: number;
   lines: StubLine[];
+  // Paid by the employer on top (#92): from the stub's memo box.
+  employerLines: { kind: string; label: string; amountCents: number }[];
   // Undefined: link automatically if exactly one way fits (one deposit, or
   // pay split across accounts).
   depositTransactionIds?: string[] | null;

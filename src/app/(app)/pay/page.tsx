@@ -23,6 +23,10 @@ export default async function PayPage() {
 
   const thisYear = stubs.filter((s) => s.payDate.startsWith(String(year)));
   const sum = (pick: (s: (typeof stubs)[number]) => number) => thisYear.reduce((total, s) => total + pick(s), 0);
+  // Paid by the employer on top (#92): money only, not imputed income.
+  const employerOf = (kinds: string[]) => (s: (typeof stubs)[number]) => s.employerLines.filter((l) => kinds.includes(l.kind)).reduce((t, l) => t + l.amountCents, 0);
+  const employerPaid = sum(employerOf(["retirement_match", "hsa", "life_insurance", "other"]));
+  const match = sum(employerOf(["retirement_match"]));
 
   const last = stubs[0];
   const blank = {
@@ -37,6 +41,7 @@ export default async function PayPage() {
       { kind: "social_security", label: "Social Security", amountCents: 0, categoryId: null },
       { kind: "medicare", label: "Medicare", amountCents: 0, categoryId: null },
     ],
+    employerLines: [],
   };
   const next = last ? { ...last, ...nextPeriod(last) } : blank;
 
@@ -72,6 +77,19 @@ export default async function PayPage() {
               <dt className="text-xs text-muted-foreground">Take-home</dt>
               <dd className="tabular-nums">{formatCents(sum((s) => s.netCents))}</dd>
             </div>
+            {employerPaid ? (
+              <>
+                <div className="rounded-lg border p-3">
+                  <dt className="text-xs text-muted-foreground">Paid by your employer</dt>
+                  <dd className="tabular-nums">{formatCents(employerPaid)}</dd>
+                  {match ? <dd className="text-xs text-muted-foreground">401(k) match {formatCents(match)}</dd> : null}
+                </div>
+                <div className="rounded-lg border p-3">
+                  <dt className="text-xs text-muted-foreground">Total pay, with benefits</dt>
+                  <dd className="tabular-nums">{formatCents(sum((s) => s.grossCents) + employerPaid)}</dd>
+                </div>
+              </>
+            ) : null}
           </dl>
           <Link href="/pay/taxes" className="inline-block text-sm text-muted-foreground underline">
             Year-end tax estimate →

@@ -1,4 +1,4 @@
-import type { payLineKind } from "@/db/schema";
+import type { employerPayKind, payLineKind } from "@/db/schema";
 
 // Pay stubs (#60), the parts with no database: what each deduction kind
 // is, the check that a stub adds up, and which deposit is its net pay.
@@ -29,6 +29,19 @@ export const GROUP_LABELS: Record<PayLineGroup, string> = {
   retirement: "Retirement & savings",
   other: "Other deductions",
 };
+
+// What the employer pays on top (#92), from the stub's memo box. None of
+// it is in gross or net.
+export type EmployerPayKind = (typeof employerPayKind.enumValues)[number];
+export const EMPLOYER_PAY_KINDS: { kind: EmployerPayKind; label: string; hint: string }[] = [
+  { kind: "retirement_match", label: "401(k) match", hint: "What the employer put into your 401(k)" },
+  { kind: "hsa", label: "HSA contribution", hint: "Counts toward your HSA limit with your own" },
+  { kind: "life_insurance", label: "Life insurance (employer cost)", hint: "What the employer paid; shown only" },
+  { kind: "imputed_income", label: "Imputed income (taxable, not paid)", hint: "Life insurance over $50,000 of coverage: taxed as wages" },
+  { kind: "other", label: "Other employer-paid", hint: "Shown only" },
+];
+const employerByKind = new Map(EMPLOYER_PAY_KINDS.map((k) => [k.kind, k]));
+export const employerKindLabel = (kind: EmployerPayKind): string => employerByKind.get(kind)?.label ?? kind;
 
 const byKind = new Map(PAY_LINE_KINDS.map((k) => [k.kind, k]));
 export const groupOf = (kind: PayLineKind): PayLineGroup => byKind.get(kind)?.group ?? "other";

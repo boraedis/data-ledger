@@ -125,13 +125,81 @@ export default async function TaxesPage(props: PageProps<"/pay/taxes">) {
             <section className="space-y-2">
               <h2 className="text-lg font-medium">How the federal estimate adds up</h2>
               <dl className="space-y-1 rounded-lg border p-3 text-sm">
-                <Line label="Wages after pre-tax deductions (401(k), HSA, FSA, insurance)" cents={federal.wagesCents} />
+                <Line
+                  label={
+                    estimate.employer.imputed.projectedCents
+                      ? "Wages after pre-tax deductions (401(k), HSA, FSA, insurance), with imputed life-insurance income"
+                      : "Wages after pre-tax deductions (401(k), HSA, FSA, insurance)"
+                  }
+                  cents={federal.wagesCents}
+                />
                 {assumptions.otherIncomeCents ? <Line label="Other income" cents={assumptions.otherIncomeCents} sign="+ " /> : null}
                 <Line label={federal.itemized ? "Itemized deductions" : "Standard deduction"} cents={federal.deductionCents} sign="− " />
                 <Line label="Taxable income" cents={federal.taxableIncomeCents} sign="= " />
                 <Line label="Federal income tax, after credits" cents={federal.liabilityCents} />
                 <Line label="Paid: withholding at this pace, plus other payments" cents={federal.paidCents} />
               </dl>
+            </section>
+          ) : null}
+
+          {estimate.hsa ? (
+            <section className="space-y-1 text-sm">
+              <h2 className="text-lg font-medium">HSA</h2>
+              <p className="text-muted-foreground">
+                Your contributions through payroll and your employer&apos;s share one yearly limit. Contributions made outside payroll aren&apos;t
+                counted here.
+              </p>
+              <table className="w-full">
+                <thead>
+                  <tr className="text-xs text-muted-foreground">
+                    <th className="pb-1 text-left font-normal" />
+                    <th className="pb-1 text-right font-normal">So far</th>
+                    <th className="pb-1 text-right font-normal">Year at this pace</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <Row label="Yours" ytd={estimate.hsa.yours.ytdCents} projected={estimate.hsa.yours.projectedCents} />
+                  <Row label="Your employer's" ytd={estimate.hsa.employer.ytdCents} projected={estimate.hsa.employer.projectedCents} />
+                  <Row label="Together" ytd={estimate.hsa.yours.ytdCents + estimate.hsa.employer.ytdCents} projected={estimate.hsa.projectedCents} strong />
+                </tbody>
+              </table>
+              {estimate.hsa.limitCents === null ? (
+                <p className="text-muted-foreground">
+                  {assumptions.hsaCoverage
+                    ? `There's no HSA limit for ${year} here yet.`
+                    : "Set your HSA coverage in the assumptions below to check this against the year's limit."}
+                </p>
+              ) : estimate.hsa.projectedCents > estimate.hsa.limitCents ? (
+                <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-warning">
+                  At this pace, {formatCents(estimate.hsa.projectedCents - estimate.hsa.limitCents)} over the {year} limit of{" "}
+                  {formatCents(estimate.hsa.limitCents)}. Lower your payroll contribution before the year ends; an excess is taxed unless it&apos;s
+                  withdrawn.
+                </p>
+              ) : (
+                <p className="text-muted-foreground">
+                  {formatCents(estimate.hsa.limitCents - estimate.hsa.projectedCents)} of room left under the {year} limit of{" "}
+                  {formatCents(estimate.hsa.limitCents)}, at this pace.
+                </p>
+              )}
+            </section>
+          ) : null}
+
+          {estimate.employer.lines.length || estimate.employer.imputed.ytdCents ? (
+            <section className="space-y-2 text-sm">
+              <h2 className="text-lg font-medium">Paid by your employer</h2>
+              <table className="w-full">
+                <tbody>
+                  {estimate.employer.lines.map((l) => (
+                    <Row key={l.kind} label={l.label} ytd={l.ytdCents} projected={l.projectedCents} />
+                  ))}
+                  {estimate.employer.lines.length > 1 ? (
+                    <Row label="Total, on top of gross pay" ytd={estimate.employer.total.ytdCents} projected={estimate.employer.total.projectedCents} strong />
+                  ) : null}
+                  {estimate.employer.imputed.ytdCents ? (
+                    <Row label="Imputed income (taxable, not paid; in the estimate)" ytd={estimate.employer.imputed.ytdCents} projected={estimate.employer.imputed.projectedCents} />
+                  ) : null}
+                </tbody>
+              </table>
             </section>
           ) : null}
 

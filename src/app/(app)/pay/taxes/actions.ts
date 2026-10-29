@@ -10,6 +10,8 @@ export type AssumptionFields = {
   itemizedDeductionsCents: number | null;
   creditsCents: number;
   otherPaymentsCents: number;
+  hsaCoverage: "self" | "family" | null;
+  hsaCatchUp: boolean;
 };
 
 // The owner's inputs to the tax estimate (#61): logged and undoable.

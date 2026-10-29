@@ -666,11 +666,38 @@ export const payStubLines = pgTable(
   (t) => [index("pay_stub_lines_stub_idx").on(t.payStubId)],
 );
 
+// What the employer pays on top of a paycheck (#92), from a stub's memo or
+// "employer paid" box: a 401(k) match, an HSA contribution, the cost of
+// group-term life insurance. Never part of gross or deductions, so the
+// stub's gross - deductions = net check doesn't see them, and budgets
+// don't count them (the money never reaches a budget account; 401(k) and
+// HSA balances arrive through those accounts). Imputed income is the one
+// that's taxable: the value of life insurance over $50,000 of coverage,
+// counted as wages without being paid, so the tax estimate adds it.
+export const employerPayKind = pgEnum("employer_pay_kind", ["retirement_match", "hsa", "life_insurance", "imputed_income", "other"]);
+
+export const payStubEmployerLines = pgTable(
+  "pay_stub_employer_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    payStubId: uuid("pay_stub_id")
+      .notNull()
+      .references(() => payStubs.id, { onDelete: "cascade" }),
+    kind: employerPayKind("kind").notNull(),
+    label: text("label").notNull(),
+    amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+    position: integer("position").notNull(),
+  },
+  (t) => [index("pay_stub_employer_lines_stub_idx").on(t.payStubId)],
+);
+
 export const filingStatus = pgEnum("filing_status", ["single", "married_joint", "married_separate", "head_of_household"]);
 
 // The owner's own inputs to the tax estimate (#61), one row per tax year:
 // what pay stubs can't say. User data, set through taxes.setAssumptions;
 // never repo config. All amounts are yearly, positive cents.
+export const hsaCoverage = pgEnum("hsa_coverage", ["self", "family"]);
+
 export const taxAssumptions = pgTable("tax_assumptions", {
   id: uuid("id").primaryKey().defaultRandom(),
   year: integer("year").notNull().unique(),
@@ -684,6 +711,10 @@ export const taxAssumptions = pgTable("tax_assumptions", {
   // Federal tax paid outside payroll: estimated payments, or withholding
   // on other income.
   otherPaymentsCents: bigint("other_payments_cents", { mode: "number" }).notNull().default(0),
+  // HSA coverage for the year (#92), which sets its contribution limit;
+  // null when there's no HSA-eligible plan. Catch-up: 55 or older.
+  hsaCoverage: hsaCoverage("hsa_coverage"),
+  hsaCatchUp: boolean("hsa_catch_up").notNull().default(false),
 });
 
 // ---------------------------------------------------------------------------

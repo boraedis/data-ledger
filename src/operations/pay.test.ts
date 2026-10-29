@@ -1,6 +1,6 @@
 import { and, eq, like } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { accounts, categories, payStubDeposits, payStubLines, payStubs, transactions } from "@/db/schema";
+import { accounts, categories, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { linkPayStubsStep } from "@/lib/categorize/pipeline";
 import { applySeed } from "@/lib/seed/apply";
@@ -86,6 +86,30 @@ describe("payStubs", () => {
     await undoCommand(db, (deleted as { commandId: string }).commandId);
     expect(await db.select().from(payStubLines).where(eq(payStubLines.payStubId, output.payStubId))).toHaveLength(4);
     expect(await db.select().from(payStubDeposits).where(eq(payStubDeposits.payStubId, output.payStubId))).toHaveLength(1);
+  });
+
+  it("keeps what the employer paid on top apart from gross and net, through edits and undo (#92)", async () => {
+    const employerLines = [
+      { kind: "retirement_match", label: "401K ER Match", amountCents: 12_000 },
+      { kind: "life_insurance", label: "Basic Life", amountCents: 900 },
+    ];
+    // Not deductions: the stub still has to add up without them.
+    const { output } = (await run("payStubs.create", stubFor(paycheck, { employerLines }))) as { output: { payStubId: string } };
+    const mine = async () => (await listPayStubs.run(db, {})).find((s) => s.id === output.payStubId)!;
+    expect((await mine()).employerLines).toEqual(employerLines);
+    expect((await mine()).totals).toEqual({ tax: 41_000 + 18_600 + 4_350, insurance: 6_050, retirement: 0, other: 0 });
+
+    // Budgets never count them: the deposit still expands to exactly itself.
+    const lines = (await spendingLines.run(db, { from: paycheck.postedOn, to: paycheck.postedOn, budgetOnly: true, gross: false })).filter((l) => l.transactionId === paycheck.id);
+    expect(lines.reduce((s, l) => s + l.amountCents, 0)).toBe(paycheck.amountCents);
+
+    await run("payStubs.update", stubFor(paycheck, { payStubId: output.payStubId, employerLines: [{ kind: "hsa", label: "HSA ER", amountCents: 5_000 }] }));
+    expect((await mine()).employerLines).toEqual([{ kind: "hsa", label: "HSA ER", amountCents: 5_000 }]);
+
+    const deleted = await run("payStubs.delete", { payStubId: output.payStubId });
+    expect(await db.select().from(payStubEmployerLines).where(eq(payStubEmployerLines.payStubId, output.payStubId))).toEqual([]);
+    await undoCommand(db, (deleted as { commandId: string }).commandId);
+    expect(await db.select().from(payStubEmployerLines).where(eq(payStubEmployerLines.payStubId, output.payStubId))).toHaveLength(1);
   });
 
   it("links a stub entered before payday once the deposit posts", async () => {
