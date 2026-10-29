@@ -36,9 +36,10 @@ const stubFields = z.object({
 /**
  * The ways posted deposits near the pay date could make up the net (#91):
  * one deposit of exactly the net, or pay split across accounts. Deposits
- * already another stub's are left out.
+ * already another stub's are left out. `anyPayer`: also splits whose
+ * deposits name different payers, for the owner to choose from only.
  */
-export async function openDeposits(db: Db, stub: { payDate: string; netCents: number }, exceptStubId?: string) {
+export async function openDeposits(db: Db, stub: { payDate: string; netCents: number }, exceptStubId?: string, { anyPayer = false } = {}) {
   const linked = db
     .select({ id: payStubDeposits.transactionId })
     .from(payStubDeposits)
@@ -57,7 +58,7 @@ export async function openDeposits(db: Db, stub: { payDate: string; netCents: nu
         notInArray(transactions.id, linked),
       ),
     );
-  return depositMatches(stub, rows);
+  return depositMatches(stub, rows, { anyPayer });
 }
 
 async function checkDeposits(ctx: WriteContext, depositIds: string[], stub: { netCents: number }, exceptStubId?: string) {

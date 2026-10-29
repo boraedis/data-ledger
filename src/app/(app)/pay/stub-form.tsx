@@ -56,6 +56,7 @@ export function StubForm({
     initial.lines.map((l) => ({ kind: l.kind, label: l.label, amount: dollars(l.amountCents), categoryId: l.categoryId ?? "" })),
   );
   const [deposits, setDeposits] = useState<DepositMatch[]>([]);
+  const [automatic, setAutomatic] = useState<string[] | null>(null);
   const [deposit, setDeposit] = useState<string>("auto");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -72,7 +73,9 @@ export function StubForm({
     let live = true;
     if (!adds || !netCents) return;
     findDeposits(payDate, netCents, payStubId).then((found) => {
-      if (live) setDeposits(found);
+      if (!live) return;
+      setDeposits(found.matches);
+      setAutomatic(found.automatic);
     });
     return () => {
       live = false;
@@ -185,7 +188,11 @@ export function StubForm({
           <span className="text-xs text-muted-foreground">Deposit of the net pay (split across accounts is fine)</span>
           <select value={deposit} onChange={(e) => setDeposit(e.target.value)} className={`${input} w-full sm:w-auto`}>
             <option value="auto">
-              {deposits.length === 1 ? `Link automatically: ${matchLabel(deposits[0])}` : deposits.length ? "Pick one below…" : "None yet: link when it posts"}
+              {automatic
+                ? `Link automatically: ${matchLabel(deposits.find((d) => d.ids.join(",") === automatic.join(","))!)}`
+                : deposits.length
+                  ? "Pick one below…"
+                  : "None yet: link when it posts"}
             </option>
             {deposits.map((d) => (
               <option key={d.ids.join(",")} value={d.ids.join(",")}>

@@ -38,6 +38,15 @@ describe("depositMatches", () => {
     expect(ids([dep("a", "2026-06-12", 195_000), dep("b", "2026-06-12", 50_000, "savings", null)])).toEqual([]);
   });
 
+  it("offers splits across differently named payers only when asked, for the owner to choose", () => {
+    const deposits = [dep("a", "2026-06-12", 195_000, "checking", "Acme Payroll"), dep("b", "2026-06-12", 50_000, "savings", "Acme Widgets Dir Dep")];
+    expect(ids(deposits)).toEqual([]);
+    const any = depositMatches({ payDate: "2026-06-12", netCents: 245_000 }, deposits, { anyPayer: true });
+    expect(any.map((m) => m.map((d) => d.id))).toEqual([["a", "b"]]);
+    // Still one deposit per account.
+    expect(depositMatches({ payDate: "2026-06-12", netCents: 245_000 }, [dep("a", "2026-06-12", 195_000), dep("b", "2026-06-12", 50_000, "checking", "Other")], { anyPayer: true })).toEqual([]);
+  });
+
   it("lists every way that fits, so two of them leave the choice to the owner", () => {
     const deposits = [dep("c1", "2026-06-12", 195_000), dep("s1", "2026-06-12", 50_000, "savings"), dep("c2", "2026-06-12", 145_000, "brokerage"), dep("s2", "2026-06-12", 100_000, "hsa")];
     expect(ids(deposits)).toEqual([
