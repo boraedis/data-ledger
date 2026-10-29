@@ -92,18 +92,25 @@ never overwrites a category that's already set:
 1. **Rules** — the owner's own, in priority order: merchant or description
    equals / contains / starts with a pattern, optionally limited to one
    account or an amount range. No regex (a user pattern run over every
-   transaction is a ReDoS risk, and these cover the real cases).
-2. **Merchant memory** — if this merchant's last few categorizations
-   (up to 5) all agree, repeat it; one past categorization is enough. If
-   they disagree, it only *suggests* in the inbox.
+   transaction is a ReDoS risk, and these cover the real cases). **The
+   only step that categorizes on its own** (#86).
+2. **Merchant memory** — a *suggestion*: this merchant's usual category
+   from its last few categorizations (up to 5; one is enough), marked as
+   "your usual" when they all agree and "most often" when they don't.
 3. **The model** (see "Model service"), only for what rules and memory
-   left — and memory's mixed-history cases stay the owner's call. Answers
-   at or above `MODEL_AUTO_APPLY_THRESHOLD` (default 90%) are applied as
-   actor `model`, one undoable batch; the rest become **suggestions**,
-   pre-selected in the inbox with the model's confidence. Each transaction
-   goes to the model once (even "don't know" is recorded), so it's never
-   paid for twice.
-4. Everything else waits in the **review inbox**.
+   left. Its answers are *suggestions* too, with its confidence. Each
+   transaction goes to the model once (even "don't know" is recorded), so
+   it's never paid for twice.
+4. Everything waits in the **review inbox**, each suggestion pre-selected:
+   Enter (or a tap) confirms one, as the owner, undoable. Ticking several
+   and **Confirm** files a set as one undoable Activity entry, with quick
+   selections for "your usual" and the model's confident answers (at or
+   above `MODEL_AUTO_APPLY_THRESHOLD`, default 90%). After confirming,
+   "Always categorize this merchant this way" makes it a rule in one tap.
+
+Until #86, memory and the model's confident answers were applied without
+asking (logged and undoable). Only the owner's explicit rules do that
+now; the rest is a confirmation.
 
 The model step runs only when asked: **nightly**, and from the inbox's
 **Ask the model** button. A cold start takes ~2½–4½ minutes (measured on
@@ -117,10 +124,9 @@ wakes the GPU). If there's work left, or the model was still booting, it
 triggers itself again and the next run finds the model warm; it stops
 when nothing is left for the model, and never goes past 6 links.
 
-Merchant memory treats the model's confident answers like any other
-categorization history, so a merchant the model files once is then
-handled by memory. Undoing a model batch doesn't undo memory batches
-that followed from it. Inbox corrections and "Sync now" never wake the GPU.
+A confirmed suggestion is categorization history like any other, so the
+next transaction from that merchant arrives with it as "your usual".
+Inbox corrections and "Sync now" never wake the GPU.
 If the model is unreachable or out of time, nothing breaks — those
 transactions stay in the inbox and are tried next time.
 
@@ -128,9 +134,11 @@ transactions stay in the inbox and are tried next time.
 history** asks the model about up to 30 transactions you've already
 categorized (that it has never seen), hiding the answer, and stores only
 the scores: right / wrong / "don't know", and for each threshold how many
-would be auto-applied and how many of those would be right. It also names
-the lowest threshold with no wrong auto-applied answer, to set
-`MODEL_AUTO_APPLY_THRESHOLD` from.
+answers would count as confident and how many of those would be right. It
+also names the lowest threshold with no wrong confident answer, to set
+`MODEL_AUTO_APPLY_THRESHOLD` from: it decides what the inbox's "model
+≥90%" selection picks, so this says how far to trust confirming those at
+once.
 
 Rules and memory key on a **merchant name** derived from the raw
 description (`src/lib/categorize/merchant.ts`): processor prefixes, store
@@ -438,7 +446,7 @@ local Postgres works the same way.
 | `MODEL_BASE_URL` | optional | The model's OpenAI-compatible base URL, ending in `/v1`. Unset = no AI features; everything else works |
 | `MODEL_API_KEY` | with the above | The key the model server requires (same value as its `VLLM_API_KEY`) |
 | `MODEL_NAME` | optional | Model name to request; defaults to `ledger`, the name `model/serve.py` serves under |
-| `MODEL_AUTO_APPLY_THRESHOLD` | optional | Confidence (0–1) at or above which the model's category is applied rather than suggested; default 0.9 |
+| `MODEL_AUTO_APPLY_THRESHOLD` | optional | Confidence (0–1) at or above which the model's suggestion counts as confident, for the inbox's "confirm the confident ones" selection; nothing is applied on it. Default 0.9 |
 | `BRIDGE_TOKEN` | optional | Bearer token Data Diary sends to the bridge (32+ chars). Unset = bridge off |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional | Push notifications (#29): the key pair from `npx web-push generate-vapid-keys`, and a `mailto:` or https contact. Unset = no notifications |
 

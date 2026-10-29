@@ -1,4 +1,5 @@
 import { categoryOptions } from "@/lib/categorize/labels";
+import { autoApplyThreshold } from "@/lib/categorize/pipeline";
 import { getDb } from "@/lib/db";
 import { modelIsConfigured } from "@/lib/model/client";
 import { listAccounts } from "@/operations/accounts";
@@ -36,7 +37,7 @@ export default async function InboxPage() {
         <p className="text-sm text-muted-foreground">
           {rows.length === 0
             ? "Nothing to review."
-            : `${rows.length}${rows.length === LIMIT ? "+" : ""} transactions that rules and merchant memory couldn't categorize.`}
+            : `${rows.length}${rows.length === LIMIT ? "+" : ""} transactions waiting for a category. Only your rules file transactions on their own; suggestions from your history and the model wait here, pre-selected, for you to confirm one at a time or a set at once.`}
         </p>
       </div>
       {/* Above the inbox, which can run to hundreds of rows; stale alerts
@@ -47,7 +48,7 @@ export default async function InboxPage() {
           Create some categories first, under <a className="underline" href="/categories">Categories</a>.
         </p>
       ) : (
-        <Inbox rows={rows} options={options} modelConfigured={modelIsConfigured()} />
+        <Inbox rows={rows} options={options} modelConfigured={modelIsConfigured()} confidentAt={autoApplyThreshold()} />
       )}
     </div>
   );

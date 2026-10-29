@@ -9,7 +9,8 @@ import { listInbox } from "@/operations/transactions";
 import { execute, read, undoCommand } from "@/operations/runtime";
 
 // The pipeline end to end on PGlite over the synthetic seed: rules, then
-// merchant memory, then the inbox. All data invented.
+// merchant memory's suggestions, then the inbox. Only rules categorize on
+// their own (#86). All data invented.
 
 let db: Db;
 let cat: Record<string, string>;
@@ -30,7 +31,7 @@ beforeEach(async () => {
 describe("runCategorization", () => {
   it("leaves everything in the inbox with no rules and no history", async () => {
     const result = await runCategorization(db);
-    expect(result.byRules + result.byMemory).toBe(0);
+    expect(result.byRules).toBe(0);
     expect(result.remaining).toBeGreaterThan(200);
     // The only write is the transfer matcher pairing the seed's brokerage
     // contributions (#24); nothing was categorized.
@@ -61,25 +62,44 @@ describe("runCategorization", () => {
     expect((await txnsFor("Corner Bean Cafe")).every((t) => t.categoryId === cat.Coffee)).toBe(true);
   });
 
-  it("learns from one categorization: memory fills in the rest of that merchant", async () => {
+  it("learns from one categorization, as a suggestion: the rest of that merchant waits, pre-selected (#86)", async () => {
     const [first, ...rest] = await txnsFor("Quillfield Market");
     await user("transactions.setCategory", { transactionId: first.id, categoryId: cat.Groceries });
     const result = await runCategorization(db);
-    expect(result.byMemory).toBe(rest.length);
-    expect((await txnsFor("Quillfield Market")).every((t) => t.categoryId === cat.Groceries)).toBe(true);
-    const [entry] = await db.select().from(commandLog).where(eq(commandLog.actor, "memory"));
-    expect(entry.changes).toHaveLength(rest.length);
+    expect(result.byRules).toBe(0);
+    expect((await txnsFor("Quillfield Market")).filter((t) => t.categoryId !== null)).toHaveLength(1);
+    expect(await db.select().from(commandLog).where(eq(commandLog.actor, "memory"))).toEqual([]);
+    const inbox = await read(db, listInbox, { limit: 500 });
+    const row = inbox.find((r) => r.id === rest[0].id)!;
+    expect(row).toMatchObject({ suggestedCategoryId: cat.Groceries, suggestionSource: "memory", suggestionAgrees: true });
   });
 
-  it("with mixed history, suggests instead of applying", async () => {
+  it("with mixed history, suggests the most common, marked as varying", async () => {
     const [a, b, ...rest] = await txnsFor("Quillfield Market");
     await user("transactions.setCategory", { transactionId: a.id, categoryId: cat.Groceries });
     await user("transactions.setCategory", { transactionId: b.id, categoryId: cat.Dining });
-    expect((await runCategorization(db)).byMemory).toBe(0);
+    await runCategorization(db);
     const inbox = await read(db, listInbox, { limit: 500 });
     const row = inbox.find((r) => r.id === rest[0].id)!;
-    expect(row.suggestedCategoryId).not.toBeNull();
+    expect(row.suggestionAgrees).toBe(false);
     expect([cat.Groceries, cat.Dining]).toContain(row.suggestedCategoryId);
+  });
+
+  it("confirms a set of suggestions as the owner, in one undoable command", async () => {
+    const [first, ...rest] = await txnsFor("Quillfield Market");
+    await user("transactions.setCategory", { transactionId: first.id, categoryId: cat.Groceries });
+    // One of them the owner has filed differently meanwhile: left alone.
+    await user("transactions.setCategory", { transactionId: rest[0].id, categoryId: cat.Dining });
+    const result = await user("transactions.setCategories", { assignments: rest.map((t) => ({ transactionId: t.id, categoryId: cat.Groceries })) });
+    expect((result as { output: { applied: number } }).output.applied).toBe(rest.length - 1);
+    const [entry] = await db.select().from(commandLog).where(eq(commandLog.operation, "transactions.setCategories"));
+    expect(entry.actor).toBe("user");
+    expect((await txnsFor("Quillfield Market")).filter((t) => t.categoryId === cat.Groceries)).toHaveLength(rest.length);
+
+    await undoCommand(db, entry.id);
+    const after = await txnsFor("Quillfield Market");
+    expect(after.filter((t) => t.categoryId === cat.Groceries).map((t) => t.id)).toEqual([first.id]);
+    expect(after.find((t) => t.id === rest[0].id)!.categoryId).toBe(cat.Dining);
   });
 
   it("never touches accounts excluded from budgets", async () => {
@@ -106,13 +126,13 @@ describe("runCategorization", () => {
     await user("rules.create", { matchField: "merchant", matchType: "equals", pattern: "Corner Bean Cafe", categoryId: cat.Coffee });
     await runCategorization(db);
     const before = (await db.select().from(commandLog)).length;
-    expect(await runCategorization(db)).toMatchObject({ byRules: 0, byMemory: 0 });
+    expect(await runCategorization(db)).toMatchObject({ byRules: 0 });
     expect(await db.select().from(commandLog)).toHaveLength(before);
   });
 
-  it("refuses the batch operation to the owner, Tally and import", async () => {
+  it("refuses the batch operation to all but rules: not the owner, Tally, import, memory or the model (#86)", async () => {
     const [t] = await txnsFor("Corner Bean Cafe");
-    for (const actor of ["user", "tally", "import"] as const) {
+    for (const actor of ["user", "tally", "import", "memory", "model"] as const) {
       await expect(
         execute(db, {
           operation: "transactions.applyCategories",

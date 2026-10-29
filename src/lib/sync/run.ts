@@ -102,7 +102,7 @@ export async function syncConnection(
     try {
       await backfillMerchantsIfNeeded(db);
       const result = await runCategorization(db);
-      categorized = result.byRules + result.byMemory;
+      categorized = result.byRules;
     } catch (error) {
       console.error("Categorization after sync failed", error);
       messages.push({ code: "app.categorize", message: "Automatic categorization failed this time; new transactions are in the inbox." });

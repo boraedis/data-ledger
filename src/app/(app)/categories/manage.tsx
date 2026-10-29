@@ -142,7 +142,8 @@ export function ManageCategories({ categories, rules }: { categories: CategoryRo
           </Button>
         </div>
         <p className="text-sm text-muted-foreground">
-          Rules run in this order before merchant memory, and only ever fill in uncategorized transactions.
+          Rules run in this order and only ever fill in uncategorized transactions. They&apos;re the only thing that categorizes on its own;
+          everything else waits in the inbox as a suggestion to confirm.
         </p>
         {rules.length ? (
           <ul className="divide-y rounded-lg border">

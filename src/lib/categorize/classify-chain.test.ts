@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MAX_CHAIN_DEPTH, chainUrl, classifyLink } from "@/lib/categorize/classify-chain";
 import type { CategorizationResult } from "@/lib/categorize/pipeline";
 
-const base: CategorizationResult = { byRules: 0, byMemory: 0, byModel: 0, modelSeen: 0, modelPending: 0, remaining: 0 };
+const base: CategorizationResult = { byRules: 0, modelSeen: 0, modelPending: 0, remaining: 0 };
 const env = { ...process.env };
 afterEach(() => {
   process.env = { ...env };
