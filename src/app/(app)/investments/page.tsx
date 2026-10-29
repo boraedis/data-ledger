@@ -3,6 +3,7 @@ import { ManualBadge } from "../accounts/account-row";
 import { ValueChart } from "@/components/charts/value-chart";
 import { KIND_LABELS } from "@/lib/account-kinds";
 import { getDb } from "@/lib/db";
+import { combineHoldings } from "@/lib/investments/combine";
 import { investmentsSummary, type AllocationSlice } from "@/lib/investments/summary";
 import { formatCents } from "@/lib/money";
 
@@ -53,8 +54,111 @@ function Allocation({ slices }: { slices: AllocationSlice[] }) {
   );
 }
 
+// Each asset across accounts (#81): total shares (exact decimals), value,
+// cost basis where reported, and a row per account behind it.
+function HoldingsAcross({ combined }: { combined: ReturnType<typeof combineHoldings> }) {
+  const { holdings, cashAndOther, unreported } = combined;
+  const columns = "grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 sm:grid-cols-[minmax(0,1fr)_7rem_7rem_8rem]";
+  return (
+    <div className="text-sm">
+      <div className={`${columns} hidden border-b pb-1 text-xs text-muted-foreground sm:grid`} aria-hidden>
+        <span>Asset</span>
+        <span className="text-right">Shares</span>
+        <span className="text-right">Value</span>
+        <span className="text-right">Cost basis</span>
+      </div>
+      <ul className="divide-y">
+        {holdings.map((h) => (
+          <li key={h.key}>
+            <details className="group">
+              <summary className={`${columns} cursor-pointer list-none py-2`}>
+                <span className="min-w-0">
+                  <span className="block truncate">
+                    <span className="mr-1 inline-block text-muted-foreground transition-transform group-open:rotate-90" aria-hidden>
+                      ▸
+                    </span>
+                    {h.symbol ? <span className="font-medium">{h.symbol} </span> : null}
+                    <span className={h.symbol ? "text-muted-foreground" : ""}>{h.description}</span>
+                  </span>
+                  <span className="block pl-4 text-xs text-muted-foreground">
+                    {h.accounts.length === 1 ? h.accounts[0].accountName : `${h.accounts.length} accounts`}
+                    <span className="sm:hidden tabular-nums"> · {h.shares} shares</span>
+                  </span>
+                </span>
+                <span className="hidden text-right tabular-nums sm:block">{h.shares}</span>
+                <span className="text-right tabular-nums">{formatCents(h.marketValueCents)}</span>
+                <span className="hidden text-right tabular-nums sm:block">
+                  {h.costBasisCents === null ? (
+                    <span className="text-muted-foreground">not reported</span>
+                  ) : (
+                    <>
+                      {formatCents(h.costBasisCents)}
+                      {h.basisComplete ? null : <span className="block text-xs text-muted-foreground">some accounts only</span>}
+                    </>
+                  )}
+                </span>
+              </summary>
+              <table className="mb-2 ml-4 w-[calc(100%-1rem)] text-xs">
+                <caption className="sr-only">
+                  {h.symbol ?? h.description} by account
+                </caption>
+                <thead>
+                  <tr className="text-muted-foreground">
+                    <th scope="col" className="text-left font-normal">
+                      Account
+                    </th>
+                    <th scope="col" className="text-right font-normal">
+                      Shares
+                    </th>
+                    <th scope="col" className="text-right font-normal">
+                      Value
+                    </th>
+                    <th scope="col" className="text-right font-normal">
+                      Cost basis
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {h.accounts.map((a) => (
+                    <tr key={a.accountId} className="border-t">
+                      <td className="py-1 pr-2">{a.accountName}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{a.shares}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums">{formatCents(a.marketValueCents)}</td>
+                      <td className="py-1 text-right tabular-nums">{a.costBasisCents === null ? "—" : formatCents(a.costBasisCents)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </details>
+          </li>
+        ))}
+        {cashAndOther.length ? (
+          <li className={`${columns} py-2 text-muted-foreground`}>
+            <span className="min-w-0">
+              <span className="block pl-4">Cash and other</span>
+              <span className="block truncate pl-4 text-xs">{cashAndOther.map((c) => `${c.accountName} ${formatCents(c.cents)}`).join(" · ")}</span>
+            </span>
+            <span className="hidden sm:block" />
+            <span className="text-right tabular-nums">{formatCents(cashAndOther.reduce((s, c) => s + c.cents, 0))}</span>
+            <span className="hidden sm:block" />
+          </li>
+        ) : null}
+        {unreported.map((u) => (
+          <li key={u.accountName} className={`${columns} py-2 text-muted-foreground`}>
+            <span className="block truncate pl-4">{u.accountName} (positions not reported)</span>
+            <span className="hidden sm:block" />
+            <span className="text-right tabular-nums">{formatCents(u.cents)}</span>
+            <span className="hidden sm:block" />
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default async function InvestmentsPage() {
   const summary = await investmentsSummary(getDb());
+  const combined = combineHoldings(summary.accounts);
 
   return (
     <div className="space-y-8">
@@ -108,6 +212,18 @@ export default async function InvestmentsPage() {
             </p>
             <Allocation slices={summary.byHolding} />
           </section>
+
+          {combined.holdings.length ? (
+            <section className="space-y-2">
+              <h2 className="text-lg font-medium">Holdings across accounts</h2>
+              <p className="text-xs text-muted-foreground">
+                Each asset&apos;s total shares, value and cost basis, wherever it&apos;s held; open one for the split by
+                account. Positions combine by symbol, or by an identical description when there&apos;s none. Cash and
+                other stays separate.
+              </p>
+              <HoldingsAcross combined={combined} />
+            </section>
+          ) : null}
 
           {summary.accounts.map((a) => (
             <section key={a.id} className="space-y-3 rounded-lg border p-3">
