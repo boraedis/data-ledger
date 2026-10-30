@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alertsFor, detectSeries, seriesKey, type Charge } from "@/lib/recurring/detect";
+import { alertsFor, cancelGraceDays, chargesAfterCancel, detectSeries, seriesKey, type Charge } from "@/lib/recurring/detect";
 
 // Invented merchants and amounts. amountCents > 0 = spent.
 
@@ -82,8 +82,91 @@ describe("alertsFor", () => {
     expect(alert).toMatchObject({ kind: "missing_charge", occurredOn: "2026-06-03" });
   });
 
+  it("raises one ended alert however many cycles are missed (#83)", () => {
+    const charges = monthly("Ironworks Gym", ["2026-01-03", "2026-02-03", "2026-03-03", "2026-04-03"], 45);
+    const confirmed = new Map([[seriesKey("Ironworks Gym", "card"), "confirmed" as const]]);
+    // Three missed cycles (May, Jun, Jul), checked nightly.
+    const keys = new Set(
+      ["2026-05-12", "2026-06-12", "2026-07-12", "2026-07-30"].flatMap((on) => alertsFor(detectSeries(charges, on), confirmed, on).map((a) => a.dedupeKey)),
+    );
+    expect([...keys]).toEqual([`missing_charge|${seriesKey("Ironworks Gym", "card")}|2026-05-03`]);
+    const [alert] = alertsFor(detectSeries(charges, "2026-05-12"), confirmed, "2026-05-12");
+    expect(alert).toMatchObject({ fromCents: 4_500, lastOn: "2026-04-03" });
+  });
+
+  it("stays quiet about a gap the owner called still active, until a new charge and a new gap", () => {
+    const key = seriesKey("Ironworks Gym", "card");
+    const confirmed = new Map([[key, "confirmed" as const]]);
+    const acked = new Map([[key, "2026-04-03"]]);
+    const before = monthly("Ironworks Gym", ["2026-01-03", "2026-02-03", "2026-03-03", "2026-04-03"], 45);
+    expect(alertsFor(detectSeries(before, "2026-06-12"), confirmed, "2026-06-12", acked)).toEqual([]);
+    // It charged again in June, then went quiet: that's a new gap.
+    const after = [...before, ...monthly("Ironworks Gym", ["2026-06-03"], 45)];
+    expect(alertsFor(detectSeries(after, "2026-07-20"), confirmed, "2026-07-20", acked).map((a) => a.occurredOn)).toEqual(["2026-07-03"]);
+  });
+
   it("raises nothing for a dismissed series", () => {
     const dismissed = new Map([[seriesKey("Streamflix", "card"), "dismissed" as const]]);
     expect(kinds(monthly("Streamflix", MONTHS, [15.49, 15.49, 15.49, 15.49, 15.49, 17.99]), dismissed)).toEqual([]);
+  });
+});
+
+describe("cancelled subscriptions (#82)", () => {
+  const cancelled = { merchant: "Streamflix", accountId: "card", cancelledOn: "2026-06-10", graceDays: 7 };
+
+  it("alerts once per charge after the cancel date and grace window", () => {
+    const charges = [
+      c("Streamflix", "2026-06-02", 17.99), // before cancelling
+      c("Streamflix", "2026-06-14", 17.99), // inside the grace window: a charge that posted late
+      c("Streamflix", "2026-07-02", 17.99),
+      c("Streamflix", "2026-08-02", 17.99),
+      c("Streamflix", "2026-07-02", 17.99, "checking"), // another account: not this series
+      c("Tunebox", "2026-07-07", 10.99),
+    ];
+    const drafts = chargesAfterCancel(charges, [cancelled]);
+    expect(drafts.map((d) => [d.occurredOn, d.dedupeKey])).toEqual([
+      ["2026-07-02", `charged_after_cancel|${charges[2].id}`],
+      ["2026-08-02", `charged_after_cancel|${charges[3].id}`],
+    ]);
+    expect(drafts[0]).toMatchObject({ kind: "charged_after_cancel", merchant: "Streamflix", toCents: 1_799, cancelledOn: "2026-06-10", transactionId: charges[2].id });
+  });
+
+  it("gives a variable bill a longer window for its final bill", () => {
+    expect(cancelGraceDays({ variable: false })).toBe(7);
+    expect(cancelGraceDays({ variable: true })).toBe(35);
+    const power = { merchant: "City Power", accountId: "checking", cancelledOn: "2026-06-10", graceDays: 35 };
+    expect(chargesAfterCancel([c("City Power", "2026-07-12", 48.2, "checking")], [power])).toEqual([]);
+    expect(chargesAfterCancel([c("City Power", "2026-07-16", 48.2, "checking")], [power])).toHaveLength(1);
+  });
+
+  it("raises no other alerts for a cancelled series", () => {
+    const status = new Map([[seriesKey("Streamflix", "card"), "cancelled" as const]]);
+    const series = detectSeries(monthly("Streamflix", MONTHS, [15.49, 15.49, 15.49, 15.49, 15.49, 17.99]), TODAY);
+    expect(alertsFor(series, status, TODAY)).toEqual([]);
+  });
+});
+
+describe("renewal heads-up (#84)", () => {
+  // A yearly cloud storage plan: next charge expected 2027-03-12.
+  const plan = () => monthly("Cloudbox", ["2025-03-10", "2026-03-12"], 99);
+  const confirmed = new Map([[seriesKey("Cloudbox", "card"), "confirmed" as const]]);
+  const renewals = (charges: Charge[], on: string, status = confirmed) =>
+    alertsFor(detectSeries(charges, on), status, on).filter((a) => a.kind === "upcoming_renewal");
+
+  it("raises nothing 30 days out, then exactly one from 14 days out", () => {
+    expect(renewals(plan(), "2027-02-10")).toEqual([]);
+    expect(renewals(plan(), "2027-02-25")).toEqual([]); // 15 days
+    const keys = new Set(["2027-02-26", "2027-03-01", "2027-03-12"].flatMap((on) => renewals(plan(), on).map((a) => a.dedupeKey)));
+    expect([...keys]).toEqual([`upcoming_renewal|${seriesKey("Cloudbox", "card")}|2027-03-12`]);
+    expect(renewals(plan(), "2027-02-26")[0]).toMatchObject({ occurredOn: "2027-03-12", toCents: 9_900, cadence: "annual", variable: false });
+  });
+
+  it("only for tracked bills that renew quarterly or less often", () => {
+    expect(renewals(plan(), "2027-03-01", new Map())).toEqual([]);
+    const tunebox = monthly("Tunebox", MONTHS, 10.99);
+    expect(renewals(tunebox, "2026-06-25", new Map([[seriesKey("Tunebox", "card"), "confirmed" as const]]))).toEqual([]);
+    const quarterly = monthly("Water Co", ["2025-12-01", "2026-03-02", "2026-06-01"], [48.1, 61.2, 72.4]);
+    const [water] = renewals(quarterly, "2026-08-25", new Map([[seriesKey("Water Co", "card"), "confirmed" as const]]));
+    expect(water).toMatchObject({ occurredOn: "2026-09-01", variable: true });
   });
 });

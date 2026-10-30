@@ -1,15 +1,17 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, isNotNull } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { accounts, categories, commandLog, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { backfillMerchantsIfNeeded, runCategorization } from "@/lib/categorize/pipeline";
+import { backfillMerchantsIfNeeded, matchTransfersAround, runCategorization } from "@/lib/categorize/pipeline";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
+import { listRecurring } from "@/operations/recurring";
 import { listInbox } from "@/operations/transactions";
 import { execute, read, undoCommand } from "@/operations/runtime";
 
 // The pipeline end to end on PGlite over the synthetic seed: rules, then
-// merchant memory, then the inbox. All data invented.
+// merchant memory's suggestions, then the inbox. Only rules categorize on
+// their own (#86). All data invented.
 
 let db: Db;
 let cat: Record<string, string>;
@@ -30,11 +32,40 @@ beforeEach(async () => {
 describe("runCategorization", () => {
   it("leaves everything in the inbox with no rules and no history", async () => {
     const result = await runCategorization(db);
-    expect(result.byRules + result.byMemory).toBe(0);
+    expect(result.byRules).toBe(0);
     expect(result.remaining).toBeGreaterThan(200);
-    // The only write is the transfer matcher pairing the seed's brokerage
-    // contributions (#24); nothing was categorized.
-    expect((await db.select().from(commandLog)).map((c) => c.actor)).toEqual(["matcher"]);
+    // The only writes are the transfer matcher pairing the seed's moves
+    // between its own accounts, one command per kind; nothing was categorized.
+    expect((await db.select().from(commandLog)).map((c) => [c.actor, c.reason])).toEqual([
+      ["matcher", "Matched 6 transfers between cash and investment accounts"],
+      ["matcher", "Matched 6 transfers paying a card or loan"],
+      ["matcher", "Matched 12 transfers between cash accounts"],
+    ]);
+  });
+
+  it("pairs a card payment with its credit on the card, so it's never spending, income or a subscription", async () => {
+    await runCategorization(db);
+    const payments = await db.select().from(transactions).where(eq(transactions.description, "PLACEHOLDER CARD CO PAYMENT"));
+    expect(payments.length).toBeGreaterThan(0);
+    for (const p of payments) {
+      expect(p.transferPairId).not.toBeNull();
+      const [credit] = await db.select().from(transactions).where(eq(transactions.id, p.transferPairId!));
+      expect(credit).toMatchObject({ description: "PAYMENT THANK YOU", amountCents: -p.amountCents });
+    }
+    const inbox = await read(db, listInbox, { limit: 500 });
+    expect(inbox.some((r) => payments.some((p) => p.id === r.id) || r.description === "PAYMENT THANK YOU")).toBe(false);
+    const recurring = await read(db, listRecurring, { on: "2026-06-30" });
+    expect(recurring.some((r) => /Card Co Payment/.test(r.merchant))).toBe(false);
+  });
+
+  it("also pairs a card payment already filed under a transfer category, but not one filed as spending", async () => {
+    const [payment] = await db.select().from(transactions).where(eq(transactions.description, "PLACEHOLDER CARD CO PAYMENT")).limit(1);
+    const [other] = (await db.select().from(transactions).where(eq(transactions.description, "PLACEHOLDER CARD CO PAYMENT"))).slice(1);
+    await user("transactions.setCategory", { transactionId: payment.id, categoryId: cat.Transfers });
+    await user("transactions.setCategory", { transactionId: other.id, categoryId: cat.Dining });
+    await runCategorization(db);
+    expect((await db.select().from(transactions).where(eq(transactions.id, payment.id)))[0].transferPairId).not.toBeNull();
+    expect((await db.select().from(transactions).where(eq(transactions.id, other.id)))[0].transferPairId).toBeNull();
   });
 
   it("applies rules as one logged, undoable command per rule", async () => {
@@ -61,25 +92,44 @@ describe("runCategorization", () => {
     expect((await txnsFor("Corner Bean Cafe")).every((t) => t.categoryId === cat.Coffee)).toBe(true);
   });
 
-  it("learns from one categorization: memory fills in the rest of that merchant", async () => {
+  it("learns from one categorization, as a suggestion: the rest of that merchant waits, pre-selected (#86)", async () => {
     const [first, ...rest] = await txnsFor("Quillfield Market");
     await user("transactions.setCategory", { transactionId: first.id, categoryId: cat.Groceries });
     const result = await runCategorization(db);
-    expect(result.byMemory).toBe(rest.length);
-    expect((await txnsFor("Quillfield Market")).every((t) => t.categoryId === cat.Groceries)).toBe(true);
-    const [entry] = await db.select().from(commandLog).where(eq(commandLog.actor, "memory"));
-    expect(entry.changes).toHaveLength(rest.length);
+    expect(result.byRules).toBe(0);
+    expect((await txnsFor("Quillfield Market")).filter((t) => t.categoryId !== null)).toHaveLength(1);
+    expect(await db.select().from(commandLog).where(eq(commandLog.actor, "memory"))).toEqual([]);
+    const inbox = await read(db, listInbox, { limit: 500 });
+    const row = inbox.find((r) => r.id === rest[0].id)!;
+    expect(row).toMatchObject({ suggestedCategoryId: cat.Groceries, suggestionSource: "memory", suggestionAgrees: true });
   });
 
-  it("with mixed history, suggests instead of applying", async () => {
+  it("with mixed history, suggests the most common, marked as varying", async () => {
     const [a, b, ...rest] = await txnsFor("Quillfield Market");
     await user("transactions.setCategory", { transactionId: a.id, categoryId: cat.Groceries });
     await user("transactions.setCategory", { transactionId: b.id, categoryId: cat.Dining });
-    expect((await runCategorization(db)).byMemory).toBe(0);
+    await runCategorization(db);
     const inbox = await read(db, listInbox, { limit: 500 });
     const row = inbox.find((r) => r.id === rest[0].id)!;
-    expect(row.suggestedCategoryId).not.toBeNull();
+    expect(row.suggestionAgrees).toBe(false);
     expect([cat.Groceries, cat.Dining]).toContain(row.suggestedCategoryId);
+  });
+
+  it("confirms a set of suggestions as the owner, in one undoable command", async () => {
+    const [first, ...rest] = await txnsFor("Quillfield Market");
+    await user("transactions.setCategory", { transactionId: first.id, categoryId: cat.Groceries });
+    // One of them the owner has filed differently meanwhile: left alone.
+    await user("transactions.setCategory", { transactionId: rest[0].id, categoryId: cat.Dining });
+    const result = await user("transactions.setCategories", { assignments: rest.map((t) => ({ transactionId: t.id, categoryId: cat.Groceries })) });
+    expect((result as { output: { applied: number } }).output.applied).toBe(rest.length - 1);
+    const [entry] = await db.select().from(commandLog).where(eq(commandLog.operation, "transactions.setCategories"));
+    expect(entry.actor).toBe("user");
+    expect((await txnsFor("Quillfield Market")).filter((t) => t.categoryId === cat.Groceries)).toHaveLength(rest.length);
+
+    await undoCommand(db, entry.id);
+    const after = await txnsFor("Quillfield Market");
+    expect(after.filter((t) => t.categoryId === cat.Groceries).map((t) => t.id)).toEqual([first.id]);
+    expect(after.find((t) => t.id === rest[0].id)!.categoryId).toBe(cat.Dining);
   });
 
   it("never touches accounts excluded from budgets", async () => {
@@ -106,13 +156,13 @@ describe("runCategorization", () => {
     await user("rules.create", { matchField: "merchant", matchType: "equals", pattern: "Corner Bean Cafe", categoryId: cat.Coffee });
     await runCategorization(db);
     const before = (await db.select().from(commandLog)).length;
-    expect(await runCategorization(db)).toMatchObject({ byRules: 0, byMemory: 0 });
+    expect(await runCategorization(db)).toMatchObject({ byRules: 0 });
     expect(await db.select().from(commandLog)).toHaveLength(before);
   });
 
-  it("refuses the batch operation to the owner, Tally and import", async () => {
+  it("refuses the batch operation to all but rules: not the owner, Tally, import, memory or the model (#86)", async () => {
     const [t] = await txnsFor("Corner Bean Cafe");
-    for (const actor of ["user", "tally", "import"] as const) {
+    for (const actor of ["user", "tally", "import", "memory", "model"] as const) {
       await expect(
         execute(db, {
           operation: "transactions.applyCategories",
@@ -176,5 +226,27 @@ describe("category tree", () => {
     await expect(
       user("rules.create", { matchField: "merchant", matchType: "equals", pattern: "Xx", categoryId: cat.Coffee, minAmountCents: 500, maxAmountCents: 100 }),
     ).rejects.toThrow(/above the maximum/);
+  });
+});
+
+describe("matchTransfersAround", () => {
+  it("pairs only the transaction the owner just filed, as one matcher command, and never scans the rest", async () => {
+    const [payment] = await db.select().from(transactions).where(eq(transactions.description, "PLACEHOLDER CARD CO PAYMENT")).limit(1);
+    await user("transactions.setCategory", { transactionId: payment.id, categoryId: cat.Transfers });
+    expect(await matchTransfersAround(db, payment.id)).toBe(1);
+    const [after] = await db.select().from(transactions).where(eq(transactions.id, payment.id));
+    expect(after.transferPairId).not.toBeNull();
+    // Exactly one pair in the whole ledger: the payment and its credit.
+    expect(await db.select().from(transactions).where(isNotNull(transactions.transferPairId))).toHaveLength(2);
+    expect((await db.select().from(commandLog)).filter((c) => c.actor === "matcher").map((c) => c.reason)).toEqual([
+      "Matched a transfer you filed paying a card or loan",
+    ]);
+  });
+
+  it("does nothing for a transaction filed as spending", async () => {
+    const [payment] = await db.select().from(transactions).where(eq(transactions.description, "PLACEHOLDER CARD CO PAYMENT")).limit(1);
+    await user("transactions.setCategory", { transactionId: payment.id, categoryId: cat.Dining });
+    expect(await matchTransfersAround(db, payment.id)).toBe(0);
+    expect((await db.select().from(transactions).where(eq(transactions.id, payment.id)))[0].transferPairId).toBeNull();
   });
 });

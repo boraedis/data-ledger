@@ -1,5 +1,7 @@
 // Client-safe labels for budget periods and schedules.
 
+import { formatCents } from "@/lib/money";
+
 const month = (date: string, withYear: boolean) =>
   new Date(`${date.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-US", {
     month: "short",
@@ -18,4 +20,34 @@ export function periodLabel(start: string, end: string): string {
 /** "monthly", "annual", "every 3 months". */
 export function scheduleLabel(periodMonths: number): string {
   return periodMonths === 1 ? "monthly" : periodMonths === 12 ? "annual" : `every ${periodMonths} months`;
+}
+
+export type HistorySummary = { averageCents: number | null; months: unknown[]; overMonths: number | null; comparedMonths: number };
+
+/**
+ * "Avg $412.50/month over the last 3 months · over target in 2 of 3", or
+ * "No spending in the last 3 months" (#105).
+ */
+export function historyLabel(h: HistorySummary | undefined, windowMonths: number): string {
+  if (!h || h.averageCents === null) return `No spending in the last ${windowMonths} months`;
+  const n = h.months.length;
+  const avg = `Avg ${formatCents(h.averageCents)}/month over the last ${n === 1 ? "month" : `${n} months`}`;
+  return h.overMonths !== null && h.comparedMonths > 0 ? `${avg} · over target in ${h.overMonths} of ${h.comparedMonths}` : avg;
+}
+
+/** History needed before a target is suggested: one month is too easy to mistake for normal. */
+export const SUGGEST_MIN_MONTHS = 2;
+
+/**
+ * A starting amount for a target (#106): the monthly average times the
+ * period's length, rounded to whole dollars. Null with under two months of
+ * history, so a category first used last month isn't handed a target
+ * built from one month. Only ever a value for the form; nothing is saved
+ * until the owner saves the target.
+ */
+export function suggestedTargetCents(h: HistorySummary | undefined, periodMonths: number): number | null {
+  if (!h || h.averageCents === null || h.months.length < SUGGEST_MIN_MONTHS) return null;
+  // Rounded after scaling, so an annual suggestion isn't twelve rounding errors.
+  const cents = Math.round((h.averageCents * periodMonths) / 100) * 100;
+  return cents > 0 ? cents : null;
 }

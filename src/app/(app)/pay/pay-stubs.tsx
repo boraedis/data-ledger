@@ -5,18 +5,22 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import type { CategoryOption } from "@/lib/categorize/labels";
 import { formatCents } from "@/lib/money";
-import { GROUP_LABELS, kindLabel, type PayLineGroup, type PayLineKind } from "@/lib/pay/stubs";
+import { GROUP_LABELS, employerKindLabel, kindLabel, type EmployerPayKind, type PayLineGroup, type PayLineKind } from "@/lib/pay/stubs";
 import { deleteStub } from "./actions";
 import { StubForm, type FormStub } from "./stub-form";
 
 type Stub = Omit<FormStub, "lines"> & {
   id: string;
-  depositTransactionId: string | null;
+  deposits: { id: string; postedOn: string; amountCents: number; accountName: string }[];
   totals: Record<PayLineGroup, number>;
   lines: (FormStub["lines"][number] & { group: PayLineGroup; categoryLabel: string | null })[];
 };
 
 const GROUPS: PayLineGroup[] = ["tax", "insurance", "retirement", "other"];
+
+// What the employer paid on top: money, so imputed income (a tax value) isn't part of it.
+const employerPaid = (stub: { employerLines: { kind: string; amountCents: number }[] }) =>
+  stub.employerLines.filter((l) => l.kind !== "imputed_income").reduce((sum, l) => sum + l.amountCents, 0);
 
 function StubCard({ stub, options }: { stub: Stub; options: CategoryOption[] }) {
   const [editing, setEditing] = useState(false);
@@ -34,9 +38,10 @@ function StubCard({ stub, options }: { stub: Stub; options: CategoryOption[] }) 
           </span>
           <span className="block text-xs text-muted-foreground">
             {stub.periodStart} to {stub.periodEnd} ·{" "}
-            {GROUPS.filter((g) => stub.totals[g])
-              .map((g) => `${GROUP_LABELS[g]} ${formatCents(stub.totals[g])}`)
-              .join(" · ")}
+            {[
+              ...GROUPS.filter((g) => stub.totals[g]).map((g) => `${GROUP_LABELS[g]} ${formatCents(stub.totals[g])}`),
+              ...(employerPaid(stub) ? [`Employer paid ${formatCents(employerPaid(stub))}`] : []),
+            ].join(" · ")}
           </span>
         </span>
         <span className="shrink-0 text-right tabular-nums">
@@ -45,10 +50,23 @@ function StubCard({ stub, options }: { stub: Stub; options: CategoryOption[] }) 
         </span>
       </button>
       <p className="text-xs">
-        {stub.depositTransactionId ? (
-          <Link href={`/transactions/${stub.depositTransactionId}`} className="text-muted-foreground underline">
+        {stub.deposits.length === 1 ? (
+          <Link href={`/transactions/${stub.deposits[0].id}`} className="text-muted-foreground underline">
             Linked to its deposit ✓
           </Link>
+        ) : stub.deposits.length ? (
+          // Pay split across accounts (#91): each part, where it went.
+          <span className="text-muted-foreground">
+            Linked to {stub.deposits.length} deposits ✓{" "}
+            {stub.deposits.map((d, i) => (
+              <span key={d.id}>
+                {i ? " + " : ""}
+                <Link href={`/transactions/${d.id}`} className="underline">
+                  {formatCents(d.amountCents)} to {d.accountName}
+                </Link>
+              </span>
+            ))}
+          </span>
         ) : (
           <span className="text-warning">Not linked to a deposit yet: budgets count only the deposit until it is.</span>
         )}
@@ -57,13 +75,30 @@ function StubCard({ stub, options }: { stub: Stub; options: CategoryOption[] }) 
         <div className="space-y-2">
           <table className="w-full text-xs">
             <tbody>
-              {stub.lines.map((l, i) => (
+                  {stub.lines.map((l, i) => (
                 <tr key={i} className="border-t">
                   <td className="py-1 pr-2">
                     {l.label}
                     <span className="block text-muted-foreground">{kindLabel(l.kind as PayLineKind)}</span>
                   </td>
                   <td className="py-1 pr-2 text-muted-foreground">{l.categoryLabel ?? "off the gross"}</td>
+                  <td className="py-1 text-right tabular-nums">{formatCents(l.amountCents)}</td>
+                </tr>
+              ))}
+              {stub.employerLines.length ? (
+                <tr>
+                  <td colSpan={3} className="pb-1 pt-3 text-muted-foreground">
+                    Paid by your employer, on top:
+                  </td>
+                </tr>
+              ) : null}
+              {stub.employerLines.map((l, i) => (
+                <tr key={`e${i}`} className="border-t">
+                  <td className="py-1 pr-2">
+                    {l.label}
+                    <span className="block text-muted-foreground">{employerKindLabel(l.kind as EmployerPayKind)}</span>
+                  </td>
+                  <td className="py-1 pr-2 text-muted-foreground">{l.kind === "imputed_income" ? "taxable, not paid" : "not in gross or net"}</td>
                   <td className="py-1 text-right tabular-nums">{formatCents(l.amountCents)}</td>
                 </tr>
               ))}

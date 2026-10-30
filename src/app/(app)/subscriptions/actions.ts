@@ -22,6 +22,18 @@ export async function setStatus(merchant: string, accountId: string, status: "co
   return run("recurring.setStatus", { merchant, accountId, status }, `${verb} ${merchant} as recurring`);
 }
 
+export async function cancelSubscription(merchant: string, accountId: string, cancelledOn: string) {
+  const result = await run("recurring.cancel", { merchant, accountId, cancelledOn }, `Cancelled ${merchant} as of ${cancelledOn}`);
+  if (result) return result;
+  // A cancel dated in the past may already have a charge after it; say so
+  // now rather than after tonight's sync.
+  return run("alerts.refresh", {}, `Checked for charges after cancelling ${merchant}`);
+}
+
+export async function stillActive(merchant: string, accountId: string) {
+  return run("recurring.stillActive", { merchant, accountId }, `${merchant} is still active; keep tracking it`);
+}
+
 export async function dismissAlert(alertId: string, title: string) {
   return run("alerts.dismiss", { alertId }, `Dismissed alert: ${title}`);
 }

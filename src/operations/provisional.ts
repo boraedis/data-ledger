@@ -93,21 +93,21 @@ export const createProvisional = defineWrite({
 });
 
 /**
- * Moves everything attached to a provisional transaction onto its synced
- * version, then removes it. The synced row keeps whatever is already set
+ * Moves everything attached to a provisional (#30) or manual (#64)
+ * transaction onto the bank's version of it, then removes it. The synced row keeps whatever is already set
  * on it, and otherwise takes the provisional row's category or split,
  * experience date and tags. Shares friends owe, matched payments and
  * alerts follow it too. A split carries over only when the amounts agree,
  * since its parts must add up to the transaction.
  */
-async function handOver(ctx: WriteContext, fromId: string, toId: string) {
+export async function handOver(ctx: WriteContext, fromId: string, toId: string) {
   const [[from], [to]] = await Promise.all([
     ctx.db.select().from(transactions).where(eq(transactions.id, fromId)),
     ctx.db.select().from(transactions).where(eq(transactions.id, toId)),
   ]);
   if (!from || !to) throw new NotFoundError("Transaction not found");
-  if (!from.provisionalSource) throw new Error("Only a provisional transaction can be matched to its synced version");
-  if (to.provisionalSource) throw new Error("Match a provisional transaction to one the bank reported, not another provisional one");
+  if (!from.provisionalSource && from.source !== "manual") throw new Error("Only a provisional or manual transaction can be matched to the bank's version");
+  if (to.provisionalSource || to.source === "manual") throw new Error("Match it to a transaction the bank reported");
   if (to.pending) throw new Error("Wait until it posts: a pending transaction can be replaced when it does");
   if (from.accountId !== to.accountId) throw new Error("Both must be in the same account");
 

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { filterOptions, type CategoryOption } from "@/lib/categorize/labels";
 import { formatCents } from "@/lib/money";
-import { askModel, categorize, createMerchantRule } from "./actions";
+import { askModel, categorize, confirmSuggestions, createMerchantRule } from "./actions";
 
 export type InboxRow = {
   id: string;
@@ -18,9 +18,12 @@ export type InboxRow = {
   accountName: string;
   pending: boolean;
   provisionalSource: "email" | "apple_pay" | null;
+  manual: boolean;
   suggestedCategoryId: string | null;
   suggestionSource: "memory" | "model" | null;
   suggestionConfidence: number | null;
+  // Memory's suggestion from history that all agrees.
+  suggestionAgrees: boolean;
 };
 
 const MAX_VISIBLE_OPTIONS = 8;
@@ -35,7 +38,64 @@ const MAX_VISIBLE_OPTIONS = 8;
 function suggestionLabel(row: InboxRow, label: string | undefined) {
   if (!label) return null;
   if (row.suggestionSource === "model") return `Model suggests: ${label} (${Math.round((row.suggestionConfidence ?? 0) * 100)}%)`;
-  return `From your history: ${label}`;
+  return row.suggestionAgrees ? `Your usual: ${label}` : `Most often: ${label} (your history varies)`;
+}
+
+// Confirming a set of suggestions at once (#86). Nothing is selected until
+// the owner says so; the quick selections pick the trustworthy ones: the
+// merchants whose history agrees, and the model's confident answers.
+function ConfirmBar({
+  rows,
+  selected,
+  setSelected,
+  confidentAt,
+  pending,
+  onConfirm,
+}: {
+  rows: InboxRow[];
+  selected: Set<string>;
+  setSelected: (next: Set<string>) => void;
+  confidentAt: number;
+  pending: boolean;
+  onConfirm: () => void;
+}) {
+  const suggested = rows.filter((r) => r.suggestedCategoryId);
+  if (suggested.length === 0) return null;
+  const agreeing = suggested.filter((r) => r.suggestionAgrees);
+  const confident = suggested.filter((r) => r.suggestionSource === "model" && (r.suggestionConfidence ?? 0) >= confidentAt);
+  const pick = (list: InboxRow[]) => setSelected(new Set(list.map((r) => r.id)));
+  const link = "underline-offset-2 hover:underline disabled:opacity-50";
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-muted/40 px-3 py-2 text-sm">
+      <span>
+        {suggested.length} with a suggestion · {selected.size} selected
+      </span>
+      <span className="flex flex-wrap gap-x-3 text-muted-foreground">
+        Select:
+        {agreeing.length ? (
+          <button type="button" className={link} onClick={() => pick(agreeing)}>
+            your usual ({agreeing.length})
+          </button>
+        ) : null}
+        {confident.length ? (
+          <button type="button" className={link} onClick={() => pick(confident)}>
+            model ≥{Math.round(confidentAt * 100)}% ({confident.length})
+          </button>
+        ) : null}
+        <button type="button" className={link} onClick={() => pick(suggested)}>
+          all
+        </button>
+        {selected.size ? (
+          <button type="button" className={link} onClick={() => setSelected(new Set())}>
+            none
+          </button>
+        ) : null}
+      </span>
+      <Button size="sm" className="ml-auto" disabled={pending || selected.size === 0} onClick={onConfirm}>
+        Confirm {selected.size || ""} suggestion{selected.size === 1 ? "" : "s"}
+      </Button>
+    </div>
+  );
 }
 
 function AskModel() {
@@ -64,14 +124,24 @@ function AskModel() {
   );
 }
 
-export function Inbox({ rows: serverRows, options, modelConfigured }: { rows: InboxRow[]; options: CategoryOption[]; modelConfigured: boolean }) {
+export function Inbox({
+  rows: serverRows,
+  options,
+  modelConfigured,
+  confidentAt,
+}: {
+  rows: InboxRow[];
+  options: CategoryOption[];
+  modelConfigured: boolean;
+  confidentAt: number;
+}) {
   const router = useRouter();
   // Rows are the server's list minus ones categorized optimistically here.
-  // Derived rather than copied into state, so a refresh (after memory
-  // categorizes others) just flows through.
+  // Derived rather than copied into state, so a refresh (after a rule
+  // files others) just flows through.
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const rows = useMemo(() => serverRows.filter((r) => !hidden.has(r.id)), [serverRows, hidden]);
-  // Selection is a transaction, not a list position: merchant memory can
+  // Selection is a transaction, not a list position: a rule can
   // remove rows above the cursor on any refresh, and a bare index would then
   // silently point at a different transaction. The index is only a fallback
   // for when the selected row itself disappears — the row that took its
@@ -85,6 +155,7 @@ export function Inbox({ rows: serverRows, options, modelConfigured }: { rows: In
   const [notice, setNotice] = useState<{ text: string; offer?: { merchant: string; categoryId: string } } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  const [checked, setChecked] = useState<Set<string>>(new Set());
   const inputRef = useRef<HTMLInputElement>(null);
 
   const current = rows[selected];
@@ -149,11 +220,31 @@ export function Inbox({ rows: serverRows, options, modelConfigured }: { rows: In
           autoCount += ruleResult.autoCategorized;
         }
       }
-      if (autoCount) text += ` · ${autoCount} more categorized automatically`;
+      if (autoCount) text += ` · ${autoCount} more by rules`;
       setNotice({ text, offer: !withRule && row.merchant ? { merchant: row.merchant, categoryId: option.id } : undefined });
       router.refresh();
     });
     inputRef.current?.focus();
+  }
+
+  function confirmChecked() {
+    const chosen = rows.filter((r) => checked.has(r.id) && r.suggestedCategoryId);
+    if (chosen.length === 0) return;
+    setError(null);
+    setHidden((h) => new Set([...h, ...chosen.map((r) => r.id)]));
+    setChecked(new Set());
+    startTransition(async () => {
+      const result = await confirmSuggestions(chosen.map((r) => ({ transactionId: r.id, categoryId: r.suggestedCategoryId! })));
+      if ("error" in result) {
+        setHidden((h) => new Set([...h].filter((id) => !chosen.some((r) => r.id === id))));
+        setError(result.error);
+        return;
+      }
+      setNotice({
+        text: `Confirmed ${chosen.length} suggestion${chosen.length === 1 ? "" : "s"}${result.autoCategorized ? ` · ${result.autoCategorized} more by rules` : ""} · undo from Activity`,
+      });
+      router.refresh();
+    });
   }
 
   function makeRule(offer: { merchant: string; categoryId: string }) {
@@ -258,39 +349,61 @@ export function Inbox({ rows: serverRows, options, modelConfigured }: { rows: In
   return (
     <div className="space-y-3">
       {modelConfigured ? <AskModel /> : null}
+      <ConfirmBar rows={rows} selected={checked} setSelected={setChecked} confidentAt={confidentAt} pending={pending} onConfirm={confirmChecked} />
+      {notice && !current ? <p className="text-sm text-muted-foreground">{notice.text}</p> : null}
       <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_18rem]">
         {/* min-w-0: long raw descriptions must truncate, not widen the page. */}
         <ul className="min-w-0 divide-y rounded-lg border" aria-label="Uncategorized transactions">
           {rows.map((row, i) => (
             <li key={row.id}>
-              <button
-                type="button"
-                onClick={() => {
-                  select(i);
-                  // Desktop: straight to typing. On phones the inline picker
-                  // appears under the row instead; no keyboard pop-up.
-                  if (window.matchMedia("(min-width: 768px)").matches) inputRef.current?.focus();
-                }}
-                className={`flex w-full min-w-0 items-start justify-between gap-3 px-3 py-2 text-left text-sm ${i === selected ? "bg-accent" : ""}`}
-                aria-current={i === selected}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{row.merchant ?? row.description}</span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {row.postedOn} · {row.accountName}
-                    {row.pending ? " · pending" : ""}
-                    {row.provisionalSource ? " · from an alert" : ""} · {row.description}
-                  </span>
-                  {row.suggestedCategoryId ? (
+              <div className={`flex items-stretch ${i === selected ? "bg-accent" : ""}`}>
+                {row.suggestedCategoryId ? (
+                  <label className="flex shrink-0 items-start pl-3 pt-2.5">
+                    <input
+                      type="checkbox"
+                      checked={checked.has(row.id)}
+                      onChange={(e) => {
+                        const next = new Set(checked);
+                        if (e.target.checked) next.add(row.id);
+                        else next.delete(row.id);
+                        setChecked(next);
+                      }}
+                      aria-label={`Confirm ${row.merchant ?? row.description} as ${labelOf.get(row.suggestedCategoryId) ?? "the suggestion"}`}
+                    />
+                  </label>
+                ) : (
+                  <span className="w-7 shrink-0" aria-hidden />
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    select(i);
+                    // Desktop: straight to typing. On phones the inline picker
+                    // appears under the row instead; no keyboard pop-up.
+                    if (window.matchMedia("(min-width: 768px)").matches) inputRef.current?.focus();
+                  }}
+                  className="flex w-full min-w-0 items-start justify-between gap-3 px-3 py-2 text-left text-sm"
+                  aria-current={i === selected}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate font-medium">{row.merchant ?? row.description}</span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {suggestionLabel(row, labelOf.get(row.suggestedCategoryId))}
+                      {row.postedOn} · {row.accountName}
+                      {row.pending ? " · pending" : ""}
+                      {row.provisionalSource ? " · from an alert" : ""}
+                      {row.manual ? " · added by hand" : ""} · {row.description}
                     </span>
-                  ) : null}
-                </span>
-                <span className={`shrink-0 tabular-nums ${row.amountCents > 0 ? "text-positive" : ""}`}>
-                  {formatCents(row.amountCents)}
-                </span>
-              </button>
+                    {row.suggestedCategoryId ? (
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {suggestionLabel(row, labelOf.get(row.suggestedCategoryId))}
+                      </span>
+                    ) : null}
+                  </span>
+                  <span className={`shrink-0 tabular-nums ${row.amountCents > 0 ? "text-positive" : ""}`}>
+                    {formatCents(row.amountCents)}
+                  </span>
+                </button>
+              </div>
               {i === selected ? <div className="border-t bg-accent/40 p-3 md:hidden">{picker("inline")}</div> : null}
             </li>
           ))}

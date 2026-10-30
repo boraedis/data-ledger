@@ -28,8 +28,8 @@ function EvalResults({ evaluation, threshold }: { evaluation: EvalView; threshol
       <table className="text-xs">
         <thead>
           <tr className="text-left text-muted-foreground">
-            <th className="pr-4 font-normal">Auto-apply at</th>
-            <th className="pr-4 font-normal">Would apply</th>
+            <th className="pr-4 font-normal">Confident at</th>
+            <th className="pr-4 font-normal">Confident answers</th>
             <th className="font-normal">Of those, right</th>
           </tr>
         </thead>
@@ -52,8 +52,9 @@ function EvalResults({ evaluation, threshold }: { evaluation: EvalView; threshol
       <p className="text-muted-foreground">
         {recommended === null
           ? "No threshold was free of wrong answers in this sample; keep it high."
-          : `Lowest threshold with no wrong auto-applied answers here: ${Math.round(recommended * 100)}%.`}{" "}
-        Current: {Math.round(threshold * 100)}% (MODEL_AUTO_APPLY_THRESHOLD).
+          : `Lowest threshold with no wrong confident answers here: ${Math.round(recommended * 100)}%.`}{" "}
+        Current: {Math.round(threshold * 100)}% (MODEL_AUTO_APPLY_THRESHOLD). Nothing is applied on it: it&apos;s what the inbox&apos;s
+        &quot;model ≥{Math.round(threshold * 100)}%&quot; selection picks for you to confirm at once, so this says how far to trust that.
       </p>
     </div>
   );

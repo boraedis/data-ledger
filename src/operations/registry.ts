@@ -1,13 +1,15 @@
 import { z } from "zod";
 import { createManualAccount, deleteManualAccount, listAccounts, setManualValue, updateAccount } from "@/operations/accounts";
-import { budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
+import { budgetHistory, budgetMonthly, budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
 import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goals";
 import { applySnapshot } from "@/operations/import";
 import { createPayStub, deletePayStub, linkPayDeposit, listPayStubs, payDepositCandidates, updatePayStub } from "@/operations/pay";
 import { categoryChoices } from "@/operations/choices";
 import { setTaxAssumptions, taxEstimate } from "@/operations/taxes";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
-import { dismissAlert, listAlerts, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
+import { getImportMapping, importHistory, saveImportMapping } from "@/operations/history";
+import { createManual, deleteManual, keepManual, manualMatches, mergeManual, updateManual } from "@/operations/manual";
+import { cancelRecurring, dismissAlert, markStillActive, listAlerts, listCancelled, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
 import {
   createPerson,
   dismissPayment,
@@ -26,7 +28,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { taxAssumptions, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -35,10 +37,15 @@ import {
   recordSuggestions,
   listTransactions,
   matchTransfers,
+  misfiledTransfers,
+  pairAsTransfer,
+  dismissTransfer,
   setExperienceDate,
+  setCategories,
   setTransactionCategory,
   spendingLines,
   splitTransaction,
+  uncategorizedSpend,
   unmatchTransfer,
 } from "@/operations/transactions";
 
@@ -63,8 +70,11 @@ export const operations: Operation[] = [
   listTransactions,
   getTransaction,
   spendingLines,
+  uncategorizedSpend,
   investmentIncome,
   budgetStatus,
+  budgetHistory,
+  budgetMonthly,
   listTargets,
   setTarget,
   removeTarget,
@@ -73,7 +83,19 @@ export const operations: Operation[] = [
   createGoal,
   updateGoal,
   archiveGoal,
+  getImportMapping,
+  saveImportMapping,
+  importHistory,
+  createManual,
+  updateManual,
+  deleteManual,
+  manualMatches,
+  mergeManual,
+  keepManual,
   listRecurring,
+  listCancelled,
+  cancelRecurring,
+  markStillActive,
   setRecurringStatus,
   refreshAlerts,
   markAlertsNotified,
@@ -93,10 +115,14 @@ export const operations: Operation[] = [
   listInbox,
   categoryChoices,
   setTransactionCategory,
+  setCategories,
   splitTransaction,
   setExperienceDate,
   matchTransfers,
   unmatchTransfer,
+  misfiledTransfers,
+  pairAsTransfer,
+  dismissTransfer,
   listProvisional,
   matchProvisional,
   discardProvisional,
@@ -160,5 +186,8 @@ export const trackedTables = {
   category_suggestions: categorySuggestions,
   pay_stubs: payStubs,
   pay_stub_lines: payStubLines,
+  pay_stub_deposits: payStubDeposits,
+  pay_stub_employer_lines: payStubEmployerLines,
+  import_mappings: importMappings,
   tax_assumptions: taxAssumptions,
 } as const;

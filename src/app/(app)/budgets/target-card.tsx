@@ -2,9 +2,10 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { periodLabel, scheduleLabel } from "@/lib/budgets/format";
+import { historyLabel, periodLabel, scheduleLabel, type HistorySummary } from "@/lib/budgets/format";
 import { formatCents } from "@/lib/money";
 import { TargetForm } from "./forms";
+import { MonthBars, type Bar } from "./month-bars";
 
 export type CardTarget = {
   categoryId: string | null;
@@ -32,7 +33,26 @@ export type CardTarget = {
 // One target's period: a bar of spent against available, an even-pace
 // marker for multi-month periods, and the arithmetic spelled out so
 // rollover and rebalancing never look like magic.
-export function TargetCard({ target: t, editable }: { target: CardTarget; editable: boolean }) {
+export function TargetCard({
+  target: t,
+  editable,
+  history,
+  netHistory,
+  windowMonths,
+  bars,
+  viewedMonth,
+  partialMonth,
+}: {
+  target: CardTarget;
+  editable: boolean;
+  history?: HistorySummary;
+  // Net, for suggesting an amount (#106); see TargetForm.
+  netHistory?: HistorySummary;
+  windowMonths: number;
+  bars: Bar[];
+  viewedMonth: string;
+  partialMonth: string | null;
+}) {
   const [editing, setEditing] = useState(false);
   const over = t.remainingCents < 0;
   const scale = Math.max(t.availableCents, t.spentCents, 1);
@@ -91,6 +111,9 @@ export function TargetCard({ target: t, editable }: { target: CardTarget; editab
         </p>
       ) : null}
 
+      <MonthBars bars={bars} viewedMonth={viewedMonth} partialMonth={partialMonth} />
+      <p className="text-xs text-muted-foreground tabular-nums">{historyLabel(history, windowMonths)}</p>
+
       {editable ? (
         editing ? (
           <div className="border-t pt-3">
@@ -104,6 +127,9 @@ export function TargetCard({ target: t, editable }: { target: CardTarget; editab
                 rollover: t.rollover,
                 sinkingFund: t.sinkingFund,
               }}
+              histories={history ? { [t.categoryId ?? ""]: history } : {}}
+              suggestFrom={netHistory ? { [t.categoryId ?? ""]: netHistory } : {}}
+              windowMonths={windowMonths}
               onDone={() => setEditing(false)}
             />
           </div>

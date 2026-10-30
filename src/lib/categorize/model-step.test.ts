@@ -6,7 +6,7 @@ import { classifyWithModel, runCategorization, type Classify } from "@/lib/categ
 import { evaluateModel, recommendedThreshold } from "@/lib/model/evaluate";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
-import { execute, read, undoCommand } from "@/operations/runtime";
+import { execute, read } from "@/operations/runtime";
 import { listInbox } from "@/operations/transactions";
 
 // The model step of the pipeline (#6 phase 3), with a fake classifier in
@@ -20,7 +20,7 @@ let cat: Record<string, string>;
 const KNOWN: [RegExp, string, number][] = [
   [/CORNER BEAN/, "Coffee", 0.97],
   [/QUILLFIELD/, "Groceries", 0.95],
-  [/ZIPRIDE/, "Transport", 0.6], // unsure: suggestion only
+  [/ZIPRIDE/, "Transport", 0.6], // unsure
 ];
 function fakeModel(calls: { count: number; inputs: unknown[] } = { count: 0, inputs: [] }): Classify {
   return async (cats, txns) => {
@@ -50,17 +50,15 @@ afterEach(() => {
 const byMerchant = (m: string) => db.select().from(transactions).where(eq(transactions.merchant, m));
 
 describe("model step", () => {
-  it("applies confident answers as one 'model' command and suggests the rest", async () => {
+  it("records every answer as a suggestion, however confident, and applies nothing (#86)", async () => {
     const result = await runCategorization(db, { model: { classify: fakeModel(), limit: 500 } });
-    const coffee = await byMerchant("Corner Bean Cafe");
-    expect(coffee.every((t) => t.categoryId === cat.Coffee)).toBe(true);
-    expect(result.byModel).toBe(coffee.length + (await byMerchant("Quillfield Market")).length);
+    expect(result.modelSeen).toBeGreaterThan(0);
+    expect((await byMerchant("Corner Bean Cafe")).every((t) => t.categoryId === null)).toBe(true);
+    expect(await db.select().from(commandLog).where(eq(commandLog.operation, "transactions.applyCategories"))).toEqual([]);
 
-    const [entry] = await db.select().from(commandLog).where(eq(commandLog.actor, "model"));
-    expect(entry).toMatchObject({ operation: "transactions.applyCategories", reason: "Model: confident categorizations (≥90% confidence)" });
-
-    // The unsure one stays in the inbox, with the model's suggestion shown.
     const inbox = await read(db, listInbox, { limit: 500 });
+    const coffee = inbox.find((r) => r.merchant === "Corner Bean Cafe")!;
+    expect(coffee).toMatchObject({ suggestedCategoryId: cat.Coffee, suggestionSource: "model", suggestionConfidence: 0.97 });
     const ride = inbox.find((r) => r.merchant === "Zipride Trip")!;
     expect(ride).toMatchObject({ suggestedCategoryId: cat.Transport, suggestionSource: "model", suggestionConfidence: 0.6 });
   });
@@ -70,7 +68,7 @@ describe("model step", () => {
     await runCategorization(db); // inbox corrections, "Sync now": no model
     expect(calls.count).toBe(0);
     delete process.env.MODEL_BASE_URL;
-    expect(await runCategorization(db, { model: { classify: fakeModel(calls) } })).toMatchObject({ byModel: 0, modelSeen: 0 });
+    expect(await runCategorization(db, { model: { classify: fakeModel(calls) } })).toMatchObject({ modelSeen: 0 });
     expect(calls.count).toBe(0);
   });
 
@@ -101,7 +99,7 @@ describe("model step", () => {
       throw new Error("The model is still starting up; try again in a minute");
     };
     const result = await runCategorization(db, { model: { classify: failing } });
-    expect(result).toMatchObject({ byModel: 0, modelSeen: 0, modelError: "The model is still starting up; try again in a minute" });
+    expect(result).toMatchObject({ modelSeen: 0, modelError: "The model is still starting up; try again in a minute" });
     expect(result.modelPending).toBeGreaterThan(0);
     expect(await db.select().from(categorySuggestions)).toHaveLength(0);
     expect((await runCategorization(db, { model: { classify: fakeModel(), limit: 500 } })).modelSeen).toBeGreaterThan(0);
@@ -119,13 +117,10 @@ describe("model step", () => {
     expect(partial.modelPending).toBeGreaterThan(0);
   });
 
-  it("respects a configured threshold, and the model's batch is undoable", async () => {
+  it("applies nothing even with a low configured threshold: it only marks what counts as confident", async () => {
     process.env.MODEL_AUTO_APPLY_THRESHOLD = "0.5";
     await runCategorization(db, { model: { classify: fakeModel(), limit: 500 } });
-    expect((await byMerchant("Zipride Trip")).every((t) => t.categoryId === cat.Transport)).toBe(true);
-    const [entry] = await db.select().from(commandLog).where(eq(commandLog.actor, "model"));
-    await undoCommand(db, entry.id);
-    expect((await byMerchant("Corner Bean Cafe")).every((t) => t.categoryId === null)).toBe(true);
+    expect((await byMerchant("Zipride Trip")).every((t) => t.categoryId === null)).toBe(true);
   });
 
   it("sends the model description, amount and date only — no ids, accounts or merchants", async () => {

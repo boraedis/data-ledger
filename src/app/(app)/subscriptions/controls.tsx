@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { checkNow, dismissAlert, setStatus } from "./actions";
+import { cancelSubscription, checkNow, dismissAlert, setStatus, stillActive } from "./actions";
 
 function useAction() {
   const [pending, startTransition] = useTransition();
@@ -37,6 +37,68 @@ export function StatusButtons({
       ))}
       {error ? <span className="text-xs text-destructive">{error}</span> : null}
     </span>
+  );
+}
+
+// "Cancelled…" opens a date (today unless changed, or the day given): the
+// day the subscription was cancelled, after which a charge raises an alert.
+export function CancelButton({
+  merchant,
+  accountId,
+  today,
+  defaultOn = today,
+  label = "Cancelled…",
+  primary,
+}: {
+  merchant: string;
+  accountId: string;
+  today: string;
+  defaultOn?: string;
+  label?: string;
+  primary?: boolean;
+}) {
+  const { pending, error, act } = useAction();
+  const [open, setOpen] = useState(false);
+  const [on, setOn] = useState(defaultOn);
+  if (!open) {
+    return (
+      <Button size="xs" variant={primary ? "default" : "ghost"} className={primary ? "" : "text-muted-foreground"} onClick={() => setOpen(true)}>
+        {label}
+      </Button>
+    );
+  }
+  return (
+    <form
+      className="flex flex-wrap items-center gap-1"
+      onSubmit={(e) => {
+        e.preventDefault();
+        act(() => cancelSubscription(merchant, accountId, on));
+      }}
+    >
+      <label className="flex items-center gap-1 text-xs whitespace-nowrap text-muted-foreground">
+        Cancelled on
+        <input type="date" required max={today} value={on} onChange={(e) => setOn(e.target.value)} className="rounded border bg-background px-1 py-0.5 text-xs" />
+      </label>
+      <Button type="submit" size="xs" disabled={pending}>
+        Mark cancelled
+      </Button>
+      <Button type="button" size="xs" variant="ghost" className="text-muted-foreground" disabled={pending} onClick={() => setOpen(false)}>
+        Back
+      </Button>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+    </form>
+  );
+}
+
+export function StillActiveButton({ merchant, accountId }: { merchant: string; accountId: string }) {
+  const { pending, error, act } = useAction();
+  return (
+    <>
+      <Button size="xs" variant="outline" disabled={pending} onClick={() => act(() => stillActive(merchant, accountId))}>
+        Still active
+      </Button>
+      {error ? <span className="text-xs text-destructive">{error}</span> : null}
+    </>
   );
 }
 

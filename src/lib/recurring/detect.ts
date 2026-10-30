@@ -28,6 +28,13 @@ const addDays = (date: string, days: number) => new Date(Date.parse(date) + Math
 // Charges this close are the same occurrence (or a duplicate of it).
 const SAME_OCCURRENCE_DAYS = 3;
 const VARIABLE_SPREAD = 0.25;
+// A heads-up this many days before a tracked bill renews (#84), for bills
+// that renew quarterly or less often: a large charge it's worth deciding
+// on. A monthly bill would raise twelve a year per subscription, and a
+// weekly one is never more than seven days out.
+export const RENEWAL_NOTICE_DAYS = 14;
+const RENEWAL_MIN_CADENCE_DAYS = 90;
+
 // Alerts are about now: a price rise from last year isn't news. Matches the
 // first sync's 90-day backfill, so a new connection's recent events count.
 const RECENT_DAYS = 90;
@@ -56,6 +63,10 @@ export type Series = {
   annualizedCents: number;
   // Charged within its cadence (plus tolerance) of today.
   active: boolean;
+  // Past its next expected charge by more than the tolerance: for a tracked
+  // bill, it has gone quiet (#83). Sooner than !active, which allows twice
+  // the tolerance before a series stops counting as current.
+  overdue: boolean;
 };
 
 export const seriesKey = (merchant: string, accountId: string) => `${merchant}|${accountId}`;
@@ -142,6 +153,7 @@ export function detectSeries(charges: Charge[], today: string): Series[] {
       nextExpectedOn: nextAfter(last.date, cadence),
       annualizedCents: typicalCents * cadence.perYear,
       active: daysBetween(last.date, today) <= cadence.days + cadence.tolerance * 2,
+      overdue: daysBetween(nextAfter(last.date, cadence), today) > cadence.tolerance,
     });
   }
   return series.sort((a, b) => b.annualizedCents - a.annualizedCents);
@@ -150,7 +162,7 @@ export function detectSeries(charges: Charge[], today: string): Series[] {
 // --- Alerts ---------------------------------------------------------------------
 
 export type AlertDraft = {
-  kind: "price_increase" | "duplicate_charge" | "overlapping_subscriptions" | "trial_converted" | "missing_charge";
+  kind: "price_increase" | "duplicate_charge" | "overlapping_subscriptions" | "trial_converted" | "missing_charge" | "charged_after_cancel" | "upcoming_renewal";
   dedupeKey: string;
   merchant: string;
   accountId: string | null;
@@ -160,18 +172,26 @@ export type AlertDraft = {
   fromCents?: number;
   toCents?: number;
   cadence?: string;
+  cancelledOn?: string;
+  lastOn?: string;
+  variable?: boolean;
 };
 
+export type SeriesStatus = "confirmed" | "dismissed" | "cancelled";
+
 /**
- * Alerts for detected series, given the owner's decisions. Dismissed
- * series raise nothing. Missing-charge alerts need a confirmed series — a
+ * Alerts for detected series, given the owner's decisions. Dismissed and
+ * cancelled series raise nothing here (a cancelled one has its own check,
+ * chargesAfterCancel). `stillActive` holds, per series, the last charge as
+ * of the owner saying an ended bill is still active: that quiet spell
+ * raises nothing more. Missing-charge alerts need a confirmed series — a
  * merely detected one may simply have ended. Each alert carries a
  * dedupeKey naming the event, so it's raised once.
  */
-export function alertsFor(series: Series[], status: Map<string, "confirmed" | "dismissed">, today: string): AlertDraft[] {
+export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, today: string, stillActive = new Map<string, string>()): AlertDraft[] {
   const drafts: AlertDraft[] = [];
   const recent = (date: string) => daysBetween(date, today) <= RECENT_DAYS;
-  const live = series.filter((s) => status.get(s.key) !== "dismissed");
+  const live = series.filter((s) => status.get(s.key) !== "dismissed" && status.get(s.key) !== "cancelled");
 
   for (const s of live) {
     const occ = s.occurrences;
@@ -237,9 +257,12 @@ export function alertsFor(series: Series[], status: Map<string, "confirmed" | "d
       }
     }
 
-    // Missing: a confirmed series past its due date plus tolerance.
+    // Ended: a confirmed series past its due date plus tolerance. One alert
+    // per quiet spell, not per missed cycle: the due date stays the one
+    // after the last charge however many cycles go by, and it names the
+    // alert.
     const due = s.nextExpectedOn;
-    if (status.get(s.key) === "confirmed" && daysBetween(due, today) > s.cadence.tolerance && recent(due)) {
+    if (status.get(s.key) === "confirmed" && s.overdue && recent(due) && stillActive.get(s.key) !== s.lastOn) {
       drafts.push({
         kind: "missing_charge",
         dedupeKey: `missing_charge|${s.key}|${due}`,
@@ -247,10 +270,31 @@ export function alertsFor(series: Series[], status: Map<string, "confirmed" | "d
         accountId: s.accountId,
         transactionId: null,
         occurredOn: due,
+        fromCents: s.latestCents,
+        lastOn: s.lastOn,
         toCents: s.typicalCents,
         cadence: s.cadence.name,
       });
     }
+  }
+
+  // Renewal coming up: a tracked bill that renews quarterly or less often,
+  // within the notice window of its next charge. Named by that date, so
+  // it's raised once per renewal however many nights it's checked.
+  for (const s of live) {
+    const until = daysBetween(today, s.nextExpectedOn);
+    if (status.get(s.key) !== "confirmed" || s.cadence.days < RENEWAL_MIN_CADENCE_DAYS || !s.active || until < 0 || until > RENEWAL_NOTICE_DAYS) continue;
+    drafts.push({
+      kind: "upcoming_renewal",
+      dedupeKey: `upcoming_renewal|${s.key}|${s.nextExpectedOn}`,
+      merchant: s.merchant,
+      accountId: s.accountId,
+      transactionId: null,
+      occurredOn: s.nextExpectedOn,
+      toCents: s.typicalCents,
+      cadence: s.cadence.name,
+      variable: s.variable,
+    });
   }
 
   // Overlapping: the same merchant billing in two accounts at once.
@@ -271,4 +315,42 @@ export function alertsFor(series: Series[], status: Map<string, "confirmed" | "d
     });
   }
   return drafts;
+}
+
+// --- Cancelled (#82) ------------------------------------------------------------
+
+export type Cancellation = { merchant: string; accountId: string; cancelledOn: string; graceDays: number };
+
+/**
+ * Days after cancelling during which a charge is still expected, not an
+ * alert. A fixed-price subscription doesn't prorate, so this only covers a
+ * charge made just before cancelling that posts a few days later; a
+ * variable bill (power, phone) sends a final bill for the last partial
+ * period, which arrives with the next statement.
+ */
+export const cancelGraceDays = (series: Pick<Series, "variable">) => (series.variable ? 35 : 7);
+
+/**
+ * One alert per charge from a cancelled series that posts after the cancel
+ * date plus its grace window. Read from the raw charges, not detection: a
+ * single stray charge after months of quiet no longer looks like a series.
+ */
+export function chargesAfterCancel(charges: Charge[], cancelled: Cancellation[]): AlertDraft[] {
+  const byKey = new Map(cancelled.map((c) => [seriesKey(c.merchant, c.accountId), c]));
+  return charges.flatMap((charge): AlertDraft[] => {
+    const c = byKey.get(seriesKey(charge.merchant, charge.accountId));
+    if (!c || charge.amountCents <= 0 || charge.date <= addDays(c.cancelledOn, c.graceDays)) return [];
+    return [
+      {
+        kind: "charged_after_cancel",
+        dedupeKey: `charged_after_cancel|${charge.id}`,
+        merchant: charge.merchant,
+        accountId: charge.accountId,
+        transactionId: charge.id,
+        occurredOn: charge.date,
+        toCents: charge.amountCents,
+        cancelledOn: c.cancelledOn,
+      },
+    ];
+  });
 }

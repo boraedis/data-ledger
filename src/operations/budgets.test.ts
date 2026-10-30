@@ -2,6 +2,8 @@ import { and, eq, gte, like, lte } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { budgetTargets, categories, commandLog, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
+import { lastOfMonth, monthIndex } from "@/lib/budgets/engine";
+import { suggestedTargetCents } from "@/lib/budgets/format";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
 import { execute, undoCommand } from "@/operations/runtime";
@@ -111,5 +113,82 @@ describe("budgets", () => {
     expect(result.status).toBe("proposed");
     expect(await db.select().from(budgetTargets)).toHaveLength(0);
     expect((await db.select().from(commandLog).where(eq(commandLog.actor, "tally")))[0].status).toBe("proposed");
+  });
+});
+
+describe("budgets.history (#105)", () => {
+  type History = { categoryId: string | null; averageCents: number | null; months: { month: string; spentCents: number }[]; overMonths: number | null; comparedMonths: number }[];
+  const history = async (on: string) => (await run("budgets.history", { on })).output as History;
+
+  it("averages the three full months before this one from the same lines budgets count, and shows no history for an unused category", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-03-01" });
+    const h = await history("2026-06-15");
+    const groceries = h.find((r) => r.categoryId === cat.Groceries)!;
+    expect(groceries.months.map((m) => m.month)).toEqual(["2026-03-01", "2026-04-01", "2026-05-01"]);
+    // Each month is what budgets.status counted for it.
+    for (const m of groceries.months) {
+      const s = await status(lastOfMonth(monthIndex(m.month)));
+      expect(m.spentCents).toBe(target(s, cat.Groceries).spentCents);
+    }
+    const sum = groceries.months.reduce((s, m) => s + m.spentCents, 0);
+    expect(groceries.averageCents).toBe(Math.round(sum / 3));
+    expect(groceries.comparedMonths).toBe(3);
+    expect(groceries.overMonths).toBe(groceries.months.filter((m) => m.spentCents > 30_000).length);
+    // June, the current month, isn't in it.
+    expect(groceries.months.some((m) => m.month === "2026-06-01")).toBe(false);
+    expect(h.find((r) => r.categoryId === cat.Car)).toMatchObject({ averageCents: null, months: [] });
+  });
+
+  it("suggests a target only with two months of history, writes nothing for it, and saves it as the owner (#106)", async () => {
+    // One May purchase is all Car has: a single month, so no suggestion.
+    const [may] = await db.select().from(transactions).where(and(like(transactions.description, "QUILLFIELD%"), gte(transactions.postedOn, "2026-05-01"), lte(transactions.postedOn, "2026-05-31"))).limit(1);
+    await db.update(transactions).set({ categoryId: cat.Car }).where(eq(transactions.id, may.id));
+    const h = await history("2026-06-15");
+    expect(h.find((r) => r.categoryId === cat.Car)!.months).toHaveLength(1);
+    expect(suggestedTargetCents(h.find((r) => r.categoryId === cat.Car), 1)).toBeNull();
+
+    const suggestion = suggestedTargetCents(h.find((r) => r.categoryId === cat.Groceries), 1)!;
+    expect(suggestion % 100).toBe(0);
+    // Reading history and working out a suggestion wrote nothing.
+    expect(await db.select().from(budgetTargets)).toHaveLength(0);
+    expect(await db.select().from(commandLog).where(eq(commandLog.operation, "budgets.setTarget"))).toHaveLength(0);
+
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: suggestion, today: "2026-06-15" });
+    expect(await db.select().from(budgetTargets)).toMatchObject([{ categoryId: cat.Groceries, amountCents: suggestion }]);
+    expect(await db.select().from(commandLog).where(eq(commandLog.operation, "budgets.setTarget"))).toMatchObject([{ actor: "user", status: "applied" }]);
+  });
+});
+
+describe("budgets.monthly (#107)", () => {
+  type Monthly = { categoryId: string | null; months: { month: string; spentCents: number; targetCents: number | null }[] }[];
+  const monthly = async (on: string) => (await run("budgets.monthly", { on })).output as Monthly;
+
+  it("lists six months; where the target was in effect each matches budgets.status, and before it, what it would cover", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-03-10" });
+    await run("budgets.setTarget", { categoryId: cat.Car, amountCents: 5_000, today: "2026-03-10" });
+    const series = await monthly("2026-06-15");
+    const groceries = series.find((s) => s.categoryId === cat.Groceries)!.months;
+    expect(groceries.map((m) => m.month)).toEqual(["2026-01-01", "2026-02-01", "2026-03-01", "2026-04-01", "2026-05-01", "2026-06-01"]);
+    expect(groceries.map((m) => m.targetCents)).toEqual([null, null, 30_000, 30_000, 30_000, 30_000]);
+    for (const m of groceries.slice(2)) {
+      // June is as of the 15th, as the card shows it.
+      const on = m.month === "2026-06-01" ? "2026-06-15" : lastOfMonth(monthIndex(m.month));
+      expect(m.spentCents).toBe(target(await status(on), cat.Groceries).spentCents);
+    }
+    // Before the target, the category's own spending.
+    expect(groceries[0].spentCents).toBe(await spentOn("QUILLFIELD%", "2026-01-01", "2026-01-31"));
+    expect(groceries[0].spentCents).toBeGreaterThan(0);
+    // Nothing spent is a $0 month, not a missing one.
+    expect(series.find((s) => s.categoryId === cat.Car)!.months.map((m) => m.spentCents)).toEqual([0, 0, 0, 0, 0, 0]);
+    // The buffer has no target, so no series.
+    expect(series.some((s) => s.categoryId === null)).toBe(false);
+  });
+
+  it("gives a multi-month target its monthly share, with its months adding up to the period's spend", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 120_000, periodMonths: 12, today: "2026-03-10" });
+    const coffee = (await monthly("2026-06-15")).find((s) => s.categoryId === cat.Coffee)!.months;
+    expect(coffee.every((m) => m.targetCents === 10_000)).toBe(true);
+    const sum = coffee.reduce((s, m) => s + m.spentCents, 0);
+    expect(sum).toBe(target(await status("2026-06-15"), cat.Coffee).spentCents);
   });
 });

@@ -4,8 +4,8 @@ import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import type { CategoryOption } from "@/lib/categorize/labels";
 import { formatCents, parseAmountCents } from "@/lib/money";
-import { PAY_LINE_KINDS } from "@/lib/pay/stubs";
-import { createStub, findDeposits, updateStub, type StubFields } from "./actions";
+import { EMPLOYER_PAY_KINDS, PAY_LINE_KINDS } from "@/lib/pay/stubs";
+import { createStub, findDeposits, updateStub, type DepositMatch, type StubFields } from "./actions";
 
 // Adding or editing a pay stub (#60). Pay stubs repeat, so a new one starts
 // from the last one: the same deductions and categories, dates moved on by
@@ -15,10 +15,17 @@ import { createStub, findDeposits, updateStub, type StubFields } from "./actions
 // on purpose.
 
 type Line = { kind: string; label: string; amount: string; categoryId: string };
-export type FormStub = Omit<StubFields, "lines" | "depositTransactionId"> & { lines: { kind: string; label: string; amountCents: number; categoryId: string | null }[] };
+export type FormStub = Omit<StubFields, "lines" | "depositTransactionIds"> & { lines: { kind: string; label: string; amountCents: number; categoryId: string | null }[] };
+type EmployerLine = { kind: string; label: string; amount: string };
 
 const input = "h-9 min-w-0 rounded-md border bg-background px-2 text-sm";
 const dollars = (cents: number) => (cents / 100).toFixed(2);
+
+/** "$2,450.00 on 2026-06-12", or for pay split across accounts, each part and where it went. */
+function matchLabel(match: DepositMatch): string {
+  if (match.parts.length === 1) return `${formatCents(match.parts[0].amountCents)} on ${match.parts[0].postedOn}`;
+  return `${match.parts.map((p) => `${formatCents(p.amountCents)} to ${p.accountName}`).join(" + ")} (${match.parts[0].postedOn})`;
+}
 
 function centsOf(text: string): number | null {
   try {
@@ -49,7 +56,9 @@ export function StubForm({
   const [lines, setLines] = useState<Line[]>(
     initial.lines.map((l) => ({ kind: l.kind, label: l.label, amount: dollars(l.amountCents), categoryId: l.categoryId ?? "" })),
   );
-  const [deposits, setDeposits] = useState<{ id: string; postedOn: string; amountCents: number }[]>([]);
+  const [employerLines, setEmployerLines] = useState<EmployerLine[]>(initial.employerLines.map((l) => ({ kind: l.kind, label: l.label, amount: dollars(l.amountCents) })));
+  const [deposits, setDeposits] = useState<DepositMatch[]>([]);
+  const [automatic, setAutomatic] = useState<string[] | null>(null);
   const [deposit, setDeposit] = useState<string>("auto");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -60,13 +69,17 @@ export function StubForm({
   const withheld = lineCents.reduce<number>((s, c) => s + (c ?? 0), 0);
   const computed = grossCents === null ? null : grossCents - withheld;
   const adds = computed !== null && netCents !== null && computed === netCents && lineCents.every((c) => c !== null && c > 0);
+  const employerCents = employerLines.map((l) => centsOf(l.amount));
+  const employerValid = employerLines.every((l, i) => l.label.trim() && employerCents[i] !== null && employerCents[i]! > 0);
 
   // Deposits the net could be, once the pay date and net are known.
   useEffect(() => {
     let live = true;
     if (!adds || !netCents) return;
     findDeposits(payDate, netCents, payStubId).then((found) => {
-      if (live) setDeposits(found);
+      if (!live) return;
+      setDeposits(found.matches);
+      setAutomatic(found.automatic);
     });
     return () => {
       live = false;
@@ -74,6 +87,7 @@ export function StubForm({
   }, [adds, payDate, netCents, payStubId]);
 
   const setLine = (i: number, patch: Partial<Line>) => setLines(lines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const setEmployerLine = (i: number, patch: Partial<EmployerLine>) => setEmployerLines(employerLines.map((l, j) => (j === i ? { ...l, ...patch } : l)));
 
   const save = () =>
     startTransition(async () => {
@@ -85,7 +99,8 @@ export function StubForm({
         grossCents: grossCents!,
         netCents: netCents!,
         lines: lines.map((l, i) => ({ kind: l.kind, label: l.label, amountCents: lineCents[i]!, categoryId: l.categoryId || null })),
-        ...(deposit === "auto" ? {} : { depositTransactionId: deposit === "none" ? null : deposit }),
+        employerLines: employerLines.map((l, i) => ({ kind: l.kind, label: l.label.trim(), amountCents: employerCents[i]! })),
+        ...(deposit === "auto" ? {} : { depositTransactionIds: deposit === "none" ? null : deposit.split(",") }),
       };
       const result = payStubId ? await updateStub(payStubId, fields) : await createStub(fields);
       if (result?.error) setError(result.error);
@@ -174,16 +189,54 @@ export function StubForm({
         </p>
       </div>
 
+      <div className="space-y-2">
+        <p className="text-xs text-muted-foreground">
+          Paid by your employer, from the stub&apos;s memo or employer-paid box: a 401(k) match, an HSA contribution, life insurance. Not part of
+          gross or net, and not counted in budgets. Imputed income is the taxable value of life insurance over $50,000 of coverage; enter it only if
+          the stub shows it.
+        </p>
+        {employerLines.map((l, i) => (
+          <div key={i} className="flex flex-wrap gap-2 rounded-md border border-dashed p-2 sm:flex-nowrap sm:border-0 sm:p-0">
+            <select value={l.kind} onChange={(e) => setEmployerLine(i, { kind: e.target.value })} aria-label="Employer-paid kind" className={`${input} w-full sm:w-56`}>
+              {EMPLOYER_PAY_KINDS.map((k) => (
+                <option key={k.kind} value={k.kind} title={k.hint}>
+                  {k.label}
+                </option>
+              ))}
+            </select>
+            <input value={l.label} onChange={(e) => setEmployerLine(i, { label: e.target.value })} placeholder="Label on the stub" aria-label="Employer-paid label" className={`${input} min-w-0 flex-1`} />
+            <input
+              inputMode="decimal"
+              value={l.amount}
+              onChange={(e) => setEmployerLine(i, { amount: e.target.value })}
+              placeholder="0.00"
+              aria-label="Employer-paid amount"
+              className={`${input} w-24 text-right tabular-nums`}
+            />
+            <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setEmployerLines(employerLines.filter((_, j) => j !== i))} aria-label="Remove employer-paid item">
+              ×
+            </Button>
+          </div>
+        ))}
+        <Button size="sm" variant="outline" onClick={() => setEmployerLines([...employerLines, { kind: "retirement_match", label: "", amount: "" }])}>
+          Add employer-paid item
+        </Button>
+      </div>
+
       {adds ? (
         <label className="block space-y-1">
-          <span className="text-xs text-muted-foreground">Deposit of the net pay</span>
+          <span className="text-xs text-muted-foreground">Deposit of the net pay (split across accounts is fine)</span>
           <select value={deposit} onChange={(e) => setDeposit(e.target.value)} className={`${input} w-full sm:w-auto`}>
             <option value="auto">
-              {deposits.length === 1 ? `Link automatically (${deposits[0].postedOn})` : deposits.length ? "Pick one below…" : "None yet: link when it posts"}
+              {automatic
+                ? `Link automatically: ${matchLabel(deposits.find((d) => d.ids.join(",") === automatic.join(","))!)}`
+                : deposits.length
+                  ? "Pick one below…"
+                  : "None yet: link when it posts"}
             </option>
             {deposits.map((d) => (
-              <option key={d.id} value={d.id}>
-                {formatCents(d.amountCents)} on {d.postedOn}
+              <option key={d.ids.join(",")} value={d.ids.join(",")}>
+                {matchLabel(d)}
               </option>
             ))}
             <option value="none">Don&apos;t link</option>
@@ -192,7 +245,7 @@ export function StubForm({
       ) : null}
 
       <div className="flex gap-2">
-        <Button disabled={!adds || !employer.trim() || pending} onClick={save}>
+        <Button disabled={!adds || !employerValid || !employer.trim() || pending} onClick={save}>
           {payStubId ? "Save changes" : "Save pay stub"}
         </Button>
         <Button variant="ghost" onClick={onDone}>

@@ -75,9 +75,10 @@ export async function evaluateModel(
 }
 
 /**
- * The lowest threshold whose auto-applied answers were all right — the
- * most the model can do on its own without a single misfile in the
- * sample. Null when no threshold manages that (or nothing was applied).
+ * The lowest threshold whose confident answers were all right: how far the
+ * inbox's "confirm the model's confident ones at once" can be trusted
+ * (#86; nothing is applied without the owner). Null when no threshold
+ * manages that (or no answer reached one).
  */
 export function recommendedThreshold(stats: ThresholdStat[]): number | null {
   const clean = stats.filter((s) => s.applied > 0 && s.correct === s.applied).sort((a, b) => a.threshold - b.threshold);

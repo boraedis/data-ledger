@@ -34,6 +34,8 @@ export function AssumptionsForm({ initial }: { initial: AssumptionFields }) {
   const [itemized, setItemized] = useState(dollars(initial.itemizedDeductionsCents ?? 0));
   const [credits, setCredits] = useState(dollars(initial.creditsCents));
   const [payments, setPayments] = useState(dollars(initial.otherPaymentsCents));
+  const [hsaCoverage, setHsaCoverage] = useState(initial.hsaCoverage);
+  const [hsaCatchUp, setHsaCatchUp] = useState(initial.hsaCatchUp);
   const [message, setMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -61,6 +63,8 @@ export function AssumptionsForm({ initial }: { initial: AssumptionFields }) {
             itemizedDeductionsCents: itemize ? values[1]! : null,
             creditsCents: values[2]!,
             otherPaymentsCents: values[3]!,
+            hsaCoverage,
+            hsaCatchUp: hsaCoverage ? hsaCatchUp : false,
           });
           setMessage(result?.error ? { text: result.error, error: true } : { text: "Saved; the estimate above is updated.", error: false });
         });
@@ -89,6 +93,27 @@ export function AssumptionsForm({ initial }: { initial: AssumptionFields }) {
         </div>
         {field("Tax credits", credits, setCredits, "Child tax credit and the like, as a yearly total")}
         {field("Federal tax paid outside payroll", payments, setPayments, "Estimated payments, withholding on other income")}
+        <div className="space-y-1">
+          <label className="block space-y-1">
+            <span className="text-xs text-muted-foreground">HSA coverage</span>
+            <select
+              value={hsaCoverage ?? ""}
+              onChange={(e) => setHsaCoverage(e.target.value === "" ? null : (e.target.value as "self" | "family"))}
+              className={input}
+            >
+              <option value="">No HSA-eligible plan</option>
+              <option value="self">Self-only</option>
+              <option value="family">Family</option>
+            </select>
+          </label>
+          {hsaCoverage ? (
+            <label className="flex items-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={hsaCatchUp} onChange={(e) => setHsaCatchUp(e.target.checked)} />
+              55 or older (adds the catch-up)
+            </label>
+          ) : null}
+          <span className="block text-xs text-muted-foreground">Sets the year&apos;s HSA limit, which your and your employer&apos;s contributions share</span>
+        </div>
       </div>
       <div className="flex items-center gap-3">
         <Button type="submit" disabled={!valid || pending}>

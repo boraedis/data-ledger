@@ -69,8 +69,17 @@ Items, richer merchant data) can be added later per-institution without
 touching anything downstream. Teller was considered and set aside (narrower
 coverage; personal use of its dev tier is a grey area).
 
-Manual CSV upload is deliberately **not** a supported workflow — sync is
-automatic or it isn't done.
+Manual CSV upload is deliberately **not** how the ledger stays current —
+sync is automatic or it isn't done. The one exception is a **backfill**
+(#35): history older than the sync's ~90 days, from each bank's CSV export
+(Accounts → *Import older history*). One file per account at a time,
+parsed in memory and never stored; the column layout is saved per account.
+A preview shows what would be added, what was imported before (each row has
+a stable ID, so the same file twice adds nothing), and what looks like it's
+already here from the sync (same amount within 3 days), which is skipped
+unless the owner ticks it. Applied as one `import` command, undone as a
+whole; imported rows are marked `source = 'import'`. Investment accounts
+and OFX/QFX are out of scope for now.
 
 ### Categorization pipeline
 
@@ -84,26 +93,37 @@ never overwrites a category that's already set:
    undoable command per run). A paired transaction needs no category: it
    leaves the inbox and never counts as spending or income. Only
    unambiguous pairs — on a tie for closest date, neither is paired — and
-   never a cash side the owner already categorized. "Not a transfer" on the
-   transaction page unpairs both sides and the matcher leaves them alone.
-   Cash↔investment only for now: between two everyday accounts (say, a
-   $20 card charge and a $20 payment-app receipt) a coincidental match is
-   too likely.
+   never a side the owner already filed under a spending or income
+   category. "Not a transfer" on the transaction page unpairs both sides
+   and the matcher leaves them alone. Three passes, in order: cash↔
+   investment, cash out → card or loan (a payment), cash out → cash in.
+   A pair the matcher would have made but for a spending or income category
+   on one side (a card payment a rule filed as Shopping counts twice) is
+   flagged on Cash flow and Spending (#102, `transactions.misfiledTransfers`),
+   to settle as a transfer (both lose their category and are paired) or as
+   not one.
 1. **Rules** — the owner's own, in priority order: merchant or description
    equals / contains / starts with a pattern, optionally limited to one
    account or an amount range. No regex (a user pattern run over every
-   transaction is a ReDoS risk, and these cover the real cases).
-2. **Merchant memory** — if this merchant's last few categorizations
-   (up to 5) all agree, repeat it; one past categorization is enough. If
-   they disagree, it only *suggests* in the inbox.
+   transaction is a ReDoS risk, and these cover the real cases). **The
+   only step that categorizes on its own** (#86).
+2. **Merchant memory** — a *suggestion*: this merchant's usual category
+   from its last few categorizations (up to 5; one is enough), marked as
+   "your usual" when they all agree and "most often" when they don't.
 3. **The model** (see "Model service"), only for what rules and memory
-   left — and memory's mixed-history cases stay the owner's call. Answers
-   at or above `MODEL_AUTO_APPLY_THRESHOLD` (default 90%) are applied as
-   actor `model`, one undoable batch; the rest become **suggestions**,
-   pre-selected in the inbox with the model's confidence. Each transaction
-   goes to the model once (even "don't know" is recorded), so it's never
-   paid for twice.
-4. Everything else waits in the **review inbox**.
+   left. Its answers are *suggestions* too, with its confidence. Each
+   transaction goes to the model once (even "don't know" is recorded), so
+   it's never paid for twice.
+4. Everything waits in the **review inbox**, each suggestion pre-selected:
+   Enter (or a tap) confirms one, as the owner, undoable. Ticking several
+   and **Confirm** files a set as one undoable Activity entry, with quick
+   selections for "your usual" and the model's confident answers (at or
+   above `MODEL_AUTO_APPLY_THRESHOLD`, default 90%). After confirming,
+   "Always categorize this merchant this way" makes it a rule in one tap.
+
+Until #86, memory and the model's confident answers were applied without
+asking (logged and undoable). Only the owner's explicit rules do that
+now; the rest is a confirmation.
 
 The model step runs only when asked: **nightly**, and from the inbox's
 **Ask the model** button. A cold start takes ~2½–4½ minutes (measured on
@@ -117,10 +137,9 @@ wakes the GPU). If there's work left, or the model was still booting, it
 triggers itself again and the next run finds the model warm; it stops
 when nothing is left for the model, and never goes past 6 links.
 
-Merchant memory treats the model's confident answers like any other
-categorization history, so a merchant the model files once is then
-handled by memory. Undoing a model batch doesn't undo memory batches
-that followed from it. Inbox corrections and "Sync now" never wake the GPU.
+A confirmed suggestion is categorization history like any other, so the
+next transaction from that merchant arrives with it as "your usual".
+Inbox corrections and "Sync now" never wake the GPU.
 If the model is unreachable or out of time, nothing breaks — those
 transactions stay in the inbox and are tried next time.
 
@@ -128,9 +147,11 @@ transactions stay in the inbox and are tried next time.
 history** asks the model about up to 30 transactions you've already
 categorized (that it has never seen), hiding the answer, and stores only
 the scores: right / wrong / "don't know", and for each threshold how many
-would be auto-applied and how many of those would be right. It also names
-the lowest threshold with no wrong auto-applied answer, to set
-`MODEL_AUTO_APPLY_THRESHOLD` from.
+answers would count as confident and how many of those would be right. It
+also names the lowest threshold with no wrong confident answer, to set
+`MODEL_AUTO_APPLY_THRESHOLD` from: it decides what the inbox's "model
+≥90%" selection picks, so this says how far to trust confirming those at
+once.
 
 Rules and memory key on a **merchant name** derived from the raw
 description (`src/lib/categorize/merchant.ts`): processor prefixes, store
@@ -189,8 +210,11 @@ the owner's own (see below).
 - **Rollover:** per target, the remainder (or overspend) carries into the next period while rollover stays on. A gap resets it.
 - **Annual and other multi-month targets** show year-to-date (period-to-date) spend against an even-pace marker. With a sinking fund, they also show the monthly set-aside and how much should be set aside by now.
 - **Rebalancing:** `budgets.rebalance` moves money between two targets for the current period only, as a dated adjustment pair. Both targets stay as they are.
+- **What it usually costs** (#105): each target card, and the target form, shows the category's average monthly net spend over the last 3 full months (the current month left out), from the same lines budgets count (`budgets.history`, `recentHistory` in the engine). A category covers its subcategories without their own target, as a target on it would; a category first seen inside the window is averaged from then; nothing in the window reads "No spending", not $0. For a monthly target it adds how many of those months went over today's target.
+- **Suggested targets** (#106): with at least 2 months of that history, the Add target form fills in the amount from the average, times the period's length and rounded to whole dollars (`suggestedTargetCents`). It follows the category and period until the owner types, and a "Use suggested" link puts it back, including when editing a target. It's only a value in the field: nothing is written until the target is saved through `budgets.setTarget` as usual. It always comes from net spend, even on the gross view.
+- **Monthly chart** (#107): each target card shows the last 6 months up to the one being viewed (`budgets.monthly`, `monthlySeries` in the engine) as bars against a dashed line at that month's target (a multi-month target's even monthly share). Where the target was in effect a bar is exactly what `budgets.status` counted; months before it existed are faded, have no line, and show what it would cover today. Every month gets a column, $0 included. A bar links to its month's view, keeping net/gross, and the chart carries a text summary for screen readers. The line is the target, not what rollover or rebalancing made available.
 - **Operations:**
-  - **Reads:** `budgets.status` and `budgets.targets`. Budget figures come from transactions, not balances, so Tally may read them.
+  - **Reads:** `budgets.status`, `budgets.history` and `budgets.targets`. Budget figures come from transactions, not balances, so Tally may read them.
   - **Writes:** `budgets.setTarget`, `removeTarget` and `rebalance`. All are logged and undoable, and Tally's are proposals.
 
 ### Savings goals
@@ -273,6 +297,13 @@ Near-real-time purchase alerts (#28: bank emails #31, Apple Pay #32) can't wait 
 - **Kept out of** transfer matching, recurring-charge detection and reimbursement payments, where a second copy of a purchase would mislead.
 - **Apple Pay** (#32): an iOS Shortcuts automation posts each purchase (merchant, amount, the card's Wallet name, the time) to `/api/shortcuts/purchase` with a per-device token from Settings, stored only as a hash and revocable there. The Wallet name maps to an account (`accounts.wallet_card_name`, set in Settings). An unmapped name isn't recorded, but is offered in Settings and sends a notification. A created purchase sends a push that opens it. Setup: [docs/apple-pay-shortcut.md](docs/apple-pay-shortcut.md).
 - **Filing from the notification** (#34): a purchase notification opens `/transactions/[id]/quick`, a phone-first screen showing the likely categories as big buttons (`transactions.categoryChoices`, ranked in `src/lib/categorize/choices.ts`): a matching rule, then what you've filed this merchant under before, then the model's guess, then recently used categories, never income for money out. One tap files it; Undo is right there. "Other category" searches the rest, and "Split" itemizes a mixed basket, with the last part taking whatever's left. Every change goes through `transactions.setCategory` or `transactions.split` as `user`.
+
+### Transactions added by hand
+
+For money the feed doesn't show, such as a payment-app payment or cash (#64). From **Transactions → Add transaction**: date (today or earlier), money out or in, exact cents, description, account, and optionally a category (otherwise your rules run, then the inbox). Marked `transactions.source = 'manual'` and shown as "added by hand" in the list, the inbox and the transaction page; after that it's categorized, split, tagged, shared and matched like any other.
+- **Operations:** `transactions.createManual`, `updateManual` (date, amount, description) and `deleteManual`, as `user` (Tally may propose them). Each is logged and undoable. The bank's own transactions can't be changed or deleted.
+- **Where:** accounts the money moves through. Not manual accounts (#26), which keep a balance only, and not investment accounts, whose activity comes from the brokerage.
+- **When the bank reports it too** (`src/lib/manual/match.ts`): a bank transaction in the same account, for the exact amount, from 3 days before to 7 after, could be the same purchase. Until you decide, only the bank's counts (`countsAsSpending()`), so nothing is counted twice. The Transactions page and the transaction itself ask: **merge** (`transactions.mergeManual`: your category or split, experience date, tags and shares move to the bank's row, as for an alert) or **keep both** (`transactions.keepManual`, `transactions.not_duplicate`: both count, and it isn't asked again). Nothing merges on its own: two identical $20 payments in a week are as likely as one.
 
 ### AI: one self-hosted model
 
@@ -438,7 +469,7 @@ local Postgres works the same way.
 | `MODEL_BASE_URL` | optional | The model's OpenAI-compatible base URL, ending in `/v1`. Unset = no AI features; everything else works |
 | `MODEL_API_KEY` | with the above | The key the model server requires (same value as its `VLLM_API_KEY`) |
 | `MODEL_NAME` | optional | Model name to request; defaults to `ledger`, the name `model/serve.py` serves under |
-| `MODEL_AUTO_APPLY_THRESHOLD` | optional | Confidence (0–1) at or above which the model's category is applied rather than suggested; default 0.9 |
+| `MODEL_AUTO_APPLY_THRESHOLD` | optional | Confidence (0–1) at or above which the model's suggestion counts as confident, for the inbox's "confirm the confident ones" selection; nothing is applied on it. Default 0.9 |
 | `BRIDGE_TOKEN` | optional | Bearer token Data Diary sends to the bridge (32+ chars). Unset = bridge off |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional | Push notifications (#29): the key pair from `npx web-push generate-vapid-keys`, and a `mailto:` or https contact. Unset = no notifications |
 

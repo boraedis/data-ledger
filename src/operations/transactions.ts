@@ -4,6 +4,7 @@ import {
   accounts,
   categories,
   categorySuggestions,
+  payStubDeposits,
   payStubLines,
   payStubs,
   reimbursementMatches,
@@ -16,6 +17,8 @@ import {
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { merchantMemory } from "@/lib/categorize/match";
 import { isInvestmentKind, investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
+import { TRANSFER_PASSES, findTransferPairs } from "@/lib/investments/transfers";
+import { DAYS_AFTER as MANUAL_DAYS_AFTER, DAYS_BEFORE as MANUAL_DAYS_BEFORE } from "@/lib/manual/match";
 import { expandDeposit } from "@/lib/pay/stubs";
 import { distribute } from "@/lib/reimbursements/match";
 import type { Db } from "@/db/types";
@@ -58,8 +61,11 @@ export const listTransactions = defineRead({
     "anything about spending. Page with offset. `transfer` is set when the transaction is one side of a " +
     "transfer between the owner's accounts (never spending or income); `investmentActivity` classifies " +
     "brokerage and retirement transactions (dividend, interest, buy, sell, reinvestment, fee, transfer, other). " +
+    "`transferUnmatched` is true for one filed under a transfer category whose other side wasn't found. " +
+    "`payStub` is set on a paycheck deposit linked to its pay stub (pay date, employer); `paycheckWithoutStub` " +
+    "is true for money in that looks like a paycheck (the category or payer of linked ones) but has none. " +
     "`provisionalSource` is set on a provisional transaction: one from a purchase alert that the bank hasn't " +
-    "reported yet (see transactions.provisional).",
+    "reported yet (see transactions.provisional). `manual` is true for one the owner added by hand.",
   input: z.object({
     from: isoDate.optional(),
     to: isoDate.optional(),
@@ -111,6 +117,7 @@ export const listTransactions = defineRead({
         merchant: transactions.merchant,
         pending: transactions.pending,
         provisionalSource: transactions.provisionalSource,
+        manual: sql<boolean>`${transactions.source} is not distinct from 'manual'`,
         accountId: transactions.accountId,
         categoryId: transactions.categoryId,
         isSplit: transactions.isSplit,
@@ -133,7 +140,7 @@ export const listTransactions = defineRead({
     const [context, { owedOff, matched }] = await Promise.all([transferAndActivity(db, rows), reimbursementAdjustments(db, ids)]);
     return rows.map(({ transferPairId, ...r }) => ({
       ...r,
-      ...context(r.accountId, r.description, transferPairId),
+      ...context(r, transferPairId),
       // Shared expenses (#8): what friends owe on it, and how much of an
       // incoming payment was matched to what they owed.
       sharedOwedCents: owedOff.get(r.id) ?? 0,
@@ -144,29 +151,68 @@ export const listTransactions = defineRead({
 });
 
 /**
- * For each transaction: the other side's account if it's a paired
- * transfer, and what kind of investment activity it is if it's in a
- * brokerage or retirement account (rule-based, src/lib/investments).
+ * For each transaction, what it's connected to, so nothing is read twice:
+ * - `transfer`: the other side's account, when it's a paired transfer
+ * - `transferUnmatched`: filed under a transfer category, but unpaired, so
+ *   its other half wasn't found (an account not connected, or not a
+ *   transfer at all)
+ * - `payStub`: the pay stub a paycheck deposit is linked to (#60, #91)
+ * - `paycheckWithoutStub`: money in that looks like a paycheck, in the
+ *   category or from the payer of the linked ones, with no stub
+ * - `investmentActivity`: what a brokerage or retirement transaction is
  */
-async function transferAndActivity(db: Db, rows: { accountId: string; transferPairId: string | null }[]) {
+async function transferAndActivity(
+  db: Db,
+  rows: { id: string; accountId: string; transferPairId: string | null; description: string; amountCents: number; categoryId: string | null; merchant: string | null }[],
+) {
+  const ids = rows.map((r) => r.id);
   const pairIds = rows.map((r) => r.transferPairId).filter((id): id is string => Boolean(id));
-  const [kinds, pairs] = await Promise.all([
+  const [kinds, pairs, transferCats, stubLinks, paycheckShapes] = await Promise.all([
     db.select({ id: accounts.id, kind: accounts.type }).from(accounts),
     pairIds.length
       ? db.select({ id: transactions.id, accountId: transactions.accountId }).from(transactions).where(inArray(transactions.id, pairIds))
       : Promise.resolve([]),
+    db.select({ id: categories.id }).from(categories).where(eq(categories.kind, "transfer")),
+    ids.length
+      ? db
+          .select({ transactionId: payStubDeposits.transactionId, payStubId: payStubs.id, payDate: payStubs.payDate, employer: payStubs.employer })
+          .from(payStubDeposits)
+          .innerJoin(payStubs, eq(payStubs.id, payStubDeposits.payStubId))
+          .where(inArray(payStubDeposits.transactionId, ids))
+      : Promise.resolve([]),
+    // What linked paychecks look like: their categories and payers.
+    db
+      .selectDistinct({ categoryId: transactions.categoryId, merchant: transactions.merchant })
+      .from(payStubDeposits)
+      .innerJoin(transactions, eq(transactions.id, payStubDeposits.transactionId)),
   ]);
   const kindOf = new Map(kinds.map((k) => [k.id, k.kind]));
   const pairAccount = new Map(pairs.map((p) => [p.id, p.accountId]));
+  const isTransferCategory = new Set(transferCats.map((c) => c.id));
+  const stubOf = new Map(stubLinks.map((l) => [l.transactionId, { payStubId: l.payStubId, payDate: l.payDate, employer: l.employer }]));
+  const paycheckCategories = new Set(paycheckShapes.map((p) => p.categoryId).filter(Boolean));
+  const paycheckPayers = new Set(paycheckShapes.map((p) => p.merchant).filter(Boolean));
   return (
-    accountId: string,
-    description: string,
+    row: { id: string; accountId: string; description: string; amountCents: number; categoryId: string | null; merchant: string | null },
     transferPairId: string | null,
-  ): { transfer: { transactionId: string; accountId: string } | null; investmentActivity: InvestmentActivity | null } => {
-    const kind = kindOf.get(accountId);
+  ): {
+    transfer: { transactionId: string; accountId: string } | null;
+    transferUnmatched: boolean;
+    payStub: { payStubId: string; payDate: string; employer: string } | null;
+    paycheckWithoutStub: boolean;
+    investmentActivity: InvestmentActivity | null;
+  } => {
+    const kind = kindOf.get(row.accountId);
+    const payStub = stubOf.get(row.id) ?? null;
     return {
       transfer: transferPairId ? { transactionId: transferPairId, accountId: pairAccount.get(transferPairId)! } : null,
-      investmentActivity: kind && isInvestmentKind(kind) ? investmentActivity(description) : null,
+      transferUnmatched: !transferPairId && row.categoryId !== null && isTransferCategory.has(row.categoryId),
+      payStub,
+      paycheckWithoutStub:
+        !payStub &&
+        row.amountCents > 0 &&
+        ((row.categoryId !== null && paycheckCategories.has(row.categoryId)) || (row.merchant !== null && paycheckPayers.has(row.merchant))),
+      investmentActivity: kind && isInvestmentKind(kind) ? investmentActivity(row.description) : null,
     };
   };
 }
@@ -198,6 +244,32 @@ export const setTransactionCategory = defineWrite({
     if (categoryId) await assertCategoriesExist(ctx, [categoryId]);
     await removeSplits(ctx, transactionId);
     return ctx.update(transactions, transactionId, { categoryId, isSplit: false });
+  },
+});
+
+export const setCategories = defineWrite({
+  name: "transactions.setCategories",
+  description:
+    "Categorize a set of uncategorized transactions at once: confirming the inbox's suggestions (#86). One " +
+    "entry in Activity, undone together. A transaction categorized or split since is left as it is.",
+  input: z.object({
+    assignments: z.array(z.object({ transactionId: z.uuid(), categoryId: z.uuid() })).min(1).max(500),
+  }),
+  apply: async (ctx, { assignments }) => {
+    await assertCategoriesExist(ctx, [...new Set(assignments.map((a) => a.categoryId))]);
+    const current = await ctx.db
+      .select({ id: transactions.id, categoryId: transactions.categoryId, isSplit: transactions.isSplit })
+      .from(transactions)
+      .where(inArray(transactions.id, assignments.map((a) => a.transactionId)));
+    const open = new Set(current.filter((t) => t.categoryId === null && !t.isSplit).map((t) => t.id));
+    let applied = 0;
+    for (const { transactionId, categoryId } of assignments) {
+      if (!open.has(transactionId)) continue;
+      open.delete(transactionId);
+      await ctx.update(transactions, transactionId, { categoryId });
+      applied++;
+    }
+    return { applied };
   },
 });
 
@@ -275,6 +347,7 @@ export const getTransaction = defineRead({
         merchant: transactions.merchant,
         pending: transactions.pending,
         provisionalSource: transactions.provisionalSource,
+        manual: sql<boolean>`${transactions.source} is not distinct from 'manual'`,
         categoryId: transactions.categoryId,
         isSplit: transactions.isSplit,
         accountId: transactions.accountId,
@@ -304,7 +377,7 @@ export const getTransaction = defineRead({
         .orderBy(tags.name),
     ]);
     const { transferPairId, ...rest } = row;
-    const context = (await transferAndActivity(db, [row]))(row.accountId, row.description, transferPairId);
+    const context = (await transferAndActivity(db, [{ ...row, transferPairId }]))(row, transferPairId);
     return { ...rest, ...context, splits: parts, tags: tagRows };
   },
 });
@@ -363,35 +436,73 @@ export function countsAsSpending(): SQL {
     where synced.account_id = ${transactions.accountId}
       and synced.provisional_source is null
       and synced.posted_on >= ${transactions.postedOn}
+  )) and ${manualNotShadowed()}`;
+}
+
+/**
+ * A manual transaction (#64) steps aside while the bank has one that could
+ * be the same purchase (src/lib/manual/match.ts: the same account and
+ * amount, close in date) and the owner hasn't decided: the bank's counts,
+ * so it's never counted twice. Merging keeps the bank's; "keep both"
+ * (notDuplicate) brings it back.
+ */
+function manualNotShadowed(): SQL {
+  return sql`(${transactions.source} is distinct from 'manual' or ${transactions.notDuplicate} or not exists (
+    select 1 from ${transactions} as bank
+    where bank.account_id = ${transactions.accountId}
+      and bank.id <> ${transactions.id}
+      and bank.source is distinct from 'manual'
+      and bank.provisional_source is null
+      and bank.pending = false
+      and bank.amount_cents = ${transactions.amountCents}
+      and bank.posted_on between ${transactions.postedOn} - ${sql.raw(String(MANUAL_DAYS_BEFORE))} and ${transactions.postedOn} + ${sql.raw(String(MANUAL_DAYS_AFTER))}
   ))`;
 }
 
-type Line = { transactionId: string; date: string; amountCents: number; categoryId: string };
+type Line = { transactionId: string; date: string; amountCents: number; categoryId: string; accountId: string; merchant: string | null };
 
 /**
- * A deposit linked to a pay stub (#60) counts as the paycheck it was:
- * gross pay in the deposit's category, and each deduction with a category
- * as its own line (src/lib/pay/stubs.ts, expandDeposit). The parts add up
- * to the deposit, so the net is never counted on top. Only a deposit
- * counted whole: one the owner split themselves keeps their split.
+ * A paycheck linked to a pay stub (#60) counts as what it was: gross pay
+ * in the deposit's category, and each deduction with a category as its
+ * own line (src/lib/pay/stubs.ts, expandDeposit). Pay split across
+ * accounts (#91) expands onto its largest deposit, less the others, which
+ * count as they are; together the parts still add up to every deposit, so
+ * the net is never counted on top. Only while the links still add up to
+ * the net (a deposit the bank removed leaves the rest counting as plain
+ * deposits), and only a deposit counted whole: one the owner split
+ * themselves keeps their split.
  */
 async function withPayStubs(db: Db, lines: Line[]): Promise<Line[]> {
   const ids = [...new Set(lines.map((l) => l.transactionId))];
   if (ids.length === 0) return lines;
-  const stubs = await db
-    .select({ id: payStubs.id, depositId: payStubs.depositTransactionId, grossCents: payStubs.grossCents })
-    .from(payStubs)
-    .where(inArray(payStubs.depositTransactionId, ids));
-  if (stubs.length === 0) return lines;
-  const stubLines = await db
-    .select({ payStubId: payStubLines.payStubId, amountCents: payStubLines.amountCents, categoryId: payStubLines.categoryId })
-    .from(payStubLines)
-    .where(inArray(payStubLines.payStubId, stubs.map((s) => s.id)));
-  const byDeposit = new Map(stubs.map((s) => [s.depositId!, { grossCents: s.grossCents, lines: stubLines.filter((l) => l.payStubId === s.id) }]));
+  const touching = db.select({ id: payStubDeposits.payStubId }).from(payStubDeposits).where(inArray(payStubDeposits.transactionId, ids));
+  const links = await db
+    .select({ payStubId: payStubDeposits.payStubId, transactionId: payStubDeposits.transactionId, amountCents: transactions.amountCents })
+    .from(payStubDeposits)
+    .innerJoin(transactions, eq(transactions.id, payStubDeposits.transactionId))
+    .where(inArray(payStubDeposits.payStubId, touching));
+  if (links.length === 0) return lines;
+  const stubIds = [...new Set(links.map((l) => l.payStubId))];
+  const [stubs, stubLines] = await Promise.all([
+    db.select({ id: payStubs.id, grossCents: payStubs.grossCents, netCents: payStubs.netCents }).from(payStubs).where(inArray(payStubs.id, stubIds)),
+    db
+      .select({ payStubId: payStubLines.payStubId, amountCents: payStubLines.amountCents, categoryId: payStubLines.categoryId })
+      .from(payStubLines)
+      .where(inArray(payStubLines.payStubId, stubIds)),
+  ]);
+
+  // Per stub, its primary deposit (the largest) and what the others add up to.
+  const byPrimary = new Map<string, { grossCents: number; lines: typeof stubLines }>();
+  for (const stub of stubs) {
+    const own = links.filter((l) => l.payStubId === stub.id).sort((a, b) => b.amountCents - a.amountCents || a.transactionId.localeCompare(b.transactionId));
+    if (own.reduce((sum, l) => sum + l.amountCents, 0) !== stub.netCents) continue;
+    const others = own.slice(1).reduce((sum, l) => sum + l.amountCents, 0);
+    byPrimary.set(own[0].transactionId, { grossCents: stub.grossCents - others, lines: stubLines.filter((l) => l.payStubId === stub.id) });
+  }
   const parts = new Map<string, number>();
   for (const l of lines) parts.set(l.transactionId, (parts.get(l.transactionId) ?? 0) + 1);
   return lines.flatMap((line) => {
-    const stub = byDeposit.get(line.transactionId);
+    const stub = byPrimary.get(line.transactionId);
     if (!stub || parts.get(line.transactionId) !== 1) return [line];
     return expandDeposit(line, stub).map((part) => ({ ...line, ...part }));
   });
@@ -404,7 +515,8 @@ export const spendingLines = defineRead({
     "per part of a split transaction. Dated by experience date when set, else posted date; from/to filter " +
     "on that date (inclusive). budgetOnly (default true) limits to accounts that count toward budgets. " +
     "A provisional transaction (from a purchase alert) counts until the bank's data for its account reaches " +
-    "its date. A deposit linked to a pay stub counts as gross pay plus a line per deduction. Net by default: what friends owe on a shared expense comes off it (your share is what counts), and the " +
+    "its date. A deposit linked to a pay stub counts as gross pay plus a line per deduction. Each line carries " +
+    "its transaction's account id and merchant name, for grouping (the Spending page). Net by default: what friends owe on a shared expense comes off it (your share is what counts), and the " +
     "part of an incoming payment matched to a reimbursement is dropped (never income). gross: true returns " +
     "the amounts as charged.",
   input: z.object({
@@ -427,11 +539,25 @@ export const spendingLines = defineRead({
 
     const [whole, split] = await Promise.all([
       db
-        .select({ transactionId: transactions.id, date: effective, amountCents: transactions.amountCents, categoryId: transactions.categoryId })
+        .select({
+          transactionId: transactions.id,
+          date: effective,
+          amountCents: transactions.amountCents,
+          categoryId: transactions.categoryId,
+          accountId: transactions.accountId,
+          merchant: transactions.merchant,
+        })
         .from(transactions)
         .where(and(isNotNull(transactions.categoryId), ...filters)),
       db
-        .select({ transactionId: transactions.id, date: effective, amountCents: transactionSplits.amountCents, categoryId: transactionSplits.categoryId })
+        .select({
+          transactionId: transactions.id,
+          date: effective,
+          amountCents: transactionSplits.amountCents,
+          categoryId: transactionSplits.categoryId,
+          accountId: transactions.accountId,
+          merchant: transactions.merchant,
+        })
         .from(transactionSplits)
         .innerJoin(transactions, eq(transactions.id, transactionSplits.transactionId))
         .where(and(...filters))
@@ -460,15 +586,43 @@ export const spendingLines = defineRead({
   },
 });
 
+export const uncategorizedSpend = defineRead({
+  name: "transactions.uncategorizedSpend",
+  description:
+    "Money out that isn't categorized yet, between two dates (inclusive, by experience date when set): how many " +
+    "transactions and their total in cents (positive). It isn't in spendingLines, so the Spending page shows it " +
+    "separately rather than hiding it. Budget accounts only; transfers and split transactions aren't counted.",
+  input: z.object({ from: z.iso.date(), to: z.iso.date() }),
+  run: async (db, { from, to }) => {
+    const effective = sql<string>`coalesce(${transactions.experiencedOn}, ${transactions.postedOn})`;
+    const [row] = await db
+      .select({ count: count(), cents: sql<number>`coalesce(-sum(${transactions.amountCents}), 0)`.mapWith(Number) })
+      .from(transactions)
+      .where(
+        and(
+          isNull(transactions.categoryId),
+          eq(transactions.isSplit, false),
+          isNull(transactions.transferPairId),
+          sql`${transactions.amountCents} < 0`,
+          sql`${effective} >= ${from}`,
+          sql`${effective} <= ${to}`,
+          inArray(transactions.accountId, budgetAccountIds(db)),
+          countsAsSpending(),
+        ),
+      );
+    return { count: row.count, cents: row.cents };
+  },
+});
+
 export const applyCategories = defineWrite({
   name: "transactions.applyCategories",
   description:
-    "Pipeline only: categorize a batch of uncategorized transactions (one rule's, merchant memory's or the model's results).",
-  // The categorization pipeline runs this once per rule (as rule:<id>), once
-  // for merchant memory and once for the model's confident answers, so
+    "Pipeline only: categorize a batch of uncategorized transactions (one rule's matches).",
+  // The categorization pipeline runs this once per rule (as rule:<id>), so
   // Activity shows "Rule X categorized 23 transactions" as one undoable
-  // entry rather than 23.
-  allowedActors: ["rule:*", "memory", "model"],
+  // entry rather than 23. Rules only (#86): merchant memory and the model
+  // suggest, and the owner confirms (transactions.setCategories).
+  allowedActors: ["rule:*"],
   input: z.object({
     assignments: z.array(z.object({ transactionId: z.uuid(), categoryId: z.uuid() })).min(1).max(5000),
   }),
@@ -539,7 +693,8 @@ export const listInbox = defineRead({
   name: "transactions.inbox",
   description:
     "Uncategorized transactions in accounts that count toward budgets, newest first, each with a suggested " +
-    "category: from merchant memory when the merchant's history is mixed, else from the model when it had one.",
+    "category for the owner to confirm: from merchant memory when the merchant has history (suggestionAgrees: " +
+    "its recent categories all agree), else from the model when it had one (with its confidence).",
   input: z.object({ limit: z.number().int().min(1).max(500).default(100) }),
   run: async (db, { limit }) => {
     const rows = await db
@@ -552,6 +707,7 @@ export const listInbox = defineRead({
         accountId: transactions.accountId,
         pending: transactions.pending,
         provisionalSource: transactions.provisionalSource,
+        manual: sql<boolean>`${transactions.source} is not distinct from 'manual'`,
       })
       .from(transactions)
       .where(
@@ -582,13 +738,13 @@ awaitingCategory(db))
       // The owner's own history beats the model's guess.
       const verdict = row.merchant ? merchantMemory(byMerchant.get(row.merchant) ?? []) : { kind: "none" as const };
       if (verdict.kind !== "none") {
-        return { ...row, suggestedCategoryId: verdict.categoryId, suggestionSource: "memory" as const, suggestionConfidence: null };
+        return { ...row, suggestedCategoryId: verdict.categoryId, suggestionSource: "memory" as const, suggestionConfidence: null, suggestionAgrees: verdict.kind === "apply" };
       }
       const model = modelByTxn.get(row.id);
       if (model?.categoryId) {
-        return { ...row, suggestedCategoryId: model.categoryId, suggestionSource: "model" as const, suggestionConfidence: model.confidence };
+        return { ...row, suggestedCategoryId: model.categoryId, suggestionSource: "model" as const, suggestionConfidence: model.confidence, suggestionAgrees: false };
       }
-      return { ...row, suggestedCategoryId: null, suggestionSource: null, suggestionConfidence: null };
+      return { ...row, suggestedCategoryId: null, suggestionSource: null, suggestionConfidence: null, suggestionAgrees: false };
     });
   },
 });
@@ -649,6 +805,136 @@ export const matchTransfers = defineWrite({
       matched++;
     }
     return { matched };
+  },
+});
+
+// --- Transfers filed as spending or income (#102) ---------------------------
+//
+// The matcher only pairs what's uncategorized or filed as a transfer: the
+// owner's filing wins. So a card payment a rule filed as Shopping is never
+// paired, and counts twice (the payment, and the purchases it pays for).
+// This finds the pairs the matcher would have made if categories were
+// ignored, for the owner to settle one way or the other. Nothing changes
+// on its own: a coincidence (a $42.10 dinner and a $42.10 card refund the
+// same week) looks exactly like a transfer.
+
+export const misfiledTransfers = defineRead({
+  name: "transactions.misfiledTransfers",
+  description:
+    "Pairs of transactions that look like a transfer between the owner's own accounts (exactly opposite amounts, " +
+    "within 5 days, the only such match for each other) but where at least one side is filed under a spending or " +
+    "income category, so it counts as spending or income. from/to (inclusive) keep pairs with either side dated in " +
+    "range. Each pair: the side money left (out) and the side it arrived (in).",
+  input: z.object({ from: z.iso.date().optional(), to: z.iso.date().optional() }),
+  run: async (db, { from, to }) => {
+    const rows = await db
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        accountName: accounts.name,
+        accountType: accounts.type,
+        amountCents: transactions.amountCents,
+        postedOn: transactions.postedOn,
+        description: transactions.description,
+        categoryId: transactions.categoryId,
+        categoryName: categories.name,
+        categoryKind: categories.kind,
+      })
+      .from(transactions)
+      .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .leftJoin(categories, eq(categories.id, transactions.categoryId))
+      .where(
+        and(
+          eq(transactions.pending, false),
+          isNull(transactions.provisionalSource),
+          isNull(transactions.transferPairId),
+          eq(transactions.transferRejected, false),
+          eq(transactions.isSplit, false),
+        ),
+      );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const misfiled = (r: (typeof rows)[number]) => r.categoryId !== null && r.categoryKind !== "transfer";
+    const side = (r: (typeof rows)[number]) => ({
+      transactionId: r.id,
+      postedOn: r.postedOn,
+      accountId: r.accountId,
+      accountName: r.accountName,
+      description: r.description,
+      amountCents: r.amountCents,
+      categoryName: r.categoryName,
+    });
+    const inRange = (on: string) => (!from || on >= from) && (!to || on <= to);
+
+    // The matcher's passes, in its order, each over what earlier ones left.
+    const taken = new Set<string>();
+    const found: { out: ReturnType<typeof side>; in: ReturnType<typeof side> }[] = [];
+    for (const pass of TRANSFER_PASSES) {
+      const open = rows.filter((r) => !taken.has(r.id));
+      const a = open.filter((r) => pass.from.includes(r.accountType));
+      const b = open.filter((r) => pass.to.includes(r.accountType));
+      const sources = pass.outOnly ? a.filter((r) => r.amountCents < 0) : a;
+      const targets = pass.outOnly ? b.filter((r) => r.amountCents > 0) : b;
+      for (const { cashId, investmentId } of findTransferPairs(sources, targets)) {
+        taken.add(cashId).add(investmentId);
+        const [x, y] = [byId.get(cashId)!, byId.get(investmentId)!];
+        // Both uncategorized or transfers: the matcher's own job, not a misfiling.
+        if (!misfiled(x) && !misfiled(y)) continue;
+        if (!inRange(x.postedOn) && !inRange(y.postedOn)) continue;
+        const [o, i] = x.amountCents < 0 ? [x, y] : [y, x];
+        found.push({ out: side(o), in: side(i) });
+      }
+    }
+    return found.sort((p, q) => q.out.postedOn.localeCompare(p.out.postedOn));
+  },
+});
+
+export const pairAsTransfer = defineWrite({
+  name: "transactions.pairAsTransfer",
+  description:
+    "Settle a pair from misfiledTransfers as a transfer: both sides lose their category and are paired, so " +
+    "neither counts as spending or income. Undone as one.",
+  input: z.object({ outId: z.uuid(), inId: z.uuid() }),
+  apply: async (ctx, { outId, inId }) => {
+    const rows = await ctx.db
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        amountCents: transactions.amountCents,
+        pending: transactions.pending,
+        provisionalSource: transactions.provisionalSource,
+        transferPairId: transactions.transferPairId,
+        isSplit: transactions.isSplit,
+      })
+      .from(transactions)
+      .where(inArray(transactions.id, [outId, inId]));
+    const a = rows.find((r) => r.id === outId);
+    const b = rows.find((r) => r.id === inId);
+    if (!a || !b) throw new NotFoundError("Transaction not found");
+    if (a.accountId === b.accountId) throw new Error("Both sides of a transfer can't be in the same account");
+    if (a.amountCents >= 0 || a.amountCents !== -b.amountCents) throw new Error("A transfer's two sides must have exactly opposite amounts");
+    if (a.pending || b.pending || a.provisionalSource || b.provisionalSource) throw new Error("Only posted transactions can be paired");
+    // A split's parts carry the categories; pairing it would leave them counting.
+    if (a.isSplit || b.isSplit) throw new Error("A split transaction can't be paired; remove the split first");
+    if (a.transferPairId || b.transferPairId) throw new Error("Already paired as a transfer");
+    // Uncategorized, as the matcher leaves its pairs: a paired row with a
+    // category would still count wherever categories are summed.
+    await ctx.update(transactions, a.id, { categoryId: null, transferPairId: b.id, transferRejected: false });
+    await ctx.update(transactions, b.id, { categoryId: null, transferPairId: a.id, transferRejected: false });
+    return { paired: [a.id, b.id] };
+  },
+});
+
+export const dismissTransfer = defineWrite({
+  name: "transactions.dismissTransfer",
+  description:
+    "Settle a pair from misfiledTransfers as not a transfer: both keep their categories, aren't flagged again, " +
+    "and the matcher won't pair either.",
+  input: z.object({ transactionIds: z.array(z.uuid()).length(2) }),
+  apply: async (ctx, { transactionIds }) => {
+    const rows = await ctx.db.select({ id: transactions.id }).from(transactions).where(inArray(transactions.id, transactionIds));
+    if (rows.length !== 2) throw new NotFoundError("Transaction not found");
+    for (const { id } of rows) await ctx.update(transactions, id, { transferRejected: true });
+    return { dismissed: rows.length };
   },
 });
 

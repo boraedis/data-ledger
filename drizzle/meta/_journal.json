@@ -169,6 +169,55 @@
       "when": 1792188518819,
       "tag": "0023_tax_assumptions",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1793201935243,
+      "tag": "0024_cancelled_subscriptions",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1793202790559,
+      "tag": "0025_still_active",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1793203439780,
+      "tag": "0026_upcoming_renewal",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1793312201374,
+      "tag": "0027_pay_stub_deposits",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1793313404547,
+      "tag": "0028_employer_benefits",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1793326711487,
+      "tag": "0029_history_import",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1793370829743,
+      "tag": "0030_manual_transactions",
+      "breakpoints": true
     }
   ]
 }

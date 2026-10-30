@@ -1,7 +1,8 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { executeAsOwner } from "@/operations/server";
+import { matchTransfersAround } from "@/lib/categorize/pipeline";
+import { asOwner, executeAsOwner } from "@/operations/server";
 
 export type ActionResult = { error: string } | { ok: true };
 
@@ -25,7 +26,24 @@ async function run(transactionId: string, operation: string, input: Record<strin
 }
 
 export async function setCategory(transactionId: string, categoryId: string | null) {
-  return run(transactionId, "transactions.setCategory", { categoryId }, categoryId ? "Set category" : "Cleared category");
+  const result = await run(transactionId, "transactions.setCategory", { categoryId }, categoryId ? "Set category" : "Cleared category");
+  if ("ok" in result) await pairFiledTransfer(transactionId);
+  return result;
+}
+
+// Filing a transfer is the moment its other half can be found, so pair just
+// this transaction. Nothing else is scanned. A failure here doesn't undo the
+// save: the transaction just stays unpaired until the owner files it again.
+async function pairFiledTransfer(transactionId: string) {
+  try {
+    const paired = await asOwner((db) => matchTransfersAround(db, transactionId));
+    if (paired) {
+      revalidatePath(`/transactions/${transactionId}`);
+      revalidatePath("/transactions");
+    }
+  } catch (error) {
+    console.error("Couldn't pair the transfer", error);
+  }
 }
 
 export async function split(transactionId: string, parts: { amountCents: number; categoryId: string; note: string | null }[]) {
@@ -51,4 +69,23 @@ export async function notATransfer(transactionId: string) {
 
 export async function discardProvisional(transactionId: string) {
   return run(transactionId, "transactions.discardProvisional", {}, "Discarded a purchase alert the bank never reported");
+}
+
+// Transactions added by hand (#64).
+export async function updateManual(transactionId: string, change: { postedOn: string; amountCents: number; description: string }) {
+  return run(transactionId, "transactions.updateManual", change, "Changed a transaction added by hand");
+}
+
+export async function deleteManual(transactionId: string) {
+  return run(transactionId, "transactions.deleteManual", {}, "Deleted a transaction added by hand");
+}
+
+export async function mergeManual(manualId: string, transactionId: string) {
+  const result = await run(manualId, "transactions.mergeManual", { manualId, transactionId }, "Merged a transaction added by hand into the bank's");
+  revalidatePath(`/transactions/${transactionId}`);
+  return result;
+}
+
+export async function keepManual(transactionId: string) {
+  return run(transactionId, "transactions.keepManual", {}, "Kept a transaction added by hand alongside the bank's");
 }

@@ -16,7 +16,7 @@ async function run(operation: string, input: Record<string, unknown>, reason: st
       await execute(db, { operation, input, actor: "user", reason });
       if (!recategorize) return undefined;
       const result = await runCategorization(db);
-      const n = result.byRules + result.byMemory;
+      const n = result.byRules;
       return n ? `${n} transactions categorized` : undefined;
     });
     revalidatePath("/categories");
@@ -59,7 +59,7 @@ export async function runRulesNow(): Promise<Result> {
   try {
     const result = await asOwner((db) => runCategorization(db));
     revalidatePath("/inbox");
-    return { ok: true, message: `${result.byRules} by rules, ${result.byMemory} by merchant memory, ${result.remaining} left in the inbox` };
+    return { ok: true, message: `${result.byRules} categorized by rules, ${result.remaining} left in the inbox to confirm` };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Something went wrong" };
   }

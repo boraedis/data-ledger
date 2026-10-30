@@ -49,16 +49,17 @@ export function firstMatchingRule<R extends RuleLike>(rules: R[], txn: TxnLike):
 export const MEMORY_WINDOW = 5;
 
 export type MemoryVerdict =
-  | { kind: "apply"; categoryId: string } // consistent history: categorize automatically
+  | { kind: "apply"; categoryId: string } // consistent history: a suggestion the owner can confirm in bulk
   | { kind: "suggest"; categoryId: string } // mixed history: offer the most common, let the owner decide
   | { kind: "none" };
 
 /**
- * Merchant memory over a merchant's recent categories, newest first. One
- * consistent past categorization is enough to repeat it — "learns instead
- * of nagging" — but if the owner has categorized this merchant
- * differently recently, it's ambiguous (groceries vs. a gift at the same
- * store) and goes to the inbox as a suggestion instead.
+ * Merchant memory over a merchant's recent categories, newest first. Since
+ * #86 it never categorizes on its own; both verdicts are inbox
+ * suggestions. "apply" means the recent history agrees (one past
+ * categorization is enough), so it's safe to confirm with others at once;
+ * "suggest" means it's mixed (groceries vs. a gift at the same store) and
+ * worth a look.
  */
 export function merchantMemory(recentCategoryIds: string[]): MemoryVerdict {
   const window = recentCategoryIds.slice(0, MEMORY_WINDOW);

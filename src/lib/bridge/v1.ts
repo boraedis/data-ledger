@@ -98,17 +98,18 @@ export type RecurringRow = {
 
 /**
  * Recurring charges as of a day: what's billed, how often, about how much
- * and when next. Ones the owner dismissed as not recurring are left out.
+ * and when next. Ones the owner dismissed as not recurring, or cancelled,
+ * are left out.
  * The account a charge is billed to isn't included; the same merchant on
  * two cards is two rows.
  */
 export async function recurringCharges(db: Db, on: string): Promise<RecurringRow[]> {
   const series = await listRecurring.run(db, { on });
   return series
-    .filter((s) => s.status !== "dismissed")
+    .filter((s): s is typeof s & { status: "confirmed" | "suggested" } => s.status === "confirmed" || s.status === "suggested")
     .map((s) => ({
       merchant: s.merchant,
-      status: s.status as "confirmed" | "suggested",
+      status: s.status,
       cadence: CADENCE_CODES[s.cadence],
       typicalCents: s.typicalCents,
       latestCents: s.latestCents,

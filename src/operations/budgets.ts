@@ -8,6 +8,13 @@ import {
   budgetStatus as computeStatus,
   changeEffectiveFrom,
   currentVersion,
+  firstOfMonth,
+  HISTORY_MONTHS,
+  lastOfMonth,
+  monthIndex,
+  monthlySeries,
+  recentHistory,
+  SERIES_MONTHS,
   type TargetVersion,
 } from "@/lib/budgets/engine";
 import { categoryOptions } from "@/lib/categorize/labels";
@@ -84,6 +91,64 @@ export const budgetStatus = defineRead({
         byCategory: status.unbudgeted.byCategory.map((c) => ({ ...c, name: nameFor(labelOf, c.categoryId) })),
       },
     };
+  },
+});
+
+export const budgetHistory = defineRead({
+  name: "budgets.history",
+  description:
+    `What each expense category (and the buffer, categoryId null) usually costs: net spend in each of the last ` +
+    `${HISTORY_MONTHS} full months before \`on\` (default today; the current month is left out) and their average, ` +
+    "in cents. A category covers its own spending and its subcategories' without their own target, as a target on " +
+    "it would today. averageCents is null with no spending in the window (no history, not $0). For a monthly " +
+    "target, overMonths of comparedMonths went over today's target. Net unless gross is true.",
+  input: z.object({ on: isoDate.optional(), gross: z.boolean().default(false) }),
+  run: async (db, { on = today(), gross }) => {
+    const end = monthIndex(on) - 1;
+    const [versions, lines, { rows, labelOf }] = await Promise.all([
+      loadVersions(db),
+      // The same lines budgets.status counts, for the window only.
+      spendingLines.run(db, { from: firstOfMonth(end - HISTORY_MONTHS + 1), to: lastOfMonth(end), budgetOnly: true, gross }),
+      labels(db),
+    ]);
+    const history = recentHistory({
+      on,
+      versions,
+      lines: lines.map((l) => ({ date: l.date, amountCents: l.amountCents, categoryId: l.categoryId })),
+      categories: rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind })),
+    });
+    return [...history.values()].map(({ key, ...h }) => {
+      const categoryId = key === BUFFER ? null : key;
+      return { categoryId, name: nameFor(labelOf, categoryId), ...h };
+    });
+  },
+});
+
+export const budgetMonthly = defineRead({
+  name: "budgets.monthly",
+  description:
+    `Each current target's net spend in each of the last ${SERIES_MONTHS} months up to and including \`on\`'s ` +
+    "(default today; that month is partial), in cents, with every month listed ($0 when nothing was spent). " +
+    "Where the target was in effect, a month is what budgets.status counted toward it, and targetCents is its " +
+    "monthly amount then (a multi-month target's even monthly share); before it existed, targetCents is null " +
+    "and the month shows what the target would cover today. Net unless gross is true.",
+  input: z.object({ on: isoDate.optional(), gross: z.boolean().default(false) }),
+  run: async (db, { on = today(), gross }) => {
+    const [versions, lines, { rows, labelOf }] = await Promise.all([
+      loadVersions(db),
+      spendingLines.run(db, { from: firstOfMonth(monthIndex(on) - SERIES_MONTHS + 1), to: on, budgetOnly: true, gross }),
+      labels(db),
+    ]);
+    const series = monthlySeries({
+      on,
+      versions,
+      lines: lines.map((l) => ({ date: l.date, amountCents: l.amountCents, categoryId: l.categoryId })),
+      categories: rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind })),
+    });
+    return [...series].map(([key, months]) => {
+      const categoryId = key === BUFFER ? null : key;
+      return { categoryId, name: nameFor(labelOf, categoryId), months };
+    });
   },
 });
 

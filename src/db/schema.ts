@@ -193,7 +193,7 @@ export const accountType = pgEnum("account_type", ACCOUNT_KINDS);
 // private loan, an institution no aggregator covers. Its value only changes
 // through the accounts.*Manual operations, and no sync ever touches it
 // (syncs match on connection, which a manual account doesn't have).
-export const dataSource = pgEnum("data_source", ["seed", "simplefin", "manual"]);
+export const dataSource = pgEnum("data_source", ["seed", "simplefin", "manual", "import"]);
 
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -336,6 +336,15 @@ export const transactions = pgTable(
     // derived from it, never written over it.
     description: text("description").notNull(),
     externalId: text("external_id"),
+    // Where a transaction came from when it isn't the sync: "import" for
+    // history backfilled from a bank's CSV export (#35), "manual" for one
+    // the owner added by hand (#64). Null for synced rows (and seed data,
+    // which is marked on its accounts).
+    source: dataSource("source"),
+    // On a manual transaction (#64): the owner said it isn't the same
+    // purchase as the bank transaction that looked like it, so it's no
+    // longer offered for merging and counts on its own.
+    notDuplicate: boolean("not_duplicate").notNull().default(false),
     // Pending transactions can vanish or reappear under a new ID once they
     // post; the import operation reconciles them (src/operations/import.ts).
     pending: boolean("pending").notNull().default(false),
@@ -386,6 +395,20 @@ export const transactions = pgTable(
     uniqueIndex("transactions_account_external_idx").on(t.accountId, t.externalId),
   ],
 );
+
+// How one account's bank lays out its CSV export (#35), saved the first
+// time the owner maps it so the next file from that bank needs no mapping.
+// Column names and formats only: never a row of the file, which is read in
+// memory and never stored.
+export const importMappings = pgTable("import_mappings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id")
+    .notNull()
+    .unique()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  mapping: jsonb("mapping").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ---------------------------------------------------------------------------
 // Splits and tags (#6, phase 2).
@@ -513,8 +536,10 @@ export const goalAccounts = pgTable(
 // The owner's decisions about detected recurring charges. Detection itself
 // is computed when read (src/lib/recurring/detect.ts) from merchant, cadence
 // and amount, so improving it never needs a backfill; only what the owner
-// said is stored. A series is one merchant in one account.
-export const recurringStatus = pgEnum("recurring_status", ["confirmed", "dismissed"]);
+// said is stored. A series is one merchant in one account. Dismissed means
+// "not a subscription"; cancelled (#82) means it was one and the owner
+// ended it, so a later charge is worth an alert.
+export const recurringStatus = pgEnum("recurring_status", ["confirmed", "dismissed", "cancelled"]);
 
 export const recurringSeries = pgTable(
   "recurring_series",
@@ -525,6 +550,16 @@ export const recurringSeries = pgTable(
       .notNull()
       .references(() => accounts.id, { onDelete: "cascade" }),
     status: recurringStatus("status").notNull(),
+    // Set only while cancelled. The yearly cost and grace window are a
+    // snapshot from cancel time: detection forgets a series once its charges
+    // age out, and "saved per year" shouldn't shrink when that happens.
+    cancelledOn: date("cancelled_on"),
+    cancelledAnnualCents: integer("cancelled_annual_cents"),
+    cancelGraceDays: integer("cancel_grace_days"),
+    // "Still active" on an ended bill (#83): the last charge as of then.
+    // That quiet spell stays acknowledged; once a new charge comes, a later
+    // gap is news again.
+    stillActiveAfter: date("still_active_after"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("recurring_series_merchant_account_idx").on(t.merchant, t.accountId)],
@@ -536,6 +571,8 @@ export const alertKind = pgEnum("alert_kind", [
   "overlapping_subscriptions",
   "trial_converted",
   "missing_charge",
+  "charged_after_cancel",
+  "upcoming_renewal",
 ]);
 
 // Things worth the owner's attention, written by the nightly pipeline
@@ -602,16 +639,33 @@ export const payStubs = pgTable(
     grossCents: bigint("gross_cents", { mode: "number" }).notNull(),
     // Gross minus every line, exactly: checked on save.
     netCents: bigint("net_cents", { mode: "number" }).notNull(),
-    // The bank deposit of the net pay. While linked, budgets count the
-    // deposit as gross income less each deduction, never the net twice
-    // (transactions.spendingLines). Set null if the deposit is ever removed
-    // (a sync's pending row replaced); the stub stays.
-    depositTransactionId: uuid("deposit_transaction_id")
-      .unique()
-      .references(() => transactions.id, { onDelete: "set null" }),
+    // The deposits of the net pay are in pay_stub_deposits: one, or
+    // several when pay is split across accounts (#91).
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("pay_stubs_pay_date_idx").on(t.payDate)],
+);
+
+// The bank deposits of a stub's net pay (#91): usually one, several when
+// pay is split across accounts (a fixed amount to savings, the rest to
+// checking). Linked, they add up to the net exactly, and budgets count the
+// paycheck as gross income less each deduction, never the net twice
+// (transactions.spendingLines). A deposit is one stub's at most. If the
+// bank removes one (a pending row replaced), its link goes and the stub
+// counts as unlinked until it's linked again.
+export const payStubDeposits = pgTable(
+  "pay_stub_deposits",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    payStubId: uuid("pay_stub_id")
+      .notNull()
+      .references(() => payStubs.id, { onDelete: "cascade" }),
+    transactionId: uuid("transaction_id")
+      .notNull()
+      .unique()
+      .references(() => transactions.id, { onDelete: "cascade" }),
+  },
+  (t) => [index("pay_stub_deposits_stub_idx").on(t.payStubId)],
 );
 
 // One deduction on a pay stub: a kind, the stub's own label for it
@@ -635,11 +689,38 @@ export const payStubLines = pgTable(
   (t) => [index("pay_stub_lines_stub_idx").on(t.payStubId)],
 );
 
+// What the employer pays on top of a paycheck (#92), from a stub's memo or
+// "employer paid" box: a 401(k) match, an HSA contribution, the cost of
+// group-term life insurance. Never part of gross or deductions, so the
+// stub's gross - deductions = net check doesn't see them, and budgets
+// don't count them (the money never reaches a budget account; 401(k) and
+// HSA balances arrive through those accounts). Imputed income is the one
+// that's taxable: the value of life insurance over $50,000 of coverage,
+// counted as wages without being paid, so the tax estimate adds it.
+export const employerPayKind = pgEnum("employer_pay_kind", ["retirement_match", "hsa", "life_insurance", "imputed_income", "other"]);
+
+export const payStubEmployerLines = pgTable(
+  "pay_stub_employer_lines",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    payStubId: uuid("pay_stub_id")
+      .notNull()
+      .references(() => payStubs.id, { onDelete: "cascade" }),
+    kind: employerPayKind("kind").notNull(),
+    label: text("label").notNull(),
+    amountCents: bigint("amount_cents", { mode: "number" }).notNull(),
+    position: integer("position").notNull(),
+  },
+  (t) => [index("pay_stub_employer_lines_stub_idx").on(t.payStubId)],
+);
+
 export const filingStatus = pgEnum("filing_status", ["single", "married_joint", "married_separate", "head_of_household"]);
 
 // The owner's own inputs to the tax estimate (#61), one row per tax year:
 // what pay stubs can't say. User data, set through taxes.setAssumptions;
 // never repo config. All amounts are yearly, positive cents.
+export const hsaCoverage = pgEnum("hsa_coverage", ["self", "family"]);
+
 export const taxAssumptions = pgTable("tax_assumptions", {
   id: uuid("id").primaryKey().defaultRandom(),
   year: integer("year").notNull().unique(),
@@ -653,6 +734,10 @@ export const taxAssumptions = pgTable("tax_assumptions", {
   // Federal tax paid outside payroll: estimated payments, or withholding
   // on other income.
   otherPaymentsCents: bigint("other_payments_cents", { mode: "number" }).notNull().default(0),
+  // HSA coverage for the year (#92), which sets its contribution limit;
+  // null when there's no HSA-eligible plan. Catch-up: 55 or older.
+  hsaCoverage: hsaCoverage("hsa_coverage"),
+  hsaCatchUp: boolean("hsa_catch_up").notNull().default(false),
 });
 
 // ---------------------------------------------------------------------------

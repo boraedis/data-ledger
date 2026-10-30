@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { accounts as accountsTable } from "@/db/schema";
 import { getDb } from "@/lib/db";
 import { AccountRow } from "./account-row";
@@ -34,6 +35,12 @@ export default async function AccountsPage() {
         <p className="text-sm text-muted-foreground">
           Only accounts that count toward budgets show up in spending. Brokerage, retirement, loan and asset accounts
           are left out by default so trades and transfers don&apos;t look like spending.
+        </p>
+        <p className="text-sm">
+          <Link href="/accounts/import" className="underline">
+            Import older history from a CSV export
+          </Link>
+          <span className="text-muted-foreground"> · for the time before the sync reaches back (about 90 days)</span>
         </p>
       </div>
       {byInstitution.size === 0 ? (
