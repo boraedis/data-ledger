@@ -162,6 +162,12 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
                 partialMonth={isCurrent ? `${month}-01` : null}
                 covers={t.categoryId === null ? status.unbudgeted.covers : undefined}
                   backdate={range}
+                  transactionsHref={(() => {
+                    const q = new URLSearchParams({ target: t.categoryId ?? "buffer" });
+                    if (!isCurrent) q.set("month", month);
+                    if (gross) q.set("gross", "1");
+                    return `/budgets/transactions?${q}`;
+                  })()}
               />
             ))}
           </ul>

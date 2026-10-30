@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { and, eq, inArray, isNull, min } from "drizzle-orm";
 import { z } from "zod";
-import { budgetAdjustments, budgetTargets, categories, payStubDeposits, payStubs, transactions } from "@/db/schema";
+import { accounts, budgetAdjustments, budgetTargets, categories, payStubDeposits, payStubs, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import {
   BUFFER,
@@ -11,6 +11,7 @@ import {
   firstOfMonth,
   HISTORY_MONTHS,
   lastOfMonth,
+  linesForTarget,
   monthIndex,
   monthlySeries,
   recentHistory,
@@ -108,6 +109,66 @@ export const budgetStatus = defineRead({
             .map((r) => ({ categoryId: r.id, spentCents: 0 })),
         ].map((c) => ({ ...c, name: nameFor(labelOf, c.categoryId) })),
       },
+    };
+  },
+});
+
+export const targetTransactions = defineRead({
+  name: "budgets.targetTransactions",
+  description:
+    "The transactions behind one target's spent figure (categoryId null = the buffer) in its period as of `on` " +
+    "(default today): every line budgets.status counted toward it, one per transaction or split part, dated as budgets " +
+    "date them (experience date when set), net of shared expenses unless gross is true. Refunds are positive and " +
+    "reduce the total. totalCents always equals the target's spentCents. Transfers and income are never in it.",
+  input: z.object({ categoryId: targetCategory, on: isoDate.optional(), gross: z.boolean().default(false) }),
+  run: async (db, { categoryId, on = today(), gross }) => {
+    const status = await budgetStatus.run(db, { on, gross });
+    const target = status.targets.find((t) => t.categoryId === categoryId);
+    if (!target) return null;
+    const [versions, lines, { rows, labelOf }] = await Promise.all([
+      loadVersions(db),
+      // The same lines the card is built from, for its period so far.
+      spendingLines.run(db, { from: target.start, to: on < target.end ? on : target.end, budgetOnly: true, gross }),
+      labels(db),
+    ]);
+    const counted = linesForTarget({
+      key: categoryId ?? BUFFER,
+      start: target.start,
+      end: target.end,
+      versions,
+      lines,
+      categories: rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind })),
+    });
+    const ids = [...new Set(counted.map((l) => l.transactionId))];
+    const details = ids.length
+      ? await db
+          .select({ id: transactions.id, description: transactions.description, isSplit: transactions.isSplit, accountName: accounts.name })
+          .from(transactions)
+          .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+          .where(inArray(transactions.id, ids))
+      : [];
+    const byId = new Map(details.map((d) => [d.id, d]));
+    const lineRows = counted
+      .map((l) => ({
+        transactionId: l.transactionId,
+        date: l.date,
+        description: byId.get(l.transactionId)?.description ?? "",
+        merchant: l.merchant,
+        accountName: byId.get(l.transactionId)?.accountName ?? "",
+        categoryName: labelOf.get(l.categoryId) ?? "Unknown category",
+        // A part of a split transaction rather than all of it.
+        splitPart: byId.get(l.transactionId)?.isSplit ?? false,
+        amountCents: l.amountCents,
+      }))
+      .sort((a, b) => b.date.localeCompare(a.date) || a.amountCents - b.amountCents);
+    return {
+      categoryId,
+      name: target.name,
+      start: target.start,
+      end: target.end,
+      spentCents: target.spentCents,
+      totalCents: -lineRows.reduce((sum, l) => sum + l.amountCents, 0),
+      lines: lineRows,
     };
   },
 });
