@@ -1,169 +1,269 @@
 import type { EmployerPayKind, PayLineKind } from "@/lib/pay/stubs";
 import { kindLabel } from "@/lib/pay/stubs";
-import { keysFor, type Grouping, type Lookup, type SpendLine } from "@/lib/spending/analyze";
+import { keysFor, type Lookup, type SpendLine } from "@/lib/spending/analyze";
 
-// Cash flow (#62): where a period's money came from and where it went, as a
-// Sankey graph. Pure, so every flow is tested; the page gathers the inputs
-// (src/lib/cashflow/data.ts) from the same records Budgets and Spending use.
+// Cash flow (#62): a period's money as a Sankey in five levels, left to right.
 //
-// The flow:
-//   gross pay (per employer) → taxes, elections, deductions → the accounts
-//     the take-home was deposited to, in the amounts paid
-//   employer contributions (401(k) match, HSA) → their destination
-//   other income (by category) → the account it landed in
-//   account → account: transfers, never income or spending
-//   account → spending, grouped as on the Spending page (a category's
-//     subcategories branch off it)
+//   1. Where it came from: each employer's gross pay, the employer's own
+//      401(k) and HSA contributions, other income, and what the period drew
+//      on (savings, investments sold to cash, card balances that grew, cash
+//      on hand), so nothing is unexplained
+//   2. Take-home, one bucket, beside what came off the paycheck first:
+//      each tax, the 401(k) and HSA, insurance and other deductions
+//   3. Where it went: Spending, Investing, Cash savings, Debt paydown
+//   4. The breakdown: spending categories (or merchants), each investment
+//      and savings account (with what stayed in checking), each card or loan
+//   5. Subcategories under their spending category
 //
-// Widths are integer cents. The graph carries labels and totals only: no
+// Accounts never appear as pass-through nodes. Each account's net movement
+// over the period lands on one side: a positive net is an allocation
+// (saved, invested, paid down, kept), a negative one a source (drawn from
+// savings, put on a card). That's what makes every level add up to the one
+// before it, by construction: income and draws in, allocations out.
+//
+// Widths are integer cents. The graph holds labels and totals only: no
 // balances, holdings or transaction descriptions.
 
-export type Role = "income" | "tax" | "saved" | "spend" | "account" | "transfer";
-export type FlowNode = { id: string; label: string; role: Role };
+export type Role = "income" | "draw" | "pool" | "tax" | "saved" | "spend" | "debt";
+export type FlowNode = { id: string; label: string; role: Role; level: number };
 export type FlowLink = { source: string; target: string; valueCents: number; count: number };
 export type FlowGraph = { nodes: FlowNode[]; links: FlowLink[] };
+
+// How an account's net movement reads: kept in a spending account, saved,
+// invested, or a debt paid down (or, the other way, drawn on).
+export type AccountGroup = "spending" | "savings" | "investment" | "debt";
+export type AccountInfo = { name: string; group: AccountGroup };
 
 export type Paycheck = {
   employer: string;
   grossCents: number;
   lines: { kind: PayLineKind; amountCents: number }[];
   employerLines: { kind: EmployerPayKind; amountCents: number }[];
-  // Where the take-home went: one deposit, or several when pay is split.
   deposits: { accountId: string; amountCents: number }[];
 };
 
-// A transfer between the owner's accounts, outflow side first. Without the
-// other side found, it ends at a node named for its category.
-export type Transfer = { fromAccountId: string; toAccountId: string | null; label: string; amountCents: number; transactionId: string };
+// Money moved between the owner's accounts. A side that couldn't be found
+// is null: money that left (or arrived) under a transfer category without
+// its other half.
+export type Transfer = { fromAccountId: string | null; toAccountId: string | null; label: string; amountCents: number; transactionId: string };
 
 export type FlowInput = {
   paychecks: Paycheck[];
-  // Spending lines for the period (transactions.spendingLines), without the
-  // stub-linked deposits, which the paychecks stand for.
+  // transactions.spendingLines for the period, less the stub-linked
+  // deposits (the paychecks stand for those). Income and expense lines are
+  // used; transfer-category lines are the transfers' business.
   lines: SpendLine[];
+  // Money in or out with no category yet, not part of any transfer:
+  // counted, so the diagram balances, as "Uncategorized".
+  uncategorized: { transactionId: string; accountId: string; amountCents: number }[];
   transfers: Transfer[];
-  by: Grouping;
+  accounts: Map<string, AccountInfo>;
+  by: "category" | "merchant";
   lookup: Lookup;
 };
 
-// Where an election goes: a destination of its own, savings or retirement.
+const POOL = "pool:take-home";
+const BUCKET = {
+  spending: { id: "bucket:spending", label: "Spending", role: "spend" as const },
+  investing: { id: "bucket:investing", label: "Investing", role: "saved" as const },
+  savings: { id: "bucket:savings", label: "Cash savings", role: "saved" as const },
+  debt: { id: "bucket:debt", label: "Debt paydown", role: "debt" as const },
+  other: { id: "bucket:other", label: "Other transfers out", role: "debt" as const },
+};
+
+// Payroll money that's invested: off the paycheck at level 2, then on into
+// Investing (#62: "total invested" includes it, and the employer's match).
 const ELECTION: Partial<Record<PayLineKind, { id: string; label: string }>> = {
-  retirement_pretax: { id: "saved:retirement", label: "401(k)" },
-  retirement_roth: { id: "saved:retirement", label: "401(k)" },
-  hsa: { id: "saved:hsa", label: "HSA" },
-  fsa: { id: "saved:fsa", label: "FSA" },
+  retirement_pretax: { id: "election:401k", label: "401(k)" },
+  retirement_roth: { id: "election:401k", label: "401(k)" },
+  hsa: { id: "election:hsa", label: "HSA" },
+};
+const EMPLOYER: Partial<Record<EmployerPayKind, { id: string; label: string; source: string }>> = {
+  retirement_match: { id: "election:401k", label: "401(k)", source: "401(k) match" },
+  hsa: { id: "election:hsa", label: "HSA", source: "HSA contribution" },
 };
 const TAXES: PayLineKind[] = ["federal_income_tax", "state_income_tax", "local_income_tax", "social_security", "medicare", "state_disability"];
-const EMPLOYER_DESTINATION: Partial<Record<EmployerPayKind, { id: string; label: string; source: string }>> = {
-  retirement_match: { id: "saved:retirement", label: "401(k)", source: "401(k) match" },
-  hsa: { id: "saved:hsa", label: "HSA", source: "HSA contribution" },
-};
 
-// A long tail of merchants folds into one node: the diagram stays legible,
-// and the table under it still lists every flow.
 export const MAX_MERCHANTS = 12;
 
-export function buildFlowGraph({ paychecks, lines, transfers, by, lookup }: FlowInput): FlowGraph {
+export function buildFlowGraph({ paychecks, lines, uncategorized, transfers, accounts, by, lookup }: FlowInput): FlowGraph {
   const nodes = new Map<string, FlowNode>();
   const links = new Map<string, FlowLink & { ids: Set<string> }>();
-  const node = (id: string, label: string, role: Role) => {
-    if (!nodes.has(id)) nodes.set(id, { id, label, role });
+  const node = (id: string, label: string, role: Role, level: number) => {
+    if (!nodes.has(id)) nodes.set(id, { id, label, role, level });
     return id;
   };
   const flow = (source: string, target: string, cents: number, ids: Iterable<string>) => {
+    if (cents <= 0) return;
     const key = `${source}→${target}`;
     const link = links.get(key) ?? { source, target, valueCents: 0, count: 0, ids: new Set<string>() };
     link.valueCents += cents;
     for (const id of ids) link.ids.add(id);
     links.set(key, link);
   };
-  const account = (id: string) => node(`account:${id}`, lookup.accountNames.get(id) ?? "Unknown account", "account");
+  const pool = () => node(POOL, "Take-home", "pool", 2);
+  const bucket = (b: (typeof BUCKET)[keyof typeof BUCKET]) => node(b.id, b.label, b.role, 3);
+  const accountName = (id: string) => accounts.get(id)?.name ?? lookup.accountNames.get(id) ?? "Unknown account";
 
-  // Paychecks: gross pay through each deduction to the deposits.
+  // Each account's net movement, and the transactions behind it.
+  const net = new Map<string, { cents: number; ids: Set<string> }>();
+  const move = (accountId: string | null, cents: number, id: string) => {
+    if (!accountId) return;
+    const n = net.get(accountId) ?? { cents: 0, ids: new Set<string>() };
+    n.cents += cents;
+    n.ids.add(id);
+    net.set(accountId, n);
+  };
+
+  // 1 → 2: pay, gross, through what comes off it to take-home.
   paychecks.forEach((p, i) => {
-    const pay = node(`pay:${p.employer}`, `${p.employer} pay`, "income");
     const id = [`stub${i}`];
+    const pay = node(`pay:${p.employer}`, `${p.employer} pay`, "income", 1);
     for (const line of p.lines) {
       const election = ELECTION[line.kind];
       const target = election
-        ? node(election.id, election.label, "saved")
+        ? node(election.id, election.label, "saved", 2)
         : TAXES.includes(line.kind)
-          ? node(`tax:${line.kind}`, kindLabel(line.kind), "tax")
-          : node(`deduction:${line.kind}`, kindLabel(line.kind), "spend");
+          ? node(`tax:${line.kind}`, kindLabel(line.kind), "tax", 2)
+          : node(`deduction:${line.kind}`, kindLabel(line.kind), "spend", 2);
       flow(pay, target, line.amountCents, id);
     }
-    for (const d of p.deposits) flow(pay, account(d.accountId), d.amountCents, id);
+    for (const d of p.deposits) {
+      flow(pay, pool(), d.amountCents, id);
+      move(d.accountId, d.amountCents, id[0]);
+    }
     for (const e of p.employerLines) {
-      const dest = EMPLOYER_DESTINATION[e.kind];
-      if (!dest) continue; // life insurance, imputed income: not money received
-      flow(node(`employer:${p.employer}:${e.kind}`, `${p.employer} ${dest.source}`, "income"), node(dest.id, dest.label, "saved"), e.amountCents, id);
+      const dest = EMPLOYER[e.kind];
+      // Life insurance and imputed income aren't money received.
+      if (dest) flow(node(`employer:${p.employer}:${e.kind}`, `${p.employer} ${dest.source}`, "income", 1), node(dest.id, dest.label, "saved", 2), e.amountCents, id);
     }
   });
 
-  // Other income, into the account it landed in; spending, out of the
-  // account it was charged to. Netted per pair, so a refund offsets.
+  // Other income by category; spending by group (and subcategory).
+  const income = new Map<string, { label: string; cents: number; ids: Set<string> }>();
+  const groups = new Map<string, { label: string; cents: number; ids: Set<string>; children: Map<string, { label: string; cents: number; ids: Set<string> }> }>();
   const merchantTotals = new Map<string, number>();
   if (by === "merchant") {
-    for (const l of lines) {
-      if (lookup.categories.get(l.categoryId)?.kind !== "expense") continue;
-      const m = l.merchant ?? "";
-      merchantTotals.set(m, (merchantTotals.get(m) ?? 0) - l.amountCents);
-    }
+    for (const l of lines) if (lookup.categories.get(l.categoryId)?.kind === "expense") merchantTotals.set(l.merchant ?? "", (merchantTotals.get(l.merchant ?? "") ?? 0) - l.amountCents);
   }
-  const topMerchants = new Set([...merchantTotals].sort((a, b) => b[1] - a[1]).slice(0, MAX_MERCHANTS).map(([m]) => m));
-  const pending = new Map<string, { source: string; target: string; cents: number; ids: Set<string> }>();
-  const add = (source: string, target: string, cents: number, id: string) => {
-    const key = `${source}→${target}`;
-    const p = pending.get(key) ?? { source, target, cents: 0, ids: new Set<string>() };
-    p.cents += cents;
-    p.ids.add(id);
-    pending.set(key, p);
+  const top = new Set([...merchantTotals].sort((a, b) => b[1] - a[1]).slice(0, MAX_MERCHANTS).map(([m]) => m));
+  const spend = (key: string, label: string, cents: number, id: string, child?: { key: string; label: string }) => {
+    const g = groups.get(key) ?? { label, cents: 0, ids: new Set<string>(), children: new Map() };
+    g.cents += cents;
+    g.ids.add(id);
+    if (child) {
+      const c = g.children.get(child.key) ?? { label: child.label, cents: 0, ids: new Set<string>() };
+      c.cents += cents;
+      c.ids.add(id);
+      g.children.set(child.key, c);
+    }
+    groups.set(key, g);
   };
   for (const l of lines) {
-    const kind = lookup.categories.get(l.categoryId)?.kind;
-    if (kind === "income") {
-      add(node(`income:${l.categoryId}`, lookup.categories.get(l.categoryId)!.name, "income"), account(l.accountId), l.amountCents, l.transactionId);
-    } else if (kind === "expense") {
-      const from = account(l.accountId);
-      const spent = -l.amountCents;
-      if (by === "account") {
-        add(from, node("spend:all", "Spending", "spend"), spent, l.transactionId);
-      } else if (by === "merchant" && !topMerchants.has(l.merchant ?? "")) {
-        add(from, node("spend:other-merchants", "Other merchants", "spend"), spent, l.transactionId);
+    const category = lookup.categories.get(l.categoryId);
+    if (category?.kind === "income") {
+      const inc = income.get(l.categoryId) ?? { label: category.name, cents: 0, ids: new Set<string>() };
+      inc.cents += l.amountCents;
+      inc.ids.add(l.transactionId);
+      income.set(l.categoryId, inc);
+      move(l.accountId, l.amountCents, l.transactionId);
+    } else if (category?.kind === "expense") {
+      move(l.accountId, l.amountCents, l.transactionId);
+      if (by === "merchant") {
+        const m = l.merchant ?? "";
+        if (top.has(m)) spend(`merchant:${m}`, l.merchant ?? "No merchant", -l.amountCents, l.transactionId);
+        else spend("merchant:other", "Other merchants", -l.amountCents, l.transactionId);
       } else {
-        const k = keysFor(l, by, lookup);
-        const group = node(`spend:${k.key}`, k.label, "spend");
-        add(from, group, spent, l.transactionId);
-        // A subcategory branches off its parent; spending on the parent
-        // itself stays there.
-        if (k.child && !k.child.key.endsWith(":self")) add(group, node(`spend:${k.child.key}`, k.child.label, "spend"), spent, l.transactionId);
+        const k = keysFor(l, "category", lookup);
+        spend(`category:${k.key}`, k.label, -l.amountCents, l.transactionId, k.child && !k.child.key.endsWith(":self") ? k.child : undefined);
       }
     }
   }
-  for (const p of pending.values()) if (p.cents > 0) flow(p.source, p.target, p.cents, p.ids);
+  let uncategorizedIn = { cents: 0, ids: new Set<string>() };
+  for (const u of uncategorized) {
+    move(u.accountId, u.amountCents, u.transactionId);
+    if (u.amountCents < 0) spend("uncategorized", "Uncategorized", -u.amountCents, u.transactionId);
+    else uncategorizedIn = { cents: uncategorizedIn.cents + u.amountCents, ids: uncategorizedIn.ids.add(u.transactionId) };
+  }
 
-  // Transfers, netted between each pair of accounts so money moved back and
-  // forth shows once, in the direction it went on balance.
-  const between = new Map<string, { a: string; b: string; cents: number; ids: Set<string> }>();
+  // Transfers move money between accounts: they shift nets, never income or
+  // spending. A missing side is its own flow, in or out.
+  const otherIn = new Map<string, { cents: number; ids: Set<string> }>();
+  const otherOut = new Map<string, { cents: number; ids: Set<string> }>();
   for (const t of transfers) {
-    if (t.toAccountId === null) {
-      flow(account(t.fromAccountId), node(`transfer:${t.label}`, `${t.label} (other side not found)`, "transfer"), t.amountCents, [t.transactionId]);
-      continue;
+    move(t.fromAccountId, -t.amountCents, t.transactionId);
+    move(t.toAccountId, t.amountCents, t.transactionId);
+    const unmatched = t.fromAccountId === null ? otherIn : t.toAccountId === null ? otherOut : null;
+    if (unmatched) {
+      const u = unmatched.get(t.label) ?? { cents: 0, ids: new Set<string>() };
+      u.cents += t.amountCents;
+      u.ids.add(t.transactionId);
+      unmatched.set(t.label, u);
     }
-    if (t.toAccountId === t.fromAccountId) continue;
-    const [a, b] = [t.fromAccountId, t.toAccountId].sort();
-    const pair = between.get(`${a}|${b}`) ?? { a, b, cents: 0, ids: new Set<string>() };
-    pair.cents += t.fromAccountId === a ? t.amountCents : -t.amountCents;
-    pair.ids.add(t.transactionId);
-    between.set(`${a}|${b}`, pair);
-  }
-  for (const p of between.values()) {
-    if (p.cents === 0) continue;
-    const [from, to] = p.cents > 0 ? [p.a, p.b] : [p.b, p.a];
-    flow(account(from), account(to), Math.abs(p.cents), p.ids);
   }
 
-  const kept = [...links.values()].filter((l) => l.valueCents > 0).map(({ ids, ...l }) => ({ ...l, count: ids.size }));
+  // Level 1 income into take-home.
+  for (const [categoryId, inc] of income) {
+    if (inc.cents > 0) flow(node(`income:${categoryId}`, inc.label, "income", 1), pool(), inc.cents, inc.ids);
+    // Income that netted negative (a reversal) left the take-home: out it goes.
+    else if (inc.cents < 0) spend(`reversed:${categoryId}`, `Returned: ${inc.label}`, -inc.cents, [...inc.ids][0]);
+  }
+  if (uncategorizedIn.cents > 0) flow(node("income:uncategorized", "Uncategorized money in", "income", 1), pool(), uncategorizedIn.cents, uncategorizedIn.ids);
+  for (const [label, u] of otherIn) flow(node(`draw:in:${label}`, `${label} (other side not found)`, "draw", 1), pool(), u.cents, u.ids);
+
+  // 2 → 3 → 4(→ 5): spending. A group refunded more than it spent is money
+  // back: a source, so the totals still add up.
+  for (const [key, g] of groups) {
+    if (g.cents > 0) {
+      const target = node(`spend:${key}`, g.label, "spend", 4);
+      flow(pool(), bucket(BUCKET.spending), g.cents, g.ids);
+      flow(bucket(BUCKET.spending), target, g.cents, g.ids);
+      for (const [childKey, c] of g.children) flow(target, node(`spend:${childKey}`, c.label, "spend", 5), c.cents, c.ids);
+    } else if (g.cents < 0) {
+      flow(node(`draw:refund:${key}`, `Refunds: ${g.label}`, "draw", 1), pool(), -g.cents, g.ids);
+    }
+  }
+
+  // Payroll elections and the employer's contributions, on into Investing.
+  for (const e of [
+    { id: "election:401k", label: "401(k) through payroll" },
+    { id: "election:hsa", label: "HSA through payroll" },
+  ]) {
+    const into = [...links.values()].filter((l) => l.target === e.id);
+    const cents = into.reduce((s, l) => s + l.valueCents, 0);
+    const ids = into.flatMap((l) => [...l.ids]);
+    flow(e.id, bucket(BUCKET.investing), cents, ids);
+    flow(bucket(BUCKET.investing), node(`invested:${e.id}`, e.label, "saved", 4), cents, ids);
+  }
+
+  // Each account's net: an allocation when it grew, a source when drawn on.
+  for (const [accountId, n] of net) {
+    const info = accounts.get(accountId);
+    if (!info || n.cents === 0) continue;
+    const name = accountName(accountId);
+    if (n.cents > 0) {
+      const [b, label] =
+        info.group === "investment"
+          ? [BUCKET.investing, name]
+          : info.group === "debt"
+            ? [BUCKET.debt, name]
+            : info.group === "savings"
+              ? [BUCKET.savings, name]
+              : [BUCKET.savings, `Kept in ${name}`];
+      flow(pool(), bucket(b), n.cents, n.ids);
+      flow(bucket(b), node(`account:${accountId}`, label, b.role, 4), n.cents, n.ids);
+    } else {
+      const label =
+        info.group === "debt" ? `Put on ${name}` : info.group === "spending" ? `From ${name} (cash on hand)` : `From ${name}`;
+      flow(node(`draw:${accountId}`, label, "draw", 1), pool(), -n.cents, n.ids);
+    }
+  }
+  for (const [label, u] of otherOut) {
+    flow(pool(), bucket(BUCKET.other), u.cents, u.ids);
+    flow(bucket(BUCKET.other), node(`other:${label}`, label, "debt", 4), u.cents, u.ids);
+  }
+
+  const kept = [...links.values()].map(({ ids, ...l }) => ({ ...l, count: ids.size }));
   const used = new Set(kept.flatMap((l) => [l.source, l.target]));
   return { nodes: [...nodes.values()].filter((n) => used.has(n.id)), links: kept };
 }

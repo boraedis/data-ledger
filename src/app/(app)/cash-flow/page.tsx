@@ -3,30 +3,35 @@ import { cashFlowInputs } from "@/lib/cashflow/data";
 import { buildFlowGraph, type FlowGraph } from "@/lib/cashflow/graph";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
-import { parsePeriod, type Grouping, type PeriodParams } from "@/lib/spending/analyze";
+import { parsePeriod, type PeriodParams } from "@/lib/spending/analyze";
 import { Sankey } from "./sankey";
 
-// Cash flow (#62): a month or a year as a Sankey, gross pay to taxes and
-// elections, take-home into accounts, and out to spending, savings and
-// transfers. Built from the same numbers as Budgets and Spending, with the
-// same groupings, so the pages agree. Display only.
+// Cash flow (#62): a month or a year as a Sankey in five levels: where the
+// money came from; take-home and what came off the paycheck first; where it
+// went (spending, investing, cash savings, debt); the breakdown; and
+// subcategories. Built from the same numbers as Budgets and Spending, so
+// the pages agree. Display only.
 
+type Grouping = "category" | "merchant";
 const GROUPINGS: { id: Grouping; label: string }[] = [
   { id: "category", label: "Category" },
   { id: "merchant", label: "Merchant" },
-  { id: "account", label: "Account" },
 ];
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
 function totals(graph: FlowGraph) {
   const role = new Map(graph.nodes.map((n) => [n.id, n.role]));
-  const into = (r: string) => graph.links.filter((l) => role.get(l.target) === r).reduce((s, l) => s + l.valueCents, 0);
-  const outOf = (r: string) => graph.links.filter((l) => role.get(l.source) === r).reduce((s, l) => s + l.valueCents, 0);
-  // Spending counted where it leaves an account, so a category and its
-  // subcategories aren't added twice.
-  const spent = graph.links.filter((l) => role.get(l.source) === "account" && role.get(l.target) === "spend").reduce((s, l) => s + l.valueCents, 0);
-  return { income: outOf("income"), taxes: into("tax"), saved: into("saved"), deductions: graph.links.filter((l) => l.target.startsWith("deduction:")).reduce((s, l) => s + l.valueCents, 0), spent };
+  const sum = (pick: (l: FlowGraph["links"][number]) => boolean) => graph.links.filter(pick).reduce((s, l) => s + l.valueCents, 0);
+  return {
+    income: sum((l) => role.get(l.source) === "income"),
+    drawn: sum((l) => role.get(l.source) === "draw"),
+    taxes: sum((l) => role.get(l.target) === "tax"),
+    spent: sum((l) => l.target === "bucket:spending"),
+    invested: sum((l) => l.target === "bucket:investing"),
+    saved: sum((l) => l.target === "bucket:savings"),
+    debt: sum((l) => l.target === "bucket:debt" || l.target === "bucket:other"),
+  };
 }
 
 export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
@@ -37,8 +42,8 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const by: Grouping = GROUPINGS.some((g) => g.id === one(sp.by)) ? (one(sp.by) as Grouping) : "category";
   const gross = one(sp.gross) === "1";
 
-  const { paychecks, lines, transfers, lookup, uncategorized } = await cashFlowInputs(getDb(), { from: period.from, to: period.to, gross });
-  const graph = buildFlowGraph({ paychecks, lines, transfers, by, lookup });
+  const { paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut } = await cashFlowInputs(getDb(), { from: period.from, to: period.to, gross });
+  const graph = buildFlowGraph({ paychecks, lines, uncategorized, transfers, accounts, by, lookup });
   const t = totals(graph);
   const label = new Map(graph.nodes.map((n) => [n.id, n.label]));
 
@@ -79,7 +84,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
               Year
             </Link>
           </nav>
-          <nav aria-label="Group spending by" className="flex gap-3">
+          <nav aria-label="Break spending down by" className="flex gap-3">
             <span className="text-muted-foreground">Spending by</span>
             {GROUPINGS.map((g) => (
               <Link
@@ -95,13 +100,15 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
         </div>
       </div>
 
-      <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-5">
+      <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
         {[
           ["Income", t.income, "var(--flow-income)"],
+          ["Drawn on", t.drawn, "var(--muted-foreground)"],
           ["Taxes", t.taxes, "var(--muted-foreground)"],
-          ["Saved and invested", t.saved, "var(--flow-saved)"],
-          ["Other deductions", t.deductions, "var(--flow-spend)"],
           ["Spent", t.spent, "var(--flow-spend)"],
+          ["Invested", t.invested, "var(--flow-saved)"],
+          ["Cash saved", t.saved, "var(--flow-saved)"],
+          ["Debt paid down", t.debt, "var(--muted-foreground)"],
         ].map(([name, cents, color]) =>
           cents || name === "Income" || name === "Spent" ? (
             <div key={name as string} className="rounded-lg border p-3">
@@ -116,9 +123,10 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
       </dl>
 
       <p className="text-sm text-muted-foreground">
-        Pay runs gross to net through taxes and elections into the accounts it was deposited to; money then leaves each account as spending
-        (net, the same as Budgets) or moves to another account. Transfers between your accounts are never income or spending. Only paychecks with a
-        linked pay stub show their taxes and deductions; others count as the deposit.{" "}
+        Left to right: where the money came from (including what you drew on: savings, cards, cash on hand); take-home and what came off your pay
+        first; where it went; and the breakdown. Spending is net, the same as Budgets, and charged to a card counts when charged. Moving money
+        between your accounts is never income or spending: it shows as saved, invested, paid down or drawn on, net for the period. Only paychecks
+        with a linked pay stub show their taxes and deductions; others count as the deposit.{" "}
         {gross ? (
           <>
             Showing <strong>gross</strong> spending, before friends&apos; shares come off.{" "}
@@ -135,10 +143,10 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
           </>
         )}
       </p>
-      {uncategorized.count ? (
+      {uncategorizedOut.count ? (
         <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
-          {uncategorized.count} uncategorized transaction{uncategorized.count === 1 ? "" : "s"} ({formatCents(uncategorized.cents)} out) aren&apos;t in
-          the diagram.{" "}
+          {formatCents(uncategorizedOut.cents)} of spending is uncategorized ({uncategorizedOut.count} transaction{uncategorizedOut.count === 1 ? "" : "s"}), shown as
+          &quot;Uncategorized&quot;.{" "}
           <Link href="/inbox" className="underline">
             File them in Inbox
           </Link>

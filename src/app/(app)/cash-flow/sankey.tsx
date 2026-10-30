@@ -6,21 +6,23 @@ import { bandPath, layoutFlows, type PlacedLink, type PlacedNode } from "@/lib/c
 import { formatCents } from "@/lib/money";
 
 // The cash-flow Sankey (#62), drawn from layoutFlows. Color says what a
-// node is (money in, kept, spent; taxes and accounts in neutral ink), and a
-// band takes the color of where it ends up, or of its source when it ends
-// in an account. Hover, tap or focus a band or node for its amount and the
-// transactions behind it; the table under the chart lists every flow.
+// node is: income, saved or invested, spent; taxes, take-home, what was
+// drawn on and debt in neutral ink. A band takes the color of where it ends
+// up, or of its source when it ends in take-home. Hover, tap or focus a
+// band or node for its amount and the transactions behind it; the table
+// under the chart lists every flow.
 
 const WIDTH = 960;
 const MIN_WIDTH = 720;
 
 const FILL: Record<Role, string> = {
   income: "var(--flow-income)",
+  draw: "var(--muted-foreground)",
+  pool: "var(--foreground)",
   saved: "var(--flow-saved)",
   spend: "var(--flow-spend)",
   tax: "var(--muted-foreground)",
-  account: "var(--foreground)",
-  transfer: "var(--muted-foreground)",
+  debt: "var(--muted-foreground)",
 };
 
 type Tip = { x: number; y: number; value: number; title: string; detail: string };
@@ -38,9 +40,7 @@ export function Sankey({ graph, label }: { graph: FlowGraph; label: string }) {
 
   const bandColor = (l: PlacedLink) => {
     const target = nodes.get(l.target)!;
-    const source = nodes.get(l.source)!;
-    if (target.role !== "account") return FILL[target.role];
-    return source.role === "account" ? FILL.transfer : FILL[source.role];
+    return target.role === "pool" ? FILL[nodes.get(l.source)!.role] : FILL[target.role];
   };
   const linkTip = (l: PlacedLink): Omit<Tip, "x" | "y"> => ({
     value: l.valueCents,
@@ -68,7 +68,6 @@ export function Sankey({ graph, label }: { graph: FlowGraph; label: string }) {
     setActive(null);
     setTip(null);
   };
-  const lastColumn = layout.columns - 1;
 
   return (
     <div ref={box} className="relative" onPointerLeave={hide}>
@@ -100,7 +99,9 @@ export function Sankey({ graph, label }: { graph: FlowGraph; label: string }) {
               );
             })}
             {layout.nodes.map((n) => {
-              const right = n.column !== lastColumn;
+              // Left half: label to the right of the node; right half: to
+              // the left, so neighbouring columns' labels don't collide.
+              const right = n.x + layout.nodeWidth / 2 < layout.width / 2;
               return (
                 <g key={n.id}>
                   <rect
