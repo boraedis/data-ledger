@@ -1,6 +1,6 @@
 import { and, eq, gte, like, lte } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { budgetTargets, categories, commandLog, transactions } from "@/db/schema";
+import { accounts, budgetTargets, categories, commandLog, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { lastOfMonth, monthIndex } from "@/lib/budgets/engine";
 import { suggestedTargetCents } from "@/lib/budgets/format";
@@ -221,5 +221,42 @@ describe("budgets.monthly over a year (#108)", () => {
     // Without includeEnded (the cards), only targets in effect now.
     const cards = (await run("budgets.monthly", { on: "2026-06-30" })).output as Monthly;
     expect(cards.some((r) => r.categoryId === cat.Coffee)).toBe(false);
+  });
+});
+
+describe("budgets.yearlyCharges (#109)", () => {
+  type Yearly = { categoryId: string; amountCents: number; setAsideMonthlyCents: number; anchorMonth: string; charges: { merchant: string }[] }[];
+  const yearly = async () => (await run("budgets.yearlyCharges", { on: "2026-06-30" })).output as Yearly;
+
+  it("suggests a set-aside only for a charge found yearly, writes nothing, and accepting makes a sinking-fund target", async () => {
+    const [{ id: cardId }] = await db.select().from(accounts).where(eq(accounts.type, "credit"));
+    // The seed's yearly plan is charged once in its window: not a pattern yet.
+    expect(await yearly()).toEqual([]);
+
+    // A made-up premium, a year apart, filed under Car.
+    for (const [postedOn, externalId] of [["2025-03-14", "premium-1"], ["2026-03-12", "premium-2"]]) {
+      await db.insert(transactions).values({
+        accountId: cardId, postedOn, amountCents: -60_000, description: "PINEWAY AUTO INSURANCE", merchant: "Pineway Auto Insurance", externalId, categoryId: cat.Car,
+      });
+    }
+    const [suggestion] = await yearly();
+    expect(suggestion).toMatchObject({ categoryId: cat.Car, amountCents: 60_000, setAsideMonthlyCents: 5_000, anchorMonth: "2026-04", charges: [{ merchant: "Pineway Auto Insurance" }] });
+    expect(await db.select().from(budgetTargets)).toHaveLength(0);
+
+    // Accepting is the ordinary target save, as the owner.
+    await run("budgets.setTarget", { categoryId: cat.Car, amountCents: suggestion.amountCents, periodMonths: 12, anchorMonth: suggestion.anchorMonth, sinkingFund: true, today: "2026-06-30" });
+    expect(target(await status("2026-06-30"), cat.Car)).toMatchObject({ start: "2026-04-01", end: "2027-03-31", targetCents: 60_000, setAsideMonthlyCents: 5_000 });
+    expect(await db.select().from(commandLog).where(eq(commandLog.operation, "budgets.setTarget"))).toMatchObject([{ actor: "user" }]);
+  });
+
+  it("leaves out a yearly charge the owner dismissed on Subscriptions", async () => {
+    const [{ id: cardId }] = await db.select().from(accounts).where(eq(accounts.type, "credit"));
+    for (const [postedOn, externalId] of [["2025-03-14", "premium-1"], ["2026-03-12", "premium-2"]]) {
+      await db.insert(transactions).values({
+        accountId: cardId, postedOn, amountCents: -60_000, description: "PINEWAY AUTO INSURANCE", merchant: "Pineway Auto Insurance", externalId, categoryId: cat.Car,
+      });
+    }
+    await run("recurring.setStatus", { merchant: "Pineway Auto Insurance", accountId: cardId, status: "dismissed" });
+    expect(await yearly()).toEqual([]);
   });
 });

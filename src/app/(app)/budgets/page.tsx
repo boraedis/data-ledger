@@ -3,7 +3,7 @@ import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { HISTORY_MONTHS } from "@/lib/budgets/engine";
-import { budgetHistory, budgetMonthly, budgetStatus } from "@/operations/budgets";
+import { budgetHistory, budgetMonthly, budgetStatus, yearlyCharges } from "@/operations/budgets";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { RebalanceForm, TargetForm, type TargetChoice } from "./forms";
@@ -33,7 +33,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
   // Net by default (your share of shared expenses); ?gross=1 shows spending
   // as charged, before what friends owe comes off.
   const gross = sp.gross === "1";
-  const [status, cats, history, netHistory, monthly] = await Promise.all([
+  const [status, cats, history, netHistory, monthly, yearly] = await Promise.all([
     read(db, budgetStatus, { on, gross }),
     read(db, listCategories, {}),
     read(db, budgetHistory, { on, gross }),
@@ -41,6 +41,9 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
     // since targets are net.
     gross ? read(db, budgetHistory, { on, gross: false }) : null,
     read(db, budgetMonthly, { on, gross }),
+    // Yearly bills worth saving toward (#109), for the add form, which only
+    // shows on the current month.
+    isCurrent ? read(db, yearlyCharges, { on }) : [],
   ]);
   // What each category usually costs (#105), keyed like the forms' choices.
   const byCategory = (rows: typeof history) =>
@@ -163,7 +166,13 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
           {choices.length ? (
             <section className="space-y-2 rounded-lg border p-3">
               <h2 className="text-lg font-medium">Add a target</h2>
-              <TargetForm choices={choices} histories={histories} suggestFrom={netHistories} windowMonths={HISTORY_MONTHS} />
+              <TargetForm
+                choices={choices}
+                histories={histories}
+                suggestFrom={netHistories}
+                windowMonths={HISTORY_MONTHS}
+                yearly={yearly.filter((y) => choices.some((c) => c.categoryId === y.categoryId))}
+              />
             </section>
           ) : null}
         </>

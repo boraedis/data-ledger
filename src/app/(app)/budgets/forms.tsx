@@ -12,6 +12,18 @@ import { rebalance, removeTarget, setTarget } from "./actions";
 
 export type TargetChoice = { categoryId: string | null; name: string };
 
+// A yearly bill found by detection (#109), as budgets.yearlyCharges gives it.
+export type YearlySuggestion = {
+  categoryId: string;
+  name: string;
+  charges: { merchant: string; latestCents: number; lastOn: string; nextExpectedOn: string }[];
+  amountCents: number;
+  setAsideMonthlyCents: number;
+  anchorMonth: string;
+};
+
+const day = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+
 function toCents(text: string): number | null {
   try {
     const cents = parseAmountCents(text.replace(/[$,\s]/g, "") || "x");
@@ -36,6 +48,7 @@ export function TargetForm({
   histories,
   suggestFrom,
   windowMonths,
+  yearly = [],
   onDone,
 }: {
   // Categories to pick from when adding; omitted when editing one target.
@@ -48,6 +61,8 @@ export function TargetForm({
   // the net budget never reaches.
   suggestFrom: Record<string, HistorySummary>;
   windowMonths: number;
+  // Yearly bills in categories without a target yet (adding only).
+  yearly?: YearlySuggestion[];
   onDone?: () => void;
 }) {
   const [choice, setChoice] = useState<string>(initial ? (initial.categoryId ?? "") : (choices?.[0]?.categoryId ?? ""));
@@ -71,6 +86,21 @@ export function TargetForm({
   // Only a value in the field; nothing is written until the owner saves.
   const suggestion = suggestedTargetCents(suggestFrom[selected], periodMonths);
   const shown = amount ?? (suggestion === null ? "" : String(suggestion / 100));
+  const bill = yearly.find((y) => y.categoryId === selected);
+
+  // One tap fills the form as an annual sinking fund whose year ends with
+  // the bill's next charge; the owner can still change anything, and
+  // nothing is saved until Add target.
+  const applyYearly = (y: YearlySuggestion) => {
+    setChoice(y.categoryId);
+    setAmount((y.amountCents / 100).toFixed(2));
+    setPeriodMonths(12);
+    setAnchorMonth(y.anchorMonth);
+    setSinkingFund(true);
+    setError(null);
+  };
+  const usingBill =
+    bill !== undefined && periodMonths === 12 && sinkingFund && anchorMonth === bill.anchorMonth && toCents(shown) === bill.amountCents;
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -98,6 +128,39 @@ export function TargetForm({
 
   return (
     <form onSubmit={submit} className="space-y-3 text-sm">
+      {choices && yearly.length ? (
+        // Where yearly bills were found, so they're found without opening
+        // every category.
+        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <span>Yearly bills found:</span>
+          {yearly.map((y) => (
+            <button key={y.categoryId} type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => applyYearly(y)}>
+              {y.name}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {bill ? (
+        <div className="space-y-1 rounded-md border border-dashed p-2 text-xs">
+          <p>
+            {bill.charges.map((c, i) => (
+              <span key={c.merchant}>
+                {i ? "; " : ""}
+                {c.merchant} charges {formatCents(c.latestCents)} a year, last on {day(c.lastOn)}, next around {day(c.nextExpectedOn)}
+              </span>
+            ))}
+            . Setting aside <span className="font-medium tabular-nums">{formatCents(bill.setAsideMonthlyCents)}/month</span> covers it
+            without wrecking that month.
+          </p>
+          {usingBill ? (
+            <p className="text-muted-foreground">Filled in as an annual sinking fund. Add the target to keep it.</p>
+          ) : (
+            <Button type="button" size="xs" variant="outline" onClick={() => applyYearly(bill)}>
+              Use as a sinking fund
+            </Button>
+          )}
+        </div>
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-2">
         {choices ? (
           <label className="space-y-1">
