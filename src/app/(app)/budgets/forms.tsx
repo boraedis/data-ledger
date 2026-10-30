@@ -254,8 +254,8 @@ export function TargetForm({
         <p className="text-xs text-muted-foreground">
           Applies from{" "}
           {new Date(`${fromMonth}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })} until this
-          target&apos;s next version, which keeps its amount. It only fills months that had no target; a month
-          that already had one keeps it.
+          target&apos;s next version, which keeps its amount. A month that already had a target is changed too; the
+          review lists each one with its old and new amount before anything is saved.
         </p>
       ) : (
         <p className="text-xs text-muted-foreground">

@@ -342,9 +342,29 @@ describe("budgets.backdateTarget (#130)", () => {
     expect(logged).toMatchObject({ actor: "user", input: expect.objectContaining({ fromMonth: "2026-03" }) });
   });
 
-  it("only fills months with no target, never before the first transactions, and not this month", async () => {
+  it("changes a past month's target after showing each month's change, and leaves the later version alone", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 35_000, today: "2026-06-10" });
     await backdate({ categoryId: cat.Dining, fromMonth: "2026-03", amountCents: 40_000 });
-    await expect(backdate({ categoryId: cat.Dining, fromMonth: "2026-04", amountCents: 1_000 })).rejects.toThrow(/already in effect/);
+
+    // The review shows March to May moving from $400 to $450, and June's version as the stop.
+    const preview = (await run("budgets.backdatePreview", { today: "2026-06-15", categoryId: cat.Dining, fromMonth: "2026-03", amountCents: 45_000 })).output as {
+      months: { month: string; before: { targetCents: number } | null; after: { targetCents: number } | null }[];
+      until: string | null;
+    };
+    expect(preview.months.map((m) => [m.month, m.before?.targetCents, m.after?.targetCents])).toEqual([
+      ["2026-03", 40_000, 45_000],
+      ["2026-04", 40_000, 45_000],
+      ["2026-05", 40_000, 45_000],
+    ]);
+    expect(preview.until).toBe("2026-06-01");
+
+    await backdate({ categoryId: cat.Dining, fromMonth: "2026-03", amountCents: 45_000 });
+    for (const on of ["2026-03-31", "2026-04-30", "2026-05-31"]) expect(target(await status(on), cat.Dining).targetCents).toBe(45_000);
+    expect(target(await status("2026-06-30"), cat.Dining).targetCents).toBe(35_000);
+    expect((await status("2026-02-28")).targets.some((t) => t.categoryId === cat.Dining)).toBe(false);
+  });
+
+  it("never goes before the first transactions, and not into this month", async () => {
     await expect(backdate({ categoryId: cat.Coffee, fromMonth: "2015-01", amountCents: 1_000 })).rejects.toThrow(/earliest a target can start/);
     await expect(backdate({ categoryId: cat.Coffee, fromMonth: "2026-06", amountCents: 1_000 })).rejects.toThrow(/this month or later/);
   });
