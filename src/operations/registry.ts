@@ -7,6 +7,7 @@ import { createPayStub, deletePayStub, linkPayDeposit, listPayStubs, payDepositC
 import { categoryChoices } from "@/operations/choices";
 import { setTaxAssumptions, taxEstimate } from "@/operations/taxes";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
+import { getImportMapping, importHistory, saveImportMapping } from "@/operations/history";
 import { cancelRecurring, dismissAlert, markStillActive, listAlerts, listCancelled, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
 import {
   createPerson,
@@ -26,7 +27,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { taxAssumptions, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -76,6 +77,9 @@ export const operations: Operation[] = [
   createGoal,
   updateGoal,
   archiveGoal,
+  getImportMapping,
+  saveImportMapping,
+  importHistory,
   listRecurring,
   listCancelled,
   cancelRecurring,
@@ -169,5 +173,6 @@ export const trackedTables = {
   pay_stub_lines: payStubLines,
   pay_stub_deposits: payStubDeposits,
   pay_stub_employer_lines: payStubEmployerLines,
+  import_mappings: importMappings,
   tax_assumptions: taxAssumptions,
 } as const;

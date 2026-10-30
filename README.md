@@ -69,8 +69,17 @@ Items, richer merchant data) can be added later per-institution without
 touching anything downstream. Teller was considered and set aside (narrower
 coverage; personal use of its dev tier is a grey area).
 
-Manual CSV upload is deliberately **not** a supported workflow — sync is
-automatic or it isn't done.
+Manual CSV upload is deliberately **not** how the ledger stays current —
+sync is automatic or it isn't done. The one exception is a **backfill**
+(#35): history older than the sync's ~90 days, from each bank's CSV export
+(Accounts → *Import older history*). One file per account at a time,
+parsed in memory and never stored; the column layout is saved per account.
+A preview shows what would be added, what was imported before (each row has
+a stable ID, so the same file twice adds nothing), and what looks like it's
+already here from the sync (same amount within 3 days), which is skipped
+unless the owner ticks it. Applied as one `import` command, undone as a
+whole; imported rows are marked `source = 'import'`. Investment accounts
+and OFX/QFX are out of scope for now.
 
 ### Categorization pipeline
 

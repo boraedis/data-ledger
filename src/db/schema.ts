@@ -193,7 +193,7 @@ export const accountType = pgEnum("account_type", ACCOUNT_KINDS);
 // private loan, an institution no aggregator covers. Its value only changes
 // through the accounts.*Manual operations, and no sync ever touches it
 // (syncs match on connection, which a manual account doesn't have).
-export const dataSource = pgEnum("data_source", ["seed", "simplefin", "manual"]);
+export const dataSource = pgEnum("data_source", ["seed", "simplefin", "manual", "import"]);
 
 export const accounts = pgTable("accounts", {
   id: uuid("id").primaryKey().defaultRandom(),
@@ -336,6 +336,10 @@ export const transactions = pgTable(
     // derived from it, never written over it.
     description: text("description").notNull(),
     externalId: text("external_id"),
+    // Where a transaction came from when it isn't the sync: "import" for
+    // history backfilled from a bank's CSV export (#35). Null for synced
+    // rows (and seed data, which is marked on its accounts).
+    source: dataSource("source"),
     // Pending transactions can vanish or reappear under a new ID once they
     // post; the import operation reconciles them (src/operations/import.ts).
     pending: boolean("pending").notNull().default(false),
@@ -386,6 +390,20 @@ export const transactions = pgTable(
     uniqueIndex("transactions_account_external_idx").on(t.accountId, t.externalId),
   ],
 );
+
+// How one account's bank lays out its CSV export (#35), saved the first
+// time the owner maps it so the next file from that bank needs no mapping.
+// Column names and formats only: never a row of the file, which is read in
+// memory and never stored.
+export const importMappings = pgTable("import_mappings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  accountId: uuid("account_id")
+    .notNull()
+    .unique()
+    .references(() => accounts.id, { onDelete: "cascade" }),
+  mapping: jsonb("mapping").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
 
 // ---------------------------------------------------------------------------
 // Splits and tags (#6, phase 2).
