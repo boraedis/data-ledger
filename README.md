@@ -143,6 +143,20 @@ schedule:
   every date, settled pair by pair as on Cash flow. Transfers that are
   uncategorized or already filed as transfers are paired by the matcher,
   so they need no step here.
+- **Move many to one category** (#116, `/transactions/move`): from a
+  filtered Transactions list, "Move these to a category" takes everything
+  that filter shows (the same query, `transactionFilters`), up to 2,000
+  at a time. A preview (`transactions.moveToCategoryPreview`, the same
+  checklist as re-applying a rule) shows each row's old and new category
+  and a total; single rows are ticked in or out there.
+  - Split transactions stay unticked unless ticked, since moving one
+    replaces its split.
+  - Rows already in the category, and sides of a paired transfer (unpair
+    those instead), are left alone.
+  - `transactions.moveToCategory` is one command as `user`, undone
+    together. It reports old categories left with nothing in them, and the
+    page offers to delete each one; `categories.delete` still checks it's
+    unused.
 
 Until #86, memory and the model's confident answers were applied without
 asking (logged and undoable). Only the owner's explicit rules do that
