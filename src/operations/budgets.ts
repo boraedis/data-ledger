@@ -127,16 +127,23 @@ export const budgetHistory = defineRead({
 export const budgetMonthly = defineRead({
   name: "budgets.monthly",
   description:
-    `Each current target's net spend in each of the last ${SERIES_MONTHS} months up to and including \`on\`'s ` +
+    `Each current target's net spend in each of the last \`months\` (default ${SERIES_MONTHS}) up to and including \`on\`'s ` +
     "(default today; that month is partial), in cents, with every month listed ($0 when nothing was spent). " +
     "Where the target was in effect, a month is what budgets.status counted toward it, and targetCents is its " +
     "monthly amount then (a multi-month target's even monthly share); before it existed, targetCents is null " +
-    "and the month shows what the target would cover today. Net unless gross is true.",
-  input: z.object({ on: isoDate.optional(), gross: z.boolean().default(false) }),
-  run: async (db, { on = today(), gross }) => {
+    "and the month shows what the target would cover today. `months` widens the window (up to 24); " +
+    "`includeEnded` also lists targets in effect during the window but not on `on`. Net unless gross is true.",
+  input: z.object({
+    on: isoDate.optional(),
+    gross: z.boolean().default(false),
+    months: z.number().int().min(1).max(24).default(SERIES_MONTHS),
+    includeEnded: z.boolean().default(false),
+  }),
+  run: async (db, { on = today(), gross, months, includeEnded }) => {
+    // One read of the whole window's lines, however many cells it fills.
     const [versions, lines, { rows, labelOf }] = await Promise.all([
       loadVersions(db),
-      spendingLines.run(db, { from: firstOfMonth(monthIndex(on) - SERIES_MONTHS + 1), to: on, budgetOnly: true, gross }),
+      spendingLines.run(db, { from: firstOfMonth(monthIndex(on) - months + 1), to: on, budgetOnly: true, gross }),
       labels(db),
     ]);
     const series = monthlySeries({
@@ -144,6 +151,8 @@ export const budgetMonthly = defineRead({
       versions,
       lines: lines.map((l) => ({ date: l.date, amountCents: l.amountCents, categoryId: l.categoryId })),
       categories: rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind })),
+      months,
+      includeEnded,
     });
     return [...series].map(([key, months]) => {
       const categoryId = key === BUFFER ? null : key;

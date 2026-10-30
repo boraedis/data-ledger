@@ -78,6 +78,10 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold">Budgets</h1>
         <nav className="flex items-center gap-3 text-sm">
+          {/* The 12 months ending here, every target at once (#108). */}
+          <Link href={hrefWith({}).replace("/budgets", "/budgets/year")} className="text-muted-foreground underline hover:text-foreground">
+            Year view
+          </Link>
           <Link href={hrefWith({ month: shiftMonth(month, -1) })} className="text-muted-foreground hover:text-foreground">
             ← Earlier
           </Link>
