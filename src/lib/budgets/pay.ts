@@ -51,6 +51,33 @@ export function payForMonth(month: string, today: string, stubs: PayStubLike[]):
   return { recordedCents, recordedCount: inMonth.length, expectedCents, expectedCount, netPayCents: inMonth.length || expectedCount ? total : null };
 }
 
+/**
+ * Paychecks a year at a cadence (#142): weekly 52, every two weeks 26, twice
+ * a month 24, monthly 12. The cadence is the usual gap between pay dates,
+ * so a biweekly payer's 15-day gaps around a holiday still read as 26.
+ */
+export function paychecksPerYear(cadenceDays: number): number {
+  return cadenceDays <= 10 ? 52 : cadenceDays <= 14 ? 26 : cadenceDays <= 17 ? 24 : 12;
+}
+
+/**
+ * A typical month's net pay (#142): the year's pace divided by twelve. The
+ * pace is the recent regular paycheck (the last three, as in the tax
+ * estimate, so a raise shows up quickly and a bonus never sets it) times
+ * paychecks a year. Every month is measured against it, so a month that
+ * happens to get three biweekly paychecks doesn't look like a raise, nor a
+ * two-paycheck month like a cut. Only stubs paid by `asOf` count, so a past
+ * month is measured against the pay of the time. Null with no regular stubs.
+ */
+export function typicalMonth(stubs: PayStubLike[], asOf: string): { cents: number; paceCents: number; perYear: number } | null {
+  const regular = stubs.filter((s) => !s.oneTime && s.payDate <= asOf).sort((a, b) => a.payDate.localeCompare(b.payDate));
+  if (regular.length === 0) return null;
+  const recent = regular.slice(-PACE_STUBS);
+  const paceCents = Math.round(recent.reduce((sum, s) => sum + s.netCents, 0) / recent.length);
+  const perYear = paychecksPerYear(cadenceDays(regular.slice(-6).map((s) => ({ ...s, grossCents: 0, lines: [] }))));
+  return { cents: Math.round((paceCents * perYear) / 12), paceCents, perYear };
+}
+
 /** A share of net pay as a whole percent. */
 const pct = (cents: number, of: number) => Math.round((cents / of) * 100);
 
