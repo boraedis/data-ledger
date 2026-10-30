@@ -116,7 +116,11 @@ const isSpend = (line: SpendLine, lookup: Lookup) => lookup.categories.get(line.
 // A parent's own spending, when it also has subcategories, is a row of its own.
 const SELF = ":self";
 
-function keysFor(line: SpendLine, by: Grouping, lookup: Lookup): { key: string; label: string; child?: { key: string; label: string } } {
+/**
+ * The group a spending line belongs to, and for a category its subcategory.
+ * Exported so Cash flow (#62) groups exactly as this page does.
+ */
+export function keysFor(line: SpendLine, by: Grouping, lookup: Lookup): { key: string; label: string; child?: { key: string; label: string } } {
   if (by === "merchant") return { key: line.merchant ?? "", label: line.merchant ?? "No merchant" };
   if (by === "account") return { key: line.accountId, label: lookup.accountNames.get(line.accountId) ?? "Unknown account" };
   const category = lookup.categories.get(line.categoryId)!;
