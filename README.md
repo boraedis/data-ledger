@@ -673,6 +673,14 @@ rewritten; the convention is applied when reading
 history. Between snapshots a balance carries forward. Only USD is summed;
 an account in another currency is listed but left out.
 
+**Breakdown over time** (#134). The history chart stacks each group's value per day, with assets above zero and what's owed below. Net worth is drawn as a line on top.
+- **Grouping:** by account kind (the default), account or institution. Every account is in exactly one group, and the smallest past seven fold into "Other", so the total is the same whichever way it's sliced.
+- **Ranges:** 1M, 3M, year to date, 1Y and all history. Each starts on its own first day; days before the first balance are blank, not zero. The change shown, for the total and for each group, is from the first day in the range that has a balance.
+- **Legend:** each group's value and change. Clicking a group shows it alone.
+- **Colour:** a kind always keeps the same colour. The colours come from the data-viz reference palette (`--series-1`…`8`).
+- **"Where it sits":** splits today's figures into owned against owed, and cash against investments against other assets.
+- **Source:** `dailyContributions` in `src/lib/net-worth.ts`, with grouping, ranges and changes in `src/lib/net-worth-breakdown.ts`. Not an operation, for the same reason as the rest of net worth.
+
 **Manual accounts** cover what no aggregator does: a home, a car, a loan
 from a friend, an account at an unsupported institution. Add one under
 Accounts → Manual with a kind and a value as of a date; for a loan or credit
