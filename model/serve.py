@@ -17,7 +17,8 @@ Based on Modal's vLLM inference example, with three deliberate changes:
     endpoint is open to anyone who finds the URL;
   - a short idle window: every wake-up bills at least the full window of
     GPU time, and this app's traffic is a nightly batch plus occasional
-    chat, so a 15-minute window would mostly pay for idling;
+    chat, so a long window would mostly pay for idling. Ten minutes keeps
+    a chat session warm across a few questions without idling for long;
   - no speculative-decoding companion model: less memory, faster cold
     start, and throughput isn't the bottleneck for one user.
 """
@@ -89,7 +90,7 @@ app = modal.App("data-ledger-model")
     image=vllm_image,
     gpu=GPU,
     secrets=[modal.Secret.from_name("data-ledger-model")],
-    scaledown_window=3 * MINUTES,
+    scaledown_window=10 * MINUTES,
     startup_timeout=10 * MINUTES,
     volumes={"/root/.cache/huggingface": hf_cache, "/root/.cache/vllm": vllm_cache},
     port=VLLM_PORT,
