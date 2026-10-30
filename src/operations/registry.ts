@@ -8,6 +8,7 @@ import { categoryChoices } from "@/operations/choices";
 import { setTaxAssumptions, taxEstimate } from "@/operations/taxes";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
 import { getImportMapping, importHistory, saveImportMapping } from "@/operations/history";
+import { createManual, deleteManual, keepManual, manualMatches, mergeManual, updateManual } from "@/operations/manual";
 import { cancelRecurring, dismissAlert, markStillActive, listAlerts, listCancelled, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
 import {
   createPerson,
@@ -83,6 +84,12 @@ export const operations: Operation[] = [
   getImportMapping,
   saveImportMapping,
   importHistory,
+  createManual,
+  updateManual,
+  deleteManual,
+  manualMatches,
+  mergeManual,
+  keepManual,
   listRecurring,
   listCancelled,
   cancelRecurring,

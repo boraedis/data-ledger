@@ -337,9 +337,14 @@ export const transactions = pgTable(
     description: text("description").notNull(),
     externalId: text("external_id"),
     // Where a transaction came from when it isn't the sync: "import" for
-    // history backfilled from a bank's CSV export (#35). Null for synced
-    // rows (and seed data, which is marked on its accounts).
+    // history backfilled from a bank's CSV export (#35), "manual" for one
+    // the owner added by hand (#64). Null for synced rows (and seed data,
+    // which is marked on its accounts).
     source: dataSource("source"),
+    // On a manual transaction (#64): the owner said it isn't the same
+    // purchase as the bank transaction that looked like it, so it's no
+    // longer offered for merging and counts on its own.
+    notDuplicate: boolean("not_duplicate").notNull().default(false),
     // Pending transactions can vanish or reappear under a new ID once they
     // post; the import operation reconciles them (src/operations/import.ts).
     pending: boolean("pending").notNull().default(false),

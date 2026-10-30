@@ -13,6 +13,8 @@ import { listAccounts } from "@/operations/accounts";
 import { TransactionEditor } from "./editor";
 import { listPeople, transactionReimbursements } from "@/operations/reimbursements";
 import { SharePanel } from "./share-panel";
+import { manualMatches } from "@/operations/manual";
+import { ManualNote } from "./manual-note";
 import { ProvisionalNote } from "./provisional-note";
 import { TransferNote } from "./transfer-note";
 
@@ -26,12 +28,13 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
     throw error;
   });
   if (!txn) notFound();
-  const [cats, tagList, accts, peopleList, shared] = await Promise.all([
+  const [cats, tagList, accts, peopleList, shared, merge] = await Promise.all([
     read(db, listCategories, {}),
     read(db, listTags, {}),
     read(db, listAccounts, {}),
     read(db, listPeople, {}),
     read(db, transactionReimbursements, { transactionId: txn.id }),
+    txn.manual ? read(db, manualMatches, { transactionId: txn.id }) : Promise.resolve([]),
   ]);
   const otherAccount = txn.transfer ? accts.find((a) => a.id === txn.transfer!.accountId)?.name ?? "another account" : null;
 
@@ -54,6 +57,13 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
           {formatCents(txn.amountCents)}
         </p>
       </div>
+      {txn.manual ? (
+        <ManualNote
+          txn={{ id: txn.id, postedOn: txn.postedOn, amountCents: txn.amountCents, description: txn.description }}
+          candidates={merge[0]?.candidates ?? []}
+          today={new Date().toISOString().slice(0, 10)}
+        />
+      ) : null}
       {txn.provisionalSource ? <ProvisionalNote transactionId={txn.id} source={txn.provisionalSource} /> : null}
       {txn.transfer ? (
         <TransferNote
@@ -95,7 +105,8 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
           covers={shared.covers}
         />
       ) : null}
-      <TransactionEditor txn={txn} options={categoryOptions(cats)} knownTags={tagList.map((t) => t.name)} />
+      {/* Keyed on the amount: editing one added by hand resets the split form's defaults. */}
+      <TransactionEditor key={`${txn.id}:${txn.amountCents}`} txn={txn} options={categoryOptions(cats)} knownTags={tagList.map((t) => t.name)} />
       <p className="text-xs text-muted-foreground">
         Every change here is in <Link href="/activity" className="underline">Activity</Link> and can be undone there.
       </p>

@@ -18,6 +18,7 @@ import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { merchantMemory } from "@/lib/categorize/match";
 import { isInvestmentKind, investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
 import { TRANSFER_PASSES, findTransferPairs } from "@/lib/investments/transfers";
+import { DAYS_AFTER as MANUAL_DAYS_AFTER, DAYS_BEFORE as MANUAL_DAYS_BEFORE } from "@/lib/manual/match";
 import { expandDeposit } from "@/lib/pay/stubs";
 import { distribute } from "@/lib/reimbursements/match";
 import type { Db } from "@/db/types";
@@ -64,7 +65,7 @@ export const listTransactions = defineRead({
     "`payStub` is set on a paycheck deposit linked to its pay stub (pay date, employer); `paycheckWithoutStub` " +
     "is true for money in that looks like a paycheck (the category or payer of linked ones) but has none. " +
     "`provisionalSource` is set on a provisional transaction: one from a purchase alert that the bank hasn't " +
-    "reported yet (see transactions.provisional).",
+    "reported yet (see transactions.provisional). `manual` is true for one the owner added by hand.",
   input: z.object({
     from: isoDate.optional(),
     to: isoDate.optional(),
@@ -116,6 +117,7 @@ export const listTransactions = defineRead({
         merchant: transactions.merchant,
         pending: transactions.pending,
         provisionalSource: transactions.provisionalSource,
+        manual: sql<boolean>`${transactions.source} is not distinct from 'manual'`,
         accountId: transactions.accountId,
         categoryId: transactions.categoryId,
         isSplit: transactions.isSplit,
@@ -345,6 +347,7 @@ export const getTransaction = defineRead({
         merchant: transactions.merchant,
         pending: transactions.pending,
         provisionalSource: transactions.provisionalSource,
+        manual: sql<boolean>`${transactions.source} is not distinct from 'manual'`,
         categoryId: transactions.categoryId,
         isSplit: transactions.isSplit,
         accountId: transactions.accountId,
@@ -433,6 +436,26 @@ export function countsAsSpending(): SQL {
     where synced.account_id = ${transactions.accountId}
       and synced.provisional_source is null
       and synced.posted_on >= ${transactions.postedOn}
+  )) and ${manualNotShadowed()}`;
+}
+
+/**
+ * A manual transaction (#64) steps aside while the bank has one that could
+ * be the same purchase (src/lib/manual/match.ts: the same account and
+ * amount, close in date) and the owner hasn't decided: the bank's counts,
+ * so it's never counted twice. Merging keeps the bank's; "keep both"
+ * (notDuplicate) brings it back.
+ */
+function manualNotShadowed(): SQL {
+  return sql`(${transactions.source} is distinct from 'manual' or ${transactions.notDuplicate} or not exists (
+    select 1 from ${transactions} as bank
+    where bank.account_id = ${transactions.accountId}
+      and bank.id <> ${transactions.id}
+      and bank.source is distinct from 'manual'
+      and bank.provisional_source is null
+      and bank.pending = false
+      and bank.amount_cents = ${transactions.amountCents}
+      and bank.posted_on between ${transactions.postedOn} - ${sql.raw(String(MANUAL_DAYS_BEFORE))} and ${transactions.postedOn} + ${sql.raw(String(MANUAL_DAYS_AFTER))}
   ))`;
 }
 
@@ -684,6 +707,7 @@ export const listInbox = defineRead({
         accountId: transactions.accountId,
         pending: transactions.pending,
         provisionalSource: transactions.provisionalSource,
+        manual: sql<boolean>`${transactions.source} is not distinct from 'manual'`,
       })
       .from(transactions)
       .where(
