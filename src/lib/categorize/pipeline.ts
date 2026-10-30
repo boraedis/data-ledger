@@ -12,8 +12,7 @@ import { categoryOptions } from "@/lib/categorize/labels";
 import { firstMatchingRule, merchantMemory, type RuleLike } from "@/lib/categorize/match";
 import { chat, modelIsConfigured } from "@/lib/model/client";
 import type { AccountKind } from "@/lib/account-kinds";
-import { CASH_KINDS, DEBT_KINDS, INVESTMENT_KINDS } from "@/lib/investments/activity";
-import { findTransferPairs } from "@/lib/investments/transfers";
+import { TRANSFER_PASSES, findTransferPairs } from "@/lib/investments/transfers";
 import { findMatches } from "@/lib/provisional/match";
 import { openDeposits } from "@/operations/pay";
 import { execute } from "@/operations/runtime";
@@ -216,13 +215,8 @@ export async function matchTransfersStep(db: Db): Promise<number> {
       .innerJoin(accounts, eq(accounts.id, transactions.accountId))
       .where(and(open, inArray(accounts.type, [...kinds])));
 
-  const passes: { from: readonly AccountKind[]; to: readonly AccountKind[]; what: string; outOnly: boolean }[] = [
-    { from: CASH_KINDS, to: INVESTMENT_KINDS, what: "between cash and investment accounts", outOnly: false },
-    { from: CASH_KINDS, to: DEBT_KINDS, what: "paying a card or loan", outOnly: true },
-    { from: CASH_KINDS, to: CASH_KINDS, what: "between cash accounts", outOnly: true },
-  ];
   let matched = 0;
-  for (const pass of passes) {
+  for (const pass of TRANSFER_PASSES) {
     // Re-read each time: what one pass paired is no longer open.
     const [a, b] = await Promise.all([rowsIn(pass.from), rowsIn(pass.to)]);
     // One-way passes pair money out of the first with money into the second.
