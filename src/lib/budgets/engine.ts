@@ -418,7 +418,8 @@ export type MonthBar = {
  * toward it (lines resolved on their own dates). Before it existed, a month
  * counts what the target would cover today, as recentHistory does, so the
  * trend leading up to a new target is there to see rather than empty. Every
- * month is listed, with $0 where nothing was spent.
+ * month is listed, with $0 where nothing was spent. (An ended target covers
+ * nothing today, so its months without a target read $0.)
  *
  * The reference amount is the target itself, not what was available: rollover
  * and rebalancing change what a period can spend, not what it was meant to.
@@ -429,6 +430,9 @@ export function monthlySeries(input: {
   lines: SpendLine[];
   categories: CategoryInfo[];
   months?: number;
+  // Also targets in effect at some point in the window but not on `on`
+  // (#108's grid, where a past month shows the target it had).
+  includeEnded?: boolean;
 }): Map<TargetKey, MonthBar[]> {
   const months = input.months ?? SERIES_MONTHS;
   const end = monthIndex(input.on);
@@ -438,13 +442,13 @@ export function monthlySeries(input: {
 
   const result = new Map<TargetKey, MonthBar[]>();
   for (const [key, list] of byKey) {
-    if (!versionAt(list, input.on)) continue;
     const bars: MonthBar[] = [];
     for (let m = start; m <= end; m++) {
       const v = versionAt(list, firstOfMonth(m));
       bars.push({ month: firstOfMonth(m), spentCents: 0, targetCents: v ? Math.round(v.amountCents! / v.periodMonths) : null });
     }
-    result.set(key, bars);
+    const current = Boolean(versionAt(list, input.on));
+    if (current || (input.includeEnded && bars.some((b) => b.targetCents !== null))) result.set(key, bars);
   }
 
   for (const line of input.lines) {

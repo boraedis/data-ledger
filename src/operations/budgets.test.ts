@@ -192,3 +192,34 @@ describe("budgets.monthly (#107)", () => {
     expect(sum).toBe(target(await status("2026-06-15"), cat.Coffee).spentCents);
   });
 });
+
+describe("budgets.monthly over a year (#108)", () => {
+  type Monthly = { categoryId: string | null; months: { month: string; spentCents: number; targetCents: number | null }[] }[];
+  const grid = async (on: string) => (await run("budgets.monthly", { on, months: 12, includeEnded: true })).output as Monthly;
+
+  it("gives each month the target version it had, matching budgets.status, and keeps a target ended since", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-01-10" });
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 45_000, today: "2026-04-10" });
+    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 6_000, today: "2026-02-10" });
+    await run("budgets.removeTarget", { categoryId: cat.Coffee, today: "2026-05-10" });
+
+    const rows = await grid("2026-06-30");
+    const groceries = rows.find((r) => r.categoryId === cat.Groceries)!.months;
+    expect(groceries).toHaveLength(12);
+    expect(groceries[0].month).toBe("2025-07-01");
+    expect(groceries.slice(6).map((m) => m.targetCents)).toEqual([30_000, 30_000, 30_000, 45_000, 45_000, 45_000]);
+    for (const m of groceries.slice(6)) {
+      expect(m.spentCents).toBe(target(await status(lastOfMonth(monthIndex(m.month))), cat.Groceries).spentCents);
+    }
+
+    // Ended in May: still a row, with the target it had in Feb–Apr only.
+    const coffee = rows.find((r) => r.categoryId === cat.Coffee)!.months;
+    expect(coffee.slice(6).map((m) => m.targetCents)).toEqual([null, 6_000, 6_000, 6_000, null, null]);
+    for (const m of coffee.slice(7, 10)) {
+      expect(m.spentCents).toBe(target(await status(lastOfMonth(monthIndex(m.month))), cat.Coffee).spentCents);
+    }
+    // Without includeEnded (the cards), only targets in effect now.
+    const cards = (await run("budgets.monthly", { on: "2026-06-30" })).output as Monthly;
+    expect(cards.some((r) => r.categoryId === cat.Coffee)).toBe(false);
+  });
+});
