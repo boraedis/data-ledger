@@ -265,6 +265,7 @@ export const listPayStubs = defineRead({
           id: transactions.id,
           postedOn: transactions.postedOn,
           amountCents: transactions.amountCents,
+          accountId: transactions.accountId,
           accountName: sql<string>`coalesce(${accounts.displayName}, ${accounts.name})`,
         })
         .from(payStubDeposits)
@@ -285,7 +286,9 @@ export const listPayStubs = defineRead({
         payDate: s.payDate,
         grossCents: s.grossCents,
         netCents: s.netCents,
-        deposits: deposits.filter((d) => d.payStubId === s.id).map((d) => ({ id: d.id, postedOn: d.postedOn, amountCents: d.amountCents, accountName: d.accountName })),
+        deposits: deposits
+          .filter((d) => d.payStubId === s.id)
+          .map((d) => ({ id: d.id, postedOn: d.postedOn, amountCents: d.amountCents, accountId: d.accountId, accountName: d.accountName })),
         lines: own.map((l) => ({ kind: l.kind, group: groupOf(l.kind), label: l.label, amountCents: l.amountCents, categoryId: l.categoryId })),
         employerLines: employerLines.filter((l) => l.payStubId === s.id).map((l) => ({ kind: l.kind, label: l.label, amountCents: l.amountCents })),
         totals,

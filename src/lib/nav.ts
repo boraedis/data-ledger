@@ -15,6 +15,7 @@ export const SECTIONS: NavSection[] = [
     pages: [
       { href: "/transactions", label: "Transactions" },
       { href: "/spending", label: "Spending" },
+      { href: "/cash-flow", label: "Cash flow" },
       { href: "/categories", label: "Categories" },
     ],
   },
