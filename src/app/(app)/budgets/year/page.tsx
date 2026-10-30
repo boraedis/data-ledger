@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
-import { formatCents } from "@/lib/money";
-import { yearTotals, type YearTotal } from "@/lib/budgets/year";
+import { yearTotals } from "@/lib/budgets/year";
 import { budgetMonthly } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
+import { YearGrid, type GridColumn, type GridRow } from "./grid";
 
 // Every target's spend against target, month by month (#108): one row per
 // target (the buffer first), one column per month for the last 12, so a
@@ -36,27 +36,6 @@ const monthName = (month: string, style: "narrow" | "short" | "long") =>
     timeZone: "UTC",
   });
 
-/** "$42", "$1.2k": short enough for a column. */
-function compact(cents: number): string {
-  const dollars = Math.abs(cents) / 100;
-  if (dollars >= 1_000) return `$${(dollars / 1_000).toFixed(dollars >= 10_000 ? 0 : 1).replace(/\.0$/, "")}k`;
-  return `$${Math.round(dollars)}`;
-}
-
-/** "+$42", "−$1.2k": the cell's over (+) or under (−). */
-function compactDiff(cents: number): string {
-  return `${cents > 0 ? "+" : cents < 0 ? "−" : ""}${compact(cents)}`;
-}
-
-// Diverging around the target: under in the on-track color, over in the
-// over-budget color, three steps each by how far off. Capped well short of
-// solid so the amount on top stays legible in both themes.
-function shade(spent: number, target: number): string {
-  const ratio = target > 0 ? spent / target : spent > 0 ? Infinity : 0;
-  if (ratio > 1) return ratio > 1.25 ? "bg-negative/60" : ratio > 1.1 ? "bg-negative/40" : "bg-negative/20";
-  return ratio < 0.5 ? "bg-positive/45" : ratio < 0.9 ? "bg-positive/30" : "bg-positive/15";
-}
-
 export default async function BudgetYearPage(props: PageProps<"/budgets/year">) {
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
@@ -67,7 +46,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
   const on = isCurrent ? today : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
   const gross = sp.gross === "1";
 
-  const rows = (await read(getDb(), budgetMonthly, { on, gross, months: MONTHS, includeEnded: true })).sort((a, b) =>
+  const rows = (await read(getDb(), budgetMonthly, { on, gross, months: MONTHS, includeEnded: true, details: true })).sort((a, b) =>
     a.categoryId === null ? -1 : b.categoryId === null ? 1 : a.name.localeCompare(b.name),
   );
   const columns = rows[0]?.months.map((m) => m.month) ?? Array.from({ length: MONTHS }, (_, i) => `${shiftMonth(month, i - MONTHS + 1)}-01`);
@@ -84,6 +63,40 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
     return s ? `${path}?${s}` : path;
   };
   const later = shiftMonth(month, MONTHS) > thisMonth ? thisMonth : shiftMonth(month, MONTHS);
+
+  // What the grid and its tooltips (#139) need, links worked out here.
+  const transactionsHref = (categoryId: string | null, m: string) => {
+    const q = new URLSearchParams({ target: categoryId ?? "buffer" });
+    if (m.slice(0, 7) !== thisMonth) q.set("month", m.slice(0, 7));
+    if (gross) q.set("gross", "1");
+    return `/budgets/transactions?${q}`;
+  };
+  const gridRows: GridRow[] = rows.map((r, ri) => {
+    const targeted = r.months.filter((m) => m.targetCents !== null);
+    return {
+      key: r.categoryId ?? "buffer",
+      name: r.name,
+      isBuffer: r.categoryId === null,
+      total: totals.byRow[ri],
+      targeted: targeted.length,
+      over: targeted.filter((m) => m.spentCents > m.targetCents!).length,
+      months: r.months.map((m) => ({
+        ...m,
+        href: href("/budgets", { month: m.month.slice(0, 7) }),
+        transactionsHref: m.targetCents === null ? null : transactionsHref(r.categoryId, m.month),
+      })),
+    };
+  });
+  const gridColumns: GridColumn[] = columns.map((c, i) => {
+    const cells = rows.map((r) => r.months[i]).filter((m) => m.targetCents !== null);
+    return {
+      month: c,
+      href: href("/budgets", { month: c.slice(0, 7) }),
+      total: totals.byColumn[i],
+      targets: cells.length,
+      over: cells.filter((m) => m.spentCents > m.targetCents!).length,
+    };
+  });
 
   return (
     <div className="space-y-6">
@@ -127,117 +140,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
       {rows.length === 0 ? (
         <p className="text-muted-foreground">No targets in effect in these months.</p>
       ) : (
-        <table className="w-full table-fixed border-separate border-spacing-0.5 text-xs">
-          <caption className="sr-only">
-            Spending against target by month, {monthName(columns[0], "long")} to {monthName(columns.at(-1)!, "long")}
-            {partial ? " (the last month so far)" : ""}
-          </caption>
-          <colgroup>
-            <col className="w-24 sm:w-40" />
-            {columns.map((c) => (
-              <col key={c} />
-            ))}
-            <col className="w-14 sm:w-24" />
-          </colgroup>
-          <thead>
-            <tr>
-              <th scope="col" className="sr-only">
-                Target
-              </th>
-              {columns.map((c) => (
-                <th
-                  key={c}
-                  scope="col"
-                  abbr={monthName(c, "long")}
-                  className={`pb-1 text-center font-normal text-muted-foreground ${c.slice(0, 7) === month ? "font-medium text-foreground" : ""}`}
-                >
-                  <span className="md:hidden">{monthName(c, "narrow")}</span>
-                  <span className="hidden md:inline">{monthName(c, "short")}</span>
-                  {/* Where the year turns, so twelve months never read as one calendar year. */}
-                  {c.slice(5, 7) === "01" ? <span className="block text-[9px] leading-none">{c.slice(2, 4)}</span> : null}
-                </th>
-              ))}
-              <th scope="col" abbr="Total of the months with a target" className="pb-1 pl-1 text-center font-medium">
-                Total
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r, ri) => {
-              const targeted = r.months.filter((m) => m.targetCents !== null);
-              const over = targeted.filter((m) => m.spentCents > m.targetCents!).length;
-              return (
-                <tr key={r.categoryId ?? "buffer"} id={`year-${r.categoryId ?? "buffer"}`} className="scroll-mt-4 target:[&>th]:underline">
-                  <th scope="row" className="pr-1 text-left align-middle font-normal">
-                    <span className="block truncate text-sm" title={r.name}>
-                      {r.categoryId === null ? "Buffer" : r.name}
-                    </span>
-                    <span className="block text-[10px] text-muted-foreground tabular-nums">
-                      over {over} of {targeted.length}
-                    </span>
-                  </th>
-                  {r.months.map((m) => {
-                    const label =
-                      m.targetCents === null
-                        ? `${r.name}, ${monthName(m.month, "long")}: no target`
-                        : `${r.name}, ${monthName(m.month, "long")}${m.month === partial ? " so far" : ""}: ${formatCents(m.spentCents)} of ${formatCents(m.targetCents)}, ` +
-                          (m.spentCents > m.targetCents
-                            ? `${formatCents(m.spentCents - m.targetCents)} over`
-                            : `${formatCents(m.targetCents - m.spentCents)} under`);
-                    return (
-                      <td key={m.month} className="h-9 p-0">
-                        <Link
-                          href={href("/budgets", { month: m.month.slice(0, 7) })}
-                          aria-label={label}
-                          title={label}
-                          className={`flex h-full items-center justify-center rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 focus-visible:outline-2 focus-visible:outline-ring ${
-                            m.targetCents === null ? "bg-muted/50 text-muted-foreground" : shade(m.spentCents, m.targetCents)
-                          } ${m.month === partial ? "outline-1 -outline-offset-2 outline-dashed outline-foreground/40" : ""}`}
-                        >
-                          <span aria-hidden className="hidden text-[10px] md:inline">
-                            {m.targetCents === null ? "–" : compactDiff(m.spentCents - m.targetCents)}
-                          </span>
-                        </Link>
-                      </td>
-                    );
-                  })}
-                  <TotalCell label={r.name} total={totals.byRow[ri]} />
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            {/* Every target together, month by month: monthly figures all, so they add up. */}
-            <tr>
-              <th scope="row" className="pr-1 pt-1 text-left align-middle text-sm font-medium">
-                All targets
-              </th>
-              {totals.byColumn.map((c, i) => (
-                <td key={columns[i]} className="h-9 p-0 pt-1">
-                  {c ? (
-                    <Link
-                      href={href("/budgets", { month: columns[i].slice(0, 7) })}
-                      aria-label={`All targets, ${monthName(columns[i], "long")}: ${formatCents(c.spentCents)} of ${formatCents(c.targetCents)}`}
-                      title={`All targets, ${monthName(columns[i], "long")}: ${formatCents(c.spentCents)} of ${formatCents(c.targetCents)}`}
-                      className={`flex h-full items-center justify-center rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 ${shade(c.spentCents, c.targetCents)}`}
-                    >
-                      <span aria-hidden className="hidden text-[10px] md:inline">
-                        {compactDiff(c.spentCents - c.targetCents)}
-                      </span>
-                    </Link>
-                  ) : (
-                    <span className="flex h-full items-center justify-center rounded-sm bg-muted/50 text-muted-foreground">
-                      <span aria-hidden className="hidden text-[10px] md:inline">
-                        –
-                      </span>
-                    </span>
-                  )}
-                </td>
-              ))}
-              <TotalCell label="All targets" total={totals.total} strong />
-            </tr>
-          </tfoot>
-        </table>
+        <YearGrid rows={gridRows} columns={gridColumns} grand={totals.total} viewedMonth={month} partial={partial} />
       )}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -263,29 +166,5 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
         ) : null}
       </div>
     </div>
-  );
-}
-
-// A row's year: spending against the sum of the targets its months had,
-// shaded like the months. The amount shows at every width, since this is
-// the column the row is read for.
-function TotalCell({ label, total, strong = false }: { label: string; total: YearTotal | null; strong?: boolean }) {
-  if (!total) return <td className="h-9 p-0 pl-1" />;
-  const diff = total.spentCents - total.targetCents;
-  const text = `${label}, ${total.months} month${total.months === 1 ? "" : "s"} with a target: ${formatCents(total.spentCents)} of ${formatCents(total.targetCents)}, ${formatCents(Math.abs(diff))} ${diff > 0 ? "over" : "under"}`;
-  return (
-    <td className={`h-9 p-0 pl-1 ${strong ? "pt-1" : ""}`}>
-      <span
-        role="img"
-        aria-label={text}
-        title={text}
-        className={`flex h-full flex-col items-center justify-center rounded-sm leading-tight tabular-nums ${shade(total.spentCents, total.targetCents)} ${strong ? "font-medium" : ""}`}
-      >
-        <span className="text-[10px]">{compactDiff(diff)}</span>
-        <span className="hidden text-[9px] text-muted-foreground sm:block">
-          {compact(total.spentCents)} of {compact(total.targetCents)}
-        </span>
-      </span>
-    </td>
   );
 }

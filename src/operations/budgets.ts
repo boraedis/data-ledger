@@ -14,6 +14,7 @@ import {
   linesForTarget,
   monthIndex,
   monthlySeries,
+  periodsByKey,
   recentHistory,
   SERIES_MONTHS,
   yearSummary,
@@ -211,31 +212,51 @@ export const budgetMonthly = defineRead({
     "Where the target was in effect, a month is what budgets.status counted toward it, and targetCents is its " +
     "monthly amount then (a multi-month target's even monthly share); before it existed, targetCents is null " +
     "and the month shows what the target would cover today. `months` widens the window (up to 24); " +
-    "`includeEnded` also lists targets in effect during the window but not on `on`. Net unless gross is true.",
+    "`includeEnded` also lists targets in effect during the window but not on `on`. Each month counts its transactions. " +
+    "`details` adds, for a month with a target, the period it falls in as budgets.status had it then: dates, target, " +
+    "rollover carried in, rebalancing, available, and whether it rolls over. Net unless gross is true.",
   input: z.object({
     on: isoDate.optional(),
     gross: z.boolean().default(false),
     months: z.number().int().min(1).max(24).default(SERIES_MONTHS),
     includeEnded: z.boolean().default(false),
+    details: z.boolean().default(false),
   }),
-  run: async (db, { on = today(), gross, months, includeEnded }) => {
-    // One read of the whole window's lines, however many cells it fills.
-    const [versions, lines, { rows, labelOf }] = await Promise.all([
-      loadVersions(db),
-      spendingLines.run(db, { from: firstOfMonth(monthIndex(on) - months + 1), to: on, budgetOnly: true, gross }),
+  run: async (db, { on = today(), gross, months, includeEnded, details }) => {
+    const windowStart = firstOfMonth(monthIndex(on) - months + 1);
+    const versions = await loadVersions(db);
+    // Rollover carries from the target's first period, so with details the
+    // lines go back that far; otherwise one read of the window, however many
+    // cells it fills.
+    const earliest = details ? versions.reduce((min, v) => (v.effectiveFrom < min ? v.effectiveFrom : min), windowStart) : windowStart;
+    const [lines, { rows, labelOf }, adjustments] = await Promise.all([
+      spendingLines.run(db, { from: earliest, to: on, budgetOnly: true, gross }),
       labels(db),
+      details
+        ? db.select({ categoryId: budgetAdjustments.categoryId, on: budgetAdjustments.on, amountCents: budgetAdjustments.amountCents }).from(budgetAdjustments)
+        : [],
     ]);
-    const series = monthlySeries({
-      on,
-      versions,
-      lines: lines.map((l) => ({ date: l.date, amountCents: l.amountCents, categoryId: l.categoryId })),
-      categories: rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind })),
-      months,
-      includeEnded,
-    });
-    return [...series].map(([key, months]) => {
+    const categoryInfo = rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind }));
+    const spend = lines.map((l) => ({ date: l.date, amountCents: l.amountCents, categoryId: l.categoryId, transactionId: l.transactionId }));
+    const series = monthlySeries({ on, versions, lines: spend.filter((l) => l.date >= windowStart), categories: categoryInfo, months, includeEnded });
+    const periods = details ? periodsByKey({ on, versions, lines: spend, categories: categoryInfo, adjustments }) : null;
+    return [...series].map(([key, bars]) => {
       const categoryId = key === BUFFER ? null : key;
-      return { categoryId, name: nameFor(labelOf, categoryId), months };
+      const own = periods?.get(key) ?? [];
+      return {
+        categoryId,
+        name: nameFor(labelOf, categoryId),
+        months: bars.map((b) => {
+          if (!periods || b.targetCents === null) return b;
+          const p = own.find((x) => x.start <= b.month && b.month <= x.end);
+          return {
+            ...b,
+            period: p
+              ? { start: p.start, end: p.end, periodMonths: p.periodMonths, targetCents: p.targetCents, carryInCents: p.carryInCents, adjustmentsCents: p.adjustmentsCents, availableCents: p.availableCents, spentCents: p.spentCents, rollover: p.rollover }
+              : null,
+          };
+        }),
+      };
     });
   },
 });

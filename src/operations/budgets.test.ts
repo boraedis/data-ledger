@@ -492,3 +492,26 @@ describe("budgets.backdatePreview (#137)", () => {
     await expect(preview({ categoryId: cat.Coffee, fromMonth: "2015-01", amountCents: 1_000 })).rejects.toThrow(/earliest a target can start/);
   });
 });
+
+describe("budgets.monthly details for the Year view tooltip (#139)", () => {
+  type Month = { month: string; spentCents: number; targetCents: number | null; transactions: number; period?: { carryInCents: number; availableCents: number; rollover: boolean } | null };
+  const grid = async (on: string) =>
+    (await run("budgets.monthly", { on, months: 12, includeEnded: true, details: true })).output as { categoryId: string | null; months: Month[] }[];
+
+  it("counts March's three Dining purchases, $312.50 against $400, and gives a rollover month its carry-in", async () => {
+    const [{ id: cardId }] = await db.select().from(accounts).where(eq(accounts.type, "credit"));
+    await db.update(transactions).set({ categoryId: null }).where(eq(transactions.categoryId, cat.Dining));
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, rollover: true, today: "2026-03-05" });
+    for (const [day, cents, id] of [["2026-03-03", -10_000, "m1"], ["2026-03-12", -11_250, "m2"], ["2026-03-20", -10_000, "m3"], ["2026-04-02", -5_000, "a1"]] as const) {
+      await db.insert(transactions).values({ accountId: cardId, postedOn: day, amountCents: cents, description: `MADE-UP ${id}`, externalId: id, categoryId: cat.Dining });
+    }
+    const dining = (await grid("2026-04-30")).find((r) => r.categoryId === cat.Dining)!.months;
+    const march = dining.find((m) => m.month === "2026-03-01")!;
+    expect(march).toMatchObject({ spentCents: 31_250, targetCents: 40_000, transactions: 3 });
+    expect(march.targetCents! - march.spentCents).toBe(8_750);
+    // April rolls March's $87.50 in: $487.50 available, as its card says.
+    const april = dining.find((m) => m.month === "2026-04-01")!;
+    expect(april.period).toMatchObject({ rollover: true, carryInCents: 8_750, availableCents: 48_750 });
+    expect(target(await status("2026-04-30"), cat.Dining)).toMatchObject({ carryInCents: 8_750, availableCents: 48_750 });
+  });
+});
