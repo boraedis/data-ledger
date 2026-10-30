@@ -639,6 +639,10 @@ export const payStubs = pgTable(
     grossCents: bigint("gross_cents", { mode: "number" }).notNull(),
     // Gross minus every line, exactly: checked on save.
     netCents: bigint("net_cents", { mode: "number" }).notNull(),
+    // A one-off payment, like a bonus (#113): it counts in full toward the
+    // year to date, but the tax estimate leaves it out of the recent pace
+    // it projects the remaining paychecks from.
+    oneTime: boolean("one_time").notNull().default(false),
     // The deposits of the net pay are in pay_stub_deposits: one, or
     // several when pay is split across accounts (#91).
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

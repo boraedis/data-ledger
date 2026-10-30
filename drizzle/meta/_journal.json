@@ -218,6 +218,13 @@
       "when": 1793370829743,
       "tag": "0030_manual_transactions",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1793387430028,
+      "tag": "0031_one_time_pay_stubs",
+      "breakpoints": true
     }
   ]
 }

@@ -54,6 +54,32 @@ describe("estimateYear", () => {
     ]);
   });
 
+  it("counts a one-time stub in the year to date but not in the pace or the paychecks to come (#113)", () => {
+    // A made-up $10,000 bonus paid between two regular paychecks, $2,200 federal withheld.
+    const bonus: EstimateStub = {
+      ...stub("2026-10-02", 1_000_000),
+      lines: [{ kind: "federal_income_tax", amountCents: 220_000 }],
+      oneTime: true,
+    };
+    const without = estimateYear(2026, stubs)!;
+    const withBonus = estimateYear(2026, [...stubs, bonus])!;
+    expect(withBonus).toMatchObject({ stubCount: 21, oneTimeCount: 1, cadenceDays: 14, remainingPaychecks: 6, lastPayDate: without.lastPayDate });
+    // Year to date includes it in full; the projection adds exactly it on top.
+    expect(withBonus.gross.ytdCents).toBe(without.gross.ytdCents + 1_000_000);
+    expect(withBonus.gross.projectedCents - withBonus.gross.ytdCents).toBe(without.gross.projectedCents - without.gross.ytdCents);
+    const federal = (e: typeof without) => e.taxes.find((t) => t.kind === "federal_income_tax")!;
+    expect(federal(withBonus).ytdCents).toBe(federal(without).ytdCents + 220_000);
+    expect(federal(withBonus).projectedCents).toBe(federal(without).projectedCents + 220_000);
+
+    // Unflagged, the same bonus drags the pace and the cadence along with it.
+    const unflagged = estimateYear(2026, [...stubs, { ...bonus, oneTime: false }])!;
+    expect(unflagged.gross.projectedCents).not.toBe(withBonus.gross.projectedCents);
+
+    // Only a bonus so far: counted, nothing projected.
+    const alone = estimateYear(2026, [bonus])!;
+    expect(alone).toMatchObject({ remainingPaychecks: 0, gross: { ytdCents: 1_000_000, projectedCents: 1_000_000 } });
+  });
+
   it("estimates the federal balance from wages less pre-tax deductions and the standard deduction", () => {
     const e = estimateYear(2026, stubs)!;
     // 104,000 - 2,600 health - 5,200 401(k) = 96,200 wages; less 16,100.
