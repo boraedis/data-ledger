@@ -457,3 +457,38 @@ describe("budgets.targetTransactions (#135)", () => {
     expect((await lines(cat.Dining, "2026-05-31", true))!.totalCents).toBe(12_000);
   });
 });
+
+describe("budgets.backdatePreview (#137)", () => {
+  type Preview = { months: { month: string; before: { targetCents: number } | null; after: { targetCents: number } | null }[]; until: string | null };
+  const preview = async (input: Record<string, unknown>) => (await run("budgets.backdatePreview", { today: "2026-06-15", ...input })).output as Preview;
+
+  it("lists March to May changing from no target to $400, leaves out June's $350, and writes nothing", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 35_000, today: "2026-06-10" });
+    const p = await preview({ categoryId: cat.Dining, fromMonth: "2026-03", amountCents: 40_000 });
+    expect(p.months).toEqual([
+      { month: "2026-03", before: null, after: expect.objectContaining({ targetCents: 40_000 }) },
+      { month: "2026-04", before: null, after: expect.objectContaining({ targetCents: 40_000 }) },
+      { month: "2026-05", before: null, after: expect.objectContaining({ targetCents: 40_000 }) },
+    ]);
+    expect(p.until).toBe("2026-06-01");
+    expect(await db.select().from(budgetTargets).where(eq(budgetTargets.effectiveFrom, "2026-03-01"))).toEqual([]);
+  });
+
+  it("matches what the page shows for those months once saved", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 35_000, today: "2026-06-10" });
+    const input = { categoryId: cat.Dining, fromMonth: "2026-02", amountCents: 120_000, periodMonths: 3, anchorMonth: "2026-02" };
+    const p = await preview(input);
+    await run("budgets.backdateTarget", { today: "2026-06-15", ...input });
+    for (const m of p.months) {
+      const t = target(await status(lastOfMonth(monthIndex(`${m.month}-01`))), cat.Dining);
+      expect(t.targetCents).toBe(m.after!.targetCents);
+    }
+    // A quarter from February, cut short by June's version: February to April, then May alone.
+    expect(p.months.map((m) => m.after!.targetCents)).toEqual([120_000, 120_000, 120_000, 40_000]);
+  });
+
+  it("refuses what the save would refuse", async () => {
+    await expect(preview({ categoryId: cat.Coffee, fromMonth: "2026-06", amountCents: 1_000 })).rejects.toThrow(/this month or later/);
+    await expect(preview({ categoryId: cat.Coffee, fromMonth: "2015-01", amountCents: 1_000 })).rejects.toThrow(/earliest a target can start/);
+  });
+});

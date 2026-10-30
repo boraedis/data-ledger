@@ -3,9 +3,9 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { historyLabel, suggestedTargetCents, type HistorySummary } from "@/lib/budgets/format";
+import { historyLabel, scheduleLabel, suggestedTargetCents, type HistorySummary } from "@/lib/budgets/format";
 import { formatCents, parseAmountCents } from "@/lib/money";
-import { backdateTarget, rebalance, removeTarget, setTarget } from "./actions";
+import { backdateTarget, previewBackdate, rebalance, removeTarget, setTarget, type BackdateMonth } from "./actions";
 
 // The budget forms. Amounts are typed as dollars and become integer cents
 // here; everything else is validated by the operations.
@@ -106,6 +106,12 @@ export function TargetForm({
     setError(null);
   };
   const backdating = Boolean(backdate && fromMonth && fromMonth < backdate.currentMonth);
+  // A backdate is saved only after its months are shown (#137). The preview
+  // belongs to the exact inputs it was made for; changing any of them
+  // drops it, so what's confirmed is what was shown.
+  const [confirming, setConfirming] = useState<{ key: string; months: BackdateMonth[]; until: string | null } | null>(null);
+  const inputKey = JSON.stringify([selected, shown, periodMonths, anchorMonth, rollover, sinkingFund, fromMonth]);
+  const preview = confirming && confirming.key === inputKey ? confirming : null;
   const usingBill =
     bill !== undefined && periodMonths === 12 && sinkingFund && anchorMonth === bill.anchorMonth && toCents(shown) === bill.amountCents;
 
@@ -115,9 +121,16 @@ export function TargetForm({
     if (amountCents === null) return setError("Enter an amount like 400 or 1,250.00");
     startTransition(async () => {
       const input = { categoryId, amountCents, periodMonths, anchorMonth: periodMonths > 1 && anchorMonth ? anchorMonth : undefined, rollover, sinkingFund: sinkingFund && periodMonths > 1 };
+      if (backdating && !preview) {
+        const p = await previewBackdate({ ...input, fromMonth });
+        if ("error" in p) return setError(p.error);
+        setError(null);
+        return setConfirming({ key: inputKey, ...p });
+      }
       const result = backdating ? await backdateTarget({ ...input, fromMonth }, name) : await setTarget(input, name);
       if (result?.error) return setError(result.error);
       setError(null);
+      setConfirming(null);
       // A fresh form after adding: settings carried over from the last
       // target are how one gets rollover it never asked for.
       if (!initial) {
@@ -255,11 +268,17 @@ export function TargetForm({
           With rollover, what&apos;s left or overspent in these earlier months carries forward, so what later months have available will change.
         </p>
       ) : null}
+      {preview ? <BackdateWarning months={preview.months} until={preview.until} /> : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" size="sm" disabled={pending}>
-          {initial ? "Save" : "Add target"}
+          {preview ? `Confirm: change ${preview.months.length} month${preview.months.length === 1 ? "" : "s"}` : backdating ? "Review the months" : initial ? "Save" : "Add target"}
         </Button>
+        {preview ? (
+          <Button type="button" size="sm" variant="ghost" disabled={pending} onClick={() => setConfirming(null)}>
+            Back to editing
+          </Button>
+        ) : null}
         {initial ? (
           <Button
             type="button"
@@ -338,5 +357,34 @@ export function RebalanceForm({ targets }: { targets: TargetChoice[] }) {
       </Button>
       {error ? <p className="w-full text-xs text-destructive">{error}</p> : null}
     </form>
+  );
+}
+
+const monthName = (month: string) =>
+  new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+const targetText = (t: { targetCents: number; periodMonths: number } | null) =>
+  t === null ? "no target" : `${formatCents(t.targetCents)}${t.periodMonths === 1 ? "" : ` (${scheduleLabel(t.periodMonths)})`}`;
+
+// Every month a backdate changes, before and after (#137), shown on every
+// backdated save, rollover or not. Nothing is written until it's confirmed.
+function BackdateWarning({ months, until }: { months: BackdateMonth[]; until: string | null }) {
+  return (
+    <div role="alert" className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs">
+      <p className="font-medium text-warning">
+        This changes the budget for {months.length} month{months.length === 1 ? "" : "s"}
+        {until ? `, up to ${monthName(until.slice(0, 7))}, which keeps its own target` : ""}:
+      </p>
+      <ul className="divide-y divide-warning/20 text-foreground">
+        {months.map((m) => (
+          <li key={m.month} className="flex flex-wrap justify-between gap-x-3 py-0.5 tabular-nums">
+            <span>{monthName(m.month)}</span>
+            <span>
+              <span className="text-muted-foreground">{targetText(m.before)}</span> → {targetText(m.after)}
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-muted-foreground">Nothing is saved until you confirm. Each change can be undone in Activity.</p>
+    </div>
   );
 }
