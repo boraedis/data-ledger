@@ -9,7 +9,23 @@
 // each other. Each side pairs with its closest-dated candidate; if two
 // candidates are equally close, it's ambiguous and neither is paired.
 
+import type { AccountKind } from "@/lib/account-kinds";
+import { CASH_KINDS, DEBT_KINDS, INVESTMENT_KINDS } from "@/lib/investments/activity";
+
 export const TRANSFER_WINDOW_DAYS = 5;
+
+/**
+ * The matcher's passes, in order: what one pass pairs is gone before the
+ * next. One-way passes pair money out of `from` with money into `to`.
+ * Shared by the nightly pass, the pass for one transaction the owner just
+ * filed (#103), and the misfiled-transfer check (#102), which must look for
+ * exactly the pairs the matcher would make.
+ */
+export const TRANSFER_PASSES: { from: readonly AccountKind[]; to: readonly AccountKind[]; what: string; outOnly: boolean }[] = [
+  { from: CASH_KINDS, to: INVESTMENT_KINDS, what: "between cash and investment accounts", outOnly: false },
+  { from: CASH_KINDS, to: DEBT_KINDS, what: "paying a card or loan", outOnly: true },
+  { from: CASH_KINDS, to: CASH_KINDS, what: "between cash accounts", outOnly: true },
+];
 
 export type TransferCandidate = { id: string; accountId: string; amountCents: number; postedOn: string };
 

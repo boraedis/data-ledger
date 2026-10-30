@@ -93,11 +93,15 @@ never overwrites a category that's already set:
    undoable command per run). A paired transaction needs no category: it
    leaves the inbox and never counts as spending or income. Only
    unambiguous pairs — on a tie for closest date, neither is paired — and
-   never a cash side the owner already categorized. "Not a transfer" on the
-   transaction page unpairs both sides and the matcher leaves them alone.
-   Cash↔investment only for now: between two everyday accounts (say, a
-   $20 card charge and a $20 payment-app receipt) a coincidental match is
-   too likely.
+   never a side the owner already filed under a spending or income
+   category. "Not a transfer" on the transaction page unpairs both sides
+   and the matcher leaves them alone. Three passes, in order: cash↔
+   investment, cash out → card or loan (a payment), cash out → cash in.
+   A pair the matcher would have made but for a spending or income category
+   on one side (a card payment a rule filed as Shopping counts twice) is
+   flagged on Cash flow and Spending (#102, `transactions.misfiledTransfers`),
+   to settle as a transfer (both lose their category and are paired) or as
+   not one.
 1. **Rules** — the owner's own, in priority order: merchant or description
    equals / contains / starts with a pattern, optionally limited to one
    account or an amount range. No regex (a user pattern run over every

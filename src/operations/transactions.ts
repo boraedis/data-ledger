@@ -17,6 +17,7 @@ import {
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { merchantMemory } from "@/lib/categorize/match";
 import { isInvestmentKind, investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
+import { TRANSFER_PASSES, findTransferPairs } from "@/lib/investments/transfers";
 import { expandDeposit } from "@/lib/pay/stubs";
 import { distribute } from "@/lib/reimbursements/match";
 import type { Db } from "@/db/types";
@@ -780,6 +781,136 @@ export const matchTransfers = defineWrite({
       matched++;
     }
     return { matched };
+  },
+});
+
+// --- Transfers filed as spending or income (#102) ---------------------------
+//
+// The matcher only pairs what's uncategorized or filed as a transfer: the
+// owner's filing wins. So a card payment a rule filed as Shopping is never
+// paired, and counts twice (the payment, and the purchases it pays for).
+// This finds the pairs the matcher would have made if categories were
+// ignored, for the owner to settle one way or the other. Nothing changes
+// on its own: a coincidence (a $42.10 dinner and a $42.10 card refund the
+// same week) looks exactly like a transfer.
+
+export const misfiledTransfers = defineRead({
+  name: "transactions.misfiledTransfers",
+  description:
+    "Pairs of transactions that look like a transfer between the owner's own accounts (exactly opposite amounts, " +
+    "within 5 days, the only such match for each other) but where at least one side is filed under a spending or " +
+    "income category, so it counts as spending or income. from/to (inclusive) keep pairs with either side dated in " +
+    "range. Each pair: the side money left (out) and the side it arrived (in).",
+  input: z.object({ from: z.iso.date().optional(), to: z.iso.date().optional() }),
+  run: async (db, { from, to }) => {
+    const rows = await db
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        accountName: accounts.name,
+        accountType: accounts.type,
+        amountCents: transactions.amountCents,
+        postedOn: transactions.postedOn,
+        description: transactions.description,
+        categoryId: transactions.categoryId,
+        categoryName: categories.name,
+        categoryKind: categories.kind,
+      })
+      .from(transactions)
+      .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .leftJoin(categories, eq(categories.id, transactions.categoryId))
+      .where(
+        and(
+          eq(transactions.pending, false),
+          isNull(transactions.provisionalSource),
+          isNull(transactions.transferPairId),
+          eq(transactions.transferRejected, false),
+          eq(transactions.isSplit, false),
+        ),
+      );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const misfiled = (r: (typeof rows)[number]) => r.categoryId !== null && r.categoryKind !== "transfer";
+    const side = (r: (typeof rows)[number]) => ({
+      transactionId: r.id,
+      postedOn: r.postedOn,
+      accountId: r.accountId,
+      accountName: r.accountName,
+      description: r.description,
+      amountCents: r.amountCents,
+      categoryName: r.categoryName,
+    });
+    const inRange = (on: string) => (!from || on >= from) && (!to || on <= to);
+
+    // The matcher's passes, in its order, each over what earlier ones left.
+    const taken = new Set<string>();
+    const found: { out: ReturnType<typeof side>; in: ReturnType<typeof side> }[] = [];
+    for (const pass of TRANSFER_PASSES) {
+      const open = rows.filter((r) => !taken.has(r.id));
+      const a = open.filter((r) => pass.from.includes(r.accountType));
+      const b = open.filter((r) => pass.to.includes(r.accountType));
+      const sources = pass.outOnly ? a.filter((r) => r.amountCents < 0) : a;
+      const targets = pass.outOnly ? b.filter((r) => r.amountCents > 0) : b;
+      for (const { cashId, investmentId } of findTransferPairs(sources, targets)) {
+        taken.add(cashId).add(investmentId);
+        const [x, y] = [byId.get(cashId)!, byId.get(investmentId)!];
+        // Both uncategorized or transfers: the matcher's own job, not a misfiling.
+        if (!misfiled(x) && !misfiled(y)) continue;
+        if (!inRange(x.postedOn) && !inRange(y.postedOn)) continue;
+        const [o, i] = x.amountCents < 0 ? [x, y] : [y, x];
+        found.push({ out: side(o), in: side(i) });
+      }
+    }
+    return found.sort((p, q) => q.out.postedOn.localeCompare(p.out.postedOn));
+  },
+});
+
+export const pairAsTransfer = defineWrite({
+  name: "transactions.pairAsTransfer",
+  description:
+    "Settle a pair from misfiledTransfers as a transfer: both sides lose their category and are paired, so " +
+    "neither counts as spending or income. Undone as one.",
+  input: z.object({ outId: z.uuid(), inId: z.uuid() }),
+  apply: async (ctx, { outId, inId }) => {
+    const rows = await ctx.db
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        amountCents: transactions.amountCents,
+        pending: transactions.pending,
+        provisionalSource: transactions.provisionalSource,
+        transferPairId: transactions.transferPairId,
+        isSplit: transactions.isSplit,
+      })
+      .from(transactions)
+      .where(inArray(transactions.id, [outId, inId]));
+    const a = rows.find((r) => r.id === outId);
+    const b = rows.find((r) => r.id === inId);
+    if (!a || !b) throw new NotFoundError("Transaction not found");
+    if (a.accountId === b.accountId) throw new Error("Both sides of a transfer can't be in the same account");
+    if (a.amountCents >= 0 || a.amountCents !== -b.amountCents) throw new Error("A transfer's two sides must have exactly opposite amounts");
+    if (a.pending || b.pending || a.provisionalSource || b.provisionalSource) throw new Error("Only posted transactions can be paired");
+    // A split's parts carry the categories; pairing it would leave them counting.
+    if (a.isSplit || b.isSplit) throw new Error("A split transaction can't be paired; remove the split first");
+    if (a.transferPairId || b.transferPairId) throw new Error("Already paired as a transfer");
+    // Uncategorized, as the matcher leaves its pairs: a paired row with a
+    // category would still count wherever categories are summed.
+    await ctx.update(transactions, a.id, { categoryId: null, transferPairId: b.id, transferRejected: false });
+    await ctx.update(transactions, b.id, { categoryId: null, transferPairId: a.id, transferRejected: false });
+    return { paired: [a.id, b.id] };
+  },
+});
+
+export const dismissTransfer = defineWrite({
+  name: "transactions.dismissTransfer",
+  description:
+    "Settle a pair from misfiledTransfers as not a transfer: both keep their categories, aren't flagged again, " +
+    "and the matcher won't pair either.",
+  input: z.object({ transactionIds: z.array(z.uuid()).length(2) }),
+  apply: async (ctx, { transactionIds }) => {
+    const rows = await ctx.db.select({ id: transactions.id }).from(transactions).where(inArray(transactions.id, transactionIds));
+    if (rows.length !== 2) throw new NotFoundError("Transaction not found");
+    for (const { id } of rows) await ctx.update(transactions, id, { transferRejected: true });
+    return { dismissed: rows.length };
   },
 });
 

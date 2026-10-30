@@ -5,6 +5,9 @@ import { buildFlowGraph, type FlowGraph } from "@/lib/cashflow/graph";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { parsePeriod, type PeriodParams } from "@/lib/spending/analyze";
+import { read } from "@/operations/runtime";
+import { misfiledTransfers } from "@/operations/transactions";
+import { MisfiledTransfers } from "./misfiled-transfers";
 import { Sankey } from "./sankey";
 
 // Cash flow (#62): a month or a year as a Sankey in five levels: where the
@@ -45,7 +48,11 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const gross = one(sp.gross) === "1";
   const percent = one(sp.show) === "percent";
 
-  const { paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut, unmatched } = await cashFlowInputs(getDb(), { from: period.from, to: period.to, gross });
+  const db = getDb();
+  const [{ paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut, unmatched }, misfiled] = await Promise.all([
+    cashFlowInputs(db, { from: period.from, to: period.to, gross }),
+    read(db, misfiledTransfers, { from: period.from, to: period.to }),
+  ]);
   const graph = buildFlowGraph({ paychecks, lines, uncategorized, transfers, accounts, by, lookup });
   const t = totals(graph);
   // Percent mode's 100%: all the money in for the period, income and what
@@ -172,6 +179,8 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
           </Link>
         </p>
       ) : null}
+
+      <MisfiledTransfers pairs={misfiled} />
 
       {unmatched.length ? (
         // A transfer with no other half is either money that left for an

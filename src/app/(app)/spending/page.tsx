@@ -16,7 +16,8 @@ import {
 import { listAccounts } from "@/operations/accounts";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
-import { spendingLines, uncategorizedSpend } from "@/operations/transactions";
+import { misfiledTransfers, spendingLines, uncategorizedSpend } from "@/operations/transactions";
+import { MisfiledTransfers } from "../cash-flow/misfiled-transfers";
 
 // Spending (#66): where the money went over a period, by category, merchant
 // or account, each against the period before. The lines are
@@ -63,12 +64,13 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
   const open = new Set((one(sp.open) ?? "").split(",").filter(Boolean));
 
   const db = getDb();
-  const [lines, prevLines, cats, accts, uncategorized] = await Promise.all([
+  const [lines, prevLines, cats, accts, uncategorized, misfiled] = await Promise.all([
     read(db, spendingLines, { from: period.from, to: period.to, budgetOnly: true, gross }),
     read(db, spendingLines, { from: period.prev.from, to: period.prev.to, budgetOnly: true, gross }),
     read(db, listCategories, {}),
     read(db, listAccounts, {}),
     read(db, uncategorizedSpend, { from: period.from, to: period.to }),
+    read(db, misfiledTransfers, { from: period.from, to: period.to }),
   ]);
   const lookup: Lookup = {
     categories: new Map(cats.map((c) => [c.id, c])),
@@ -252,6 +254,7 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
             </Link>
           </p>
         ) : null}
+        <MisfiledTransfers pairs={misfiled} />
       </section>
 
       {rows.length === 0 ? (

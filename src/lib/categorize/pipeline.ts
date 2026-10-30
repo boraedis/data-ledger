@@ -12,8 +12,8 @@ import { categoryOptions } from "@/lib/categorize/labels";
 import { firstMatchingRule, merchantMemory, type RuleLike } from "@/lib/categorize/match";
 import { chat, modelIsConfigured } from "@/lib/model/client";
 import type { AccountKind } from "@/lib/account-kinds";
-import { CASH_KINDS, DEBT_KINDS, INVESTMENT_KINDS, } from "@/lib/investments/activity";
-import { findTransferPairs, TRANSFER_WINDOW_DAYS } from "@/lib/investments/transfers";
+import { CASH_KINDS, DEBT_KINDS, INVESTMENT_KINDS } from "@/lib/investments/activity";
+import { TRANSFER_PASSES, TRANSFER_WINDOW_DAYS, findTransferPairs } from "@/lib/investments/transfers";
 import { findMatches } from "@/lib/provisional/match";
 import { openDeposits } from "@/operations/pay";
 import { execute } from "@/operations/runtime";
@@ -198,14 +198,6 @@ export async function linkPayStubsStep(db: Db): Promise<number> {
  * transfer category: if the owner filed it as spending or income, that
  * stands. Each side pairs only with its single closest match.
  */
-// One pass per pair of account kinds. Shared by the nightly pass and by the
-// pass for the one transaction the owner just filed.
-const TRANSFER_PASSES: { from: readonly AccountKind[]; to: readonly AccountKind[]; what: string; outOnly: boolean }[] = [
-  { from: CASH_KINDS, to: INVESTMENT_KINDS, what: "between cash and investment accounts", outOnly: false },
-  { from: CASH_KINDS, to: DEBT_KINDS, what: "paying a card or loan", outOnly: true },
-  { from: CASH_KINDS, to: CASH_KINDS, what: "between cash accounts", outOnly: true },
-];
-
 const transferSelect = { id: transactions.id, accountId: transactions.accountId, amountCents: transactions.amountCents, postedOn: transactions.postedOn };
 
 // A row can be paired only while it's open: posted, not provisional or
