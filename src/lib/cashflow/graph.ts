@@ -30,8 +30,10 @@ export type FlowLink = { source: string; target: string; valueCents: number; cou
 export type FlowGraph = { nodes: FlowNode[]; links: FlowLink[] };
 
 // How an account's net movement reads: kept in a spending account, saved,
-// invested, or a debt paid down (or, the other way, drawn on).
-export type AccountGroup = "spending" | "savings" | "investment" | "debt";
+// invested, or a loan paid down (or, the other way, drawn on). A credit
+// card is spending money, not debt to pay down: its charges are spending
+// when they happen, and paying it from checking just settles them.
+export type AccountGroup = "spending" | "card" | "savings" | "investment" | "debt";
 export type AccountInfo = { name: string; group: AccountGroup };
 
 export type Paycheck = {
@@ -105,14 +107,26 @@ export function buildFlowGraph({ paychecks, lines, uncategorized, transfers, acc
   const bucket = (b: (typeof BUCKET)[keyof typeof BUCKET]) => node(b.id, b.label, b.role, 3);
   const accountName = (id: string) => accounts.get(id)?.name ?? lookup.accountNames.get(id) ?? "Unknown account";
 
-  // Each account's net movement, and the transactions behind it.
+  // Each account's net movement, and the transactions behind it. Checking,
+  // payment apps and credit cards are one pool of spending money: a card
+  // payment from checking moves money inside it and cancels out, so it's
+  // never counted on top of the charges it pays for (already spending, in
+  // the month they were made).
+  const SPENDING_MONEY = "spending-money";
+  const keyOf = (accountId: string) => {
+    const group = accounts.get(accountId)?.group;
+    return group === "spending" || group === "card" ? SPENDING_MONEY : accountId;
+  };
+  const spendingNames = [...accounts.values()].filter((a) => a.group === "spending").map((a) => a.name);
+  const spendingMoney = spendingNames.length === 1 ? spendingNames[0] : "checking";
   const net = new Map<string, { cents: number; ids: Set<string> }>();
   const move = (accountId: string | null, cents: number, id: string) => {
     if (!accountId) return;
-    const n = net.get(accountId) ?? { cents: 0, ids: new Set<string>() };
+    const key = keyOf(accountId);
+    const n = net.get(key) ?? { cents: 0, ids: new Set<string>() };
     n.cents += cents;
     n.ids.add(id);
-    net.set(accountId, n);
+    net.set(key, n);
   };
 
   // 1 → 2: pay, gross, through what comes off it to take-home.
@@ -238,9 +252,9 @@ export function buildFlowGraph({ paychecks, lines, uncategorized, transfers, acc
 
   // Each account's net: an allocation when it grew, a source when drawn on.
   for (const [accountId, n] of net) {
-    const info = accounts.get(accountId);
+    const info = accountId === SPENDING_MONEY ? ({ name: spendingMoney, group: "spending" } as const) : accounts.get(accountId);
     if (!info || n.cents === 0) continue;
-    const name = accountName(accountId);
+    const name = accountId === SPENDING_MONEY ? spendingMoney : accountName(accountId);
     if (n.cents > 0) {
       const [b, label] =
         info.group === "investment"
@@ -253,8 +267,8 @@ export function buildFlowGraph({ paychecks, lines, uncategorized, transfers, acc
       flow(pool(), bucket(b), n.cents, n.ids);
       flow(bucket(b), node(`account:${accountId}`, label, b.role, 4), n.cents, n.ids);
     } else {
-      const label =
-        info.group === "debt" ? `Put on ${name}` : info.group === "spending" ? `From ${name} (cash on hand)` : `From ${name}`;
+      // Spending money that ran down: cash on hand, or charges not yet paid.
+      const label = info.group === "spending" ? `From ${name} (cash on hand)` : `From ${name}`;
       flow(node(`draw:${accountId}`, label, "draw", 1), pool(), -n.cents, n.ids);
     }
   }

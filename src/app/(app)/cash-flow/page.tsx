@@ -31,7 +31,8 @@ function totals(graph: FlowGraph) {
     spent: sum((l) => l.target === "bucket:spending"),
     invested: sum((l) => l.target === "bucket:investing"),
     saved: sum((l) => l.target === "bucket:savings"),
-    debt: sum((l) => l.target === "bucket:debt" || l.target === "bucket:other"),
+    debt: sum((l) => l.target === "bucket:debt"),
+    other: sum((l) => l.target === "bucket:other"),
   };
 }
 
@@ -44,7 +45,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const gross = one(sp.gross) === "1";
   const percent = one(sp.show) === "percent";
 
-  const { paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut } = await cashFlowInputs(getDb(), { from: period.from, to: period.to, gross });
+  const { paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut, unmatched } = await cashFlowInputs(getDb(), { from: period.from, to: period.to, gross });
   const graph = buildFlowGraph({ paychecks, lines, uncategorized, transfers, accounts, by, lookup });
   const t = totals(graph);
   // Percent mode's 100%: all the money in for the period, income and what
@@ -123,6 +124,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
           ["Invested", t.invested, "var(--flow-saved)"],
           ["Cash saved", t.saved, "var(--flow-saved)"],
           ["Debt paid down", t.debt, "var(--muted-foreground)"],
+          ["Other transfers out", t.other, "var(--muted-foreground)"],
         ].map(([name, cents, color]) =>
           cents || name === "Income" || name === "Spent" ? (
             <div key={name as string} className="rounded-lg border p-3">
@@ -140,9 +142,10 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
       </dl>
 
       <p className="text-sm text-muted-foreground">
-        Left to right: where the money came from (including what you drew on: savings, cards, cash on hand); take-home and what came off your pay
-        first; where it went; and the breakdown. Spending is net, the same as Budgets, and charged to a card counts when charged. Moving money
-        between your accounts is never income or spending: it shows as saved, invested, paid down or drawn on, net for the period. Only paychecks
+        Left to right: where the money came from (including what you drew on: savings, investments, cash on hand); take-home and what came off
+        your pay first; where it went; and the breakdown. Spending is net, the same as Budgets. A card charge is spending when it&apos;s made,
+        and paying the card off is never counted again. Moving money between your accounts is never income or spending: it shows as saved,
+        invested, paid down or drawn on, net for the period. Only paychecks
         with a linked pay stub show their taxes and deductions; others count as the deposit.{" "}
         {gross ? (
           <>
@@ -168,6 +171,33 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
             File them in Inbox
           </Link>
         </p>
+      ) : null}
+
+      {unmatched.length ? (
+        // A transfer with no other half is either money that left for an
+        // account that isn't connected (fine), or something filed as a
+        // transfer that wasn't one (it then hides spending or income).
+        <details className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
+          <summary className="cursor-pointer">
+            {unmatched.length} transfer{unmatched.length === 1 ? " is" : "s are"} missing {unmatched.length === 1 ? "its" : "their"} other half
+          </summary>
+          <p className="mt-1 text-xs">
+            Filed as a transfer, but no matching amount arrived in (or left) another of your accounts within 5 days. Usually the other account
+            isn&apos;t connected, which is fine. If it wasn&apos;t a transfer, file it as spending or income, or it&apos;s left out of both.
+          </p>
+          <ul className="mt-2 divide-y divide-warning/30 text-foreground">
+            {unmatched.map((u) => (
+              <li key={u.transactionId}>
+                <Link href={`/transactions/${u.transactionId}`} className="flex justify-between gap-3 py-1.5 hover:underline">
+                  <span className="min-w-0 truncate">
+                    {u.postedOn} · {u.accountName} · {u.label}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{formatCents(u.amountCents)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
 
       {graph.links.length === 0 ? (

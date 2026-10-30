@@ -5,6 +5,7 @@ import type { Db } from "@/db/types";
 import { backfillMerchantsIfNeeded, runCategorization } from "@/lib/categorize/pipeline";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
+import { listRecurring } from "@/operations/recurring";
 import { listInbox } from "@/operations/transactions";
 import { execute, read, undoCommand } from "@/operations/runtime";
 
@@ -33,9 +34,38 @@ describe("runCategorization", () => {
     const result = await runCategorization(db);
     expect(result.byRules).toBe(0);
     expect(result.remaining).toBeGreaterThan(200);
-    // The only write is the transfer matcher pairing the seed's brokerage
-    // contributions (#24); nothing was categorized.
-    expect((await db.select().from(commandLog)).map((c) => c.actor)).toEqual(["matcher"]);
+    // The only writes are the transfer matcher pairing the seed's moves
+    // between its own accounts, one command per kind; nothing was categorized.
+    expect((await db.select().from(commandLog)).map((c) => [c.actor, c.reason])).toEqual([
+      ["matcher", "Matched 6 transfers between cash and investment accounts"],
+      ["matcher", "Matched 6 transfers paying a card or loan"],
+      ["matcher", "Matched 12 transfers between cash accounts"],
+    ]);
+  });
+
+  it("pairs a card payment with its credit on the card, so it's never spending, income or a subscription", async () => {
+    await runCategorization(db);
+    const payments = await db.select().from(transactions).where(eq(transactions.description, "PLACEHOLDER CARD CO PAYMENT"));
+    expect(payments.length).toBeGreaterThan(0);
+    for (const p of payments) {
+      expect(p.transferPairId).not.toBeNull();
+      const [credit] = await db.select().from(transactions).where(eq(transactions.id, p.transferPairId!));
+      expect(credit).toMatchObject({ description: "PAYMENT THANK YOU", amountCents: -p.amountCents });
+    }
+    const inbox = await read(db, listInbox, { limit: 500 });
+    expect(inbox.some((r) => payments.some((p) => p.id === r.id) || r.description === "PAYMENT THANK YOU")).toBe(false);
+    const recurring = await read(db, listRecurring, { on: "2026-06-30" });
+    expect(recurring.some((r) => /Card Co Payment/.test(r.merchant))).toBe(false);
+  });
+
+  it("also pairs a card payment already filed under a transfer category, but not one filed as spending", async () => {
+    const [payment] = await db.select().from(transactions).where(eq(transactions.description, "PLACEHOLDER CARD CO PAYMENT")).limit(1);
+    const [other] = (await db.select().from(transactions).where(eq(transactions.description, "PLACEHOLDER CARD CO PAYMENT"))).slice(1);
+    await user("transactions.setCategory", { transactionId: payment.id, categoryId: cat.Transfers });
+    await user("transactions.setCategory", { transactionId: other.id, categoryId: cat.Dining });
+    await runCategorization(db);
+    expect((await db.select().from(transactions).where(eq(transactions.id, payment.id)))[0].transferPairId).not.toBeNull();
+    expect((await db.select().from(transactions).where(eq(transactions.id, other.id)))[0].transferPairId).toBeNull();
   });
 
   it("applies rules as one logged, undoable command per rule", async () => {
