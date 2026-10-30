@@ -120,17 +120,29 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                       <span className="rounded bg-secondary px-1.5">Split</span>
                     ) : t.categoryId ? (
                       <span className="rounded bg-secondary px-1.5">{labelOf.get(t.categoryId)}</span>
-                    ) : t.reimbursedCents >= t.amountCents && t.amountCents > 0 ? null : t.transfer ? (
-                      <span className="rounded border border-dashed px-1.5 text-muted-foreground">
-                        Transfer {t.amountCents > 0 ? "from" : "to"} {accountName.get(t.transfer.accountId)}
-                      </span>
-                    ) : t.investmentActivity ? (
+                    ) : t.reimbursedCents >= t.amountCents && t.amountCents > 0 ? null : t.transfer ? null : t.investmentActivity ? (
                       // Investment accounts are out of budgets: an
                       // uncategorized trade isn't waiting on anything.
                       <span className="rounded bg-secondary px-1.5">{ACTIVITY_LABELS[t.investmentActivity]}</span>
                     ) : (
                       <span className="rounded bg-warning/15 px-1.5 text-warning">Uncategorized</span>
                     )}
+                    {/* What it's connected to, so nothing reads as counted twice:
+                        the other side of a transfer, a paycheck's pay stub. */}
+                    {t.transfer ? (
+                      <span className="rounded border border-dashed px-1.5 text-muted-foreground">
+                        ↔ Transfer {t.amountCents > 0 ? "from" : "to"} {accountName.get(t.transfer.accountId)}
+                      </span>
+                    ) : t.transferUnmatched ? (
+                      <span className="rounded bg-warning/15 px-1.5 text-warning">Transfer, other half not found</span>
+                    ) : null}
+                    {t.payStub ? (
+                      <span className="rounded border border-dashed px-1.5 text-muted-foreground">
+                        Pay stub {t.payStub.payDate} · {t.payStub.employer}
+                      </span>
+                    ) : t.paycheckWithoutStub ? (
+                      <span className="rounded bg-warning/15 px-1.5 text-warning">No pay stub</span>
+                    ) : null}
                     {t.sharedOwedCents ? (
                       <span className="rounded border px-1.5 text-muted-foreground">
                         Shared · your share {formatCents(-t.amountCents - t.sharedOwedCents)}
