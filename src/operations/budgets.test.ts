@@ -260,3 +260,27 @@ describe("budgets.yearlyCharges (#109)", () => {
     expect(await yearly()).toEqual([]);
   });
 });
+
+describe("what the buffer covers (#110)", () => {
+  type Covers = { unbudgeted: { start: string; end: string; covers: { categoryId: string; name: string; spentCents: number }[] } };
+
+  it("lists every category without a target of its own or its parent's, $0 included, adding up to the buffer's spend", async () => {
+    // A made-up subcategory under Groceries, to show a parent's target covers it.
+    const [bulk] = await db.insert(categories).values({ name: "Bulk Store", parentId: cat.Groceries, kind: "expense" }).returning();
+    await run("budgets.setTarget", { categoryId: null, amountCents: 100_000, today: "2026-06-01" });
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-06-01" });
+
+    const s = (await run("budgets.status", { on: "2026-06-30" })).output as Status & Covers;
+    const covers = s.unbudgeted.covers;
+    const ids = covers.map((c) => c.categoryId);
+    expect(ids).not.toContain(cat.Groceries);
+    expect(ids).not.toContain(bulk.id);
+    expect(ids).toContain(cat.Coffee);
+    // Car has nothing this month and is still listed.
+    expect(covers.find((c) => c.categoryId === cat.Car)).toMatchObject({ spentCents: 0 });
+    // Income and transfers aren't the buffer's.
+    expect(ids).not.toContain(cat.Paycheck);
+    expect(covers.reduce((sum, c) => sum + c.spentCents, 0)).toBe(target(s, null).spentCents);
+    expect(target(s, null).spentCents).toBeGreaterThan(0);
+  });
+});

@@ -130,16 +130,19 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
               bars={series.get(t.categoryId ?? "") ?? []}
               viewedMonth={`${month}-01`}
               partialMonth={isCurrent ? `${month}-01` : null}
+              covers={t.categoryId === null ? status.unbudgeted.covers : undefined}
             />
           ))}
         </ul>
       )}
 
-      {status.unbudgeted.byCategory.length ? (
+      {/* With a buffer, its card lists what it covers (#110). */}
+      {!buffer && status.unbudgeted.byCategory.length ? (
         <section className="space-y-2">
-          <h2 className="text-lg font-medium">{buffer ? "Drawn from the buffer" : "Spending without a target"}</h2>
+          <h2 className="text-lg font-medium">Spending without a target</h2>
           <p className="text-xs text-muted-foreground">
-            By category this period. Something that shows up here every month may deserve its own target.
+            By category this month. Something that shows up here every month may deserve its own target; a buffer
+            target (&ldquo;Everything else&rdquo;) would give all of it one shared limit.
           </p>
           <ul className="divide-y rounded-lg border text-sm">
             {status.unbudgeted.byCategory.map((c) => (

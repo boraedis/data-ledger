@@ -64,7 +64,7 @@ export const budgetStatus = defineRead({
     "target, rollover carried in, rebalancing adjustments, available, net spent and remaining, in cents. " +
     "Multi-month targets add an even-pace expected spend and, if a sinking fund, the monthly set-aside. " +
     "The buffer (categoryId null) covers every expense category without its own target; `unbudgeted` " +
-    "lists what drew from it this period by category. Net of shared expenses (your share counts) unless " +
+    "lists what drew from it this period by category, and `covers` every category it covers today, $0 included. Net of shared expenses (your share counts) unless " +
     "gross is true.",
   input: z.object({ on: isoDate.optional(), gross: z.boolean().default(false) }),
   run: async (db, { on = today(), gross }) => {
@@ -91,6 +91,19 @@ export const budgetStatus = defineRead({
       unbudgeted: {
         ...status.unbudgeted,
         byCategory: status.unbudgeted.byCategory.map((c) => ({ ...c, name: nameFor(labelOf, c.categoryId) })),
+        // Every expense category the buffer covers today (no target of its
+        // own or its parent's, as the engine resolves lines), with what it
+        // drew this period, $0 included (#110). Built on byCategory, so it
+        // always adds up to what the buffer counted, even for a category
+        // whose target changed within the period.
+        covers: [
+          ...status.unbudgeted.byCategory,
+          ...rows
+            .filter((r) => r.kind === "expense")
+            .filter((r) => !currentVersion(versions, r.id, on) && !(r.parentId && currentVersion(versions, r.parentId, on)))
+            .filter((r) => !status.unbudgeted.byCategory.some((c) => c.categoryId === r.id))
+            .map((r) => ({ categoryId: r.id, spentCents: 0 })),
+        ].map((c) => ({ ...c, name: nameFor(labelOf, c.categoryId) })),
       },
     };
   },
