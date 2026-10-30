@@ -465,3 +465,62 @@ export function monthlySeries(input: {
   }
   return result;
 }
+
+// --- A calendar year across all targets (#123) -----------------------------------
+
+export type YearTarget = {
+  key: TargetKey;
+  // The year's share of each period's target and spending, summed.
+  targetCents: number;
+  spentCents: number;
+  // Periods that touch the year, whole or in part.
+  periods: number;
+};
+
+/**
+ * Every target's calendar year: the target and net spending of each of its
+ * periods that falls in the year, at the version each period had, so a
+ * target changed mid-year counts each period at its own amount and one that
+ * has ended still counts for the periods it covered. Later periods of the
+ * current year count in full (the year's budget, not just what's elapsed);
+ * their spending is whatever there is so far.
+ *
+ * A period that straddles the year (an annual target starting in April)
+ * contributes the year's months of its target, pro rata, and the spending
+ * dated in the year. The target is the target, not what rollover or
+ * rebalancing made available: rebalancing moves money between targets and
+ * sums to nothing across them anyway. Each line counts toward exactly one
+ * target, so the targets add up without counting anything twice.
+ */
+export function yearSummary(input: { year: number; versions: TargetVersion[]; lines: SpendLine[]; categories: CategoryInfo[] }): YearTarget[] {
+  const yearStart = `${input.year}-01-01`;
+  const yearEnd = `${input.year}-12-31`;
+  const byKey = versionsByKey(input.versions);
+  const categories = new Map(input.categories.map((c) => [c.id, c]));
+  const linesFor = new Map<TargetKey, SpendLine[]>();
+  for (const line of input.lines) {
+    const key = targetKeyFor(line, categories, byKey);
+    if (key !== null) linesFor.set(key, [...(linesFor.get(key) ?? []), line]);
+  }
+
+  const result: YearTarget[] = [];
+  for (const [key, list] of byKey) {
+    const lines = linesFor.get(key) ?? [];
+    const spentIn = (start: string, end: string) => -lines.filter((l) => l.date >= start && l.date <= end).reduce((sum, l) => sum + l.amountCents, 0);
+    let targetCents = 0;
+    let spentCents = 0;
+    let periods = 0;
+    for (const p of periodsFor(list, spentIn, () => 0, yearEnd)) {
+      if (p.end < yearStart || p.start > yearEnd) continue;
+      const months = monthIndex(p.end) - monthIndex(p.start) + 1;
+      const from = p.start < yearStart ? yearStart : p.start;
+      const to = p.end > yearEnd ? yearEnd : p.end;
+      const inYear = monthIndex(to) - monthIndex(from) + 1;
+      targetCents += inYear === months ? p.targetCents : Math.round((p.targetCents * inYear) / months);
+      spentCents += spentIn(from, to);
+      periods++;
+    }
+    if (periods) result.push({ key, targetCents, spentCents, periods });
+  }
+  return result;
+}

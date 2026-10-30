@@ -284,3 +284,42 @@ describe("what the buffer covers (#110)", () => {
     expect(target(s, null).spentCents).toBeGreaterThan(0);
   });
 });
+
+describe("budgets.year (#123)", () => {
+  type Year = {
+    targets: { categoryId: string | null; targetCents: number; spentCents: number; remainingCents: number; periods: number }[];
+    total: { targetCents: number; spentCents: number; remainingCents: number };
+  };
+  const year = async (y: number) => (await run("budgets.year", { year: y })).output as Year;
+
+  it("counts each period at the version it had, keeps an ended target's periods, and totals the targets", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-01-10" });
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 45_000, today: "2026-04-10" });
+    await run("budgets.removeTarget", { categoryId: cat.Groceries, today: "2026-07-10" });
+    await run("budgets.setTarget", { categoryId: null, amountCents: 100_000, today: "2026-03-10" });
+
+    const y = await year(2026);
+    const groceries = y.targets.find((t) => t.categoryId === cat.Groceries)!;
+    expect(groceries).toMatchObject({ periods: 6, targetCents: 3 * 30_000 + 3 * 45_000 });
+    // Each period's spending is what budgets.status counted for it.
+    let spent = 0;
+    for (let m = 1; m <= 6; m++) spent += target(await status(lastOfMonth(monthIndex(`2026-0${m}-01`))), cat.Groceries).spentCents;
+    expect(groceries.spentCents).toBe(spent);
+    expect(groceries.remainingCents).toBe(groceries.targetCents - groceries.spentCents);
+
+    // The buffer runs March to December: ten months of target, spending so far.
+    expect(y.targets.find((t) => t.categoryId === null)).toMatchObject({ periods: 10, targetCents: 10 * 100_000 });
+    const sum = (pick: (t: Year["targets"][number]) => number) => y.targets.reduce((s, t) => s + pick(t), 0);
+    expect(y.total).toEqual({ targetCents: sum((t) => t.targetCents), spentCents: sum((t) => t.spentCents), remainingCents: sum((t) => t.remainingCents) });
+  });
+
+  it("splits a period across two years by its months in each", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 120_000, periodMonths: 12, anchorMonth: "2026-04", today: "2026-05-10" });
+    const coffee = (await year(2026)).targets.find((t) => t.categoryId === cat.Coffee)!;
+    // April 2026 to March 2027: nine of its months are 2026's.
+    expect(coffee).toMatchObject({ periods: 1, targetCents: 90_000 });
+    expect(coffee.spentCents).toBe(target(await status("2026-06-30"), cat.Coffee).spentCents);
+    // 2027 has the last three months of that period and nine of the next.
+    expect((await year(2027)).targets.find((t) => t.categoryId === cat.Coffee)).toMatchObject({ periods: 2, targetCents: 30_000 + 90_000, spentCents: 0 });
+  });
+});

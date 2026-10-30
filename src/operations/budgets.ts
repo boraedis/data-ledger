@@ -15,6 +15,7 @@ import {
   monthlySeries,
   recentHistory,
   SERIES_MONTHS,
+  yearSummary,
   type TargetVersion,
 } from "@/lib/budgets/engine";
 import { categoryOptions } from "@/lib/categorize/labels";
@@ -173,6 +174,41 @@ export const budgetMonthly = defineRead({
       const categoryId = key === BUFFER ? null : key;
       return { categoryId, name: nameFor(labelOf, categoryId), months };
     });
+  },
+});
+
+export const budgetYear = defineRead({
+  name: "budgets.year",
+  description:
+    "Every target's calendar year, and the total: the target and net spending of each of its periods in the year, at " +
+    "the version each period had (a target changed mid-year counts each period at its own amount; an ended one counts " +
+    "for the periods it covered). The current year's later periods count in full toward the target, with spending so " +
+    "far. A period straddling the year (an annual target starting in April) counts the year's months of it, pro rata. " +
+    "remainingCents is target less spent; negative is over. Net unless gross is true.",
+  input: z.object({ year: z.number().int().min(2000).max(2100), gross: z.boolean().default(false) }),
+  run: async (db, { year, gross }) => {
+    const [versions, lines, { rows, labelOf }] = await Promise.all([
+      loadVersions(db),
+      spendingLines.run(db, { from: `${year}-01-01`, to: `${year}-12-31`, budgetOnly: true, gross }),
+      labels(db),
+    ]);
+    const targets = yearSummary({
+      year,
+      versions,
+      lines: lines.map((l) => ({ date: l.date, amountCents: l.amountCents, categoryId: l.categoryId })),
+      categories: rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind })),
+    }).map(({ key, ...t }) => {
+      const categoryId = key === BUFFER ? null : key;
+      return { categoryId, name: nameFor(labelOf, categoryId), ...t, remainingCents: t.targetCents - t.spentCents };
+    });
+    // The buffer first, then by name, as the Year view lists them.
+    targets.sort((a, b) => (a.categoryId === null ? -1 : b.categoryId === null ? 1 : a.name.localeCompare(b.name)));
+    const sum = (pick: (t: (typeof targets)[number]) => number) => targets.reduce((s, t) => s + pick(t), 0);
+    return {
+      year,
+      targets,
+      total: { targetCents: sum((t) => t.targetCents), spentCents: sum((t) => t.spentCents), remainingCents: sum((t) => t.remainingCents) },
+    };
   },
 });
 

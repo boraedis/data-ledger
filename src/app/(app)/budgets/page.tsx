@@ -3,12 +3,13 @@ import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { HISTORY_MONTHS } from "@/lib/budgets/engine";
-import { budgetHistory, budgetMonthly, budgetStatus, yearlyCharges } from "@/operations/budgets";
+import { budgetHistory, budgetMonthly, budgetStatus, budgetYear, yearlyCharges } from "@/operations/budgets";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { RebalanceForm, TargetForm, type TargetChoice } from "./forms";
 import { BudgetOverview } from "./overview";
 import { TargetCard } from "./target-card";
+import { YearSummary } from "./year-summary";
 
 // Budgets (#7): category targets plus one unallocated buffer, each with its
 // own period. ?month=YYYY-MM looks at an earlier month as it stood then —
@@ -34,7 +35,12 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
   // Net by default (your share of shared expenses); ?gross=1 shows spending
   // as charged, before what friends owe comes off.
   const gross = sp.gross === "1";
-  const [status, cats, history, netHistory, monthly, yearly] = await Promise.all([
+  // The year across every target (#123): the viewed month's, unless ?year= picks another.
+  const thisYear = Number(thisMonth.slice(0, 4));
+  const monthYear = Number(month.slice(0, 4));
+  const yearParam = typeof sp.year === "string" && /^\d{4}$/.test(sp.year) ? Math.min(Number(sp.year), thisYear) : null;
+  const year = yearParam ?? monthYear;
+  const [status, cats, history, netHistory, monthly, yearly, yearTotals] = await Promise.all([
     read(db, budgetStatus, { on, gross }),
     read(db, listCategories, {}),
     read(db, budgetHistory, { on, gross }),
@@ -45,6 +51,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
     // Yearly bills worth saving toward (#109), for the add form, which only
     // shows on the current month.
     isCurrent ? read(db, yearlyCharges, { on }) : [],
+    read(db, budgetYear, { year, gross }),
   ]);
   // What each category usually costs (#105), keyed like the forms' choices.
   const byCategory = (rows: typeof history) =>
@@ -53,11 +60,14 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
     );
   const histories = byCategory(history);
   const netHistories = netHistory ? byCategory(netHistory) : histories;
-  const hrefWith = (next: { month?: string; gross?: boolean }) => {
+  const hrefWith = (next: { month?: string; gross?: boolean; year?: number }) => {
     const q = new URLSearchParams();
     const m = next.month ?? month;
     if (m !== thisMonth) q.set("month", m);
     if (next.gross ?? gross) q.set("gross", "1");
+    // Kept only while it differs from the month's own year.
+    const y = next.year ?? yearParam;
+    if (y !== null && y !== Number(m.slice(0, 4))) q.set("year", String(y));
     const s = q.toString();
     return s ? `/budgets?${s}` : "/budgets";
   };
@@ -169,6 +179,22 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
           </ul>
         </section>
       ) : null}
+
+      <YearSummary
+        year={year}
+        targets={yearTotals.targets}
+        total={yearTotals.total}
+        isThisYear={year === thisYear}
+        yearHref={(y) => `${hrefWith({ year: y })}#year`}
+        // A target's year in the Year view: the twelve months ending in December, or this month for this year.
+        detailHref={(categoryId) => {
+          const q = new URLSearchParams();
+          if (year !== thisYear) q.set("month", `${year}-12`);
+          if (gross) q.set("gross", "1");
+          const s = q.toString();
+          return `/budgets/year${s ? `?${s}` : ""}#year-${categoryId ?? "buffer"}`;
+        }}
+      />
 
       {isCurrent ? (
         <>
