@@ -474,10 +474,12 @@ export const setTarget = defineWrite({
 //
 // After backfilling a year of transactions, earlier months have spending
 // and nothing to measure it against. A target can be given an earlier
-// start, but only where no target was in effect: it fills a gap, running
-// until the target's next version, and never rewrites a month that
-// already had one (which would silently change what that month was held
-// to). The earliest it can start is the first month with transactions.
+// start, running until the target's next version, which keeps its amount.
+// A month that already had a target can be changed the same way: the
+// version starting that month is updated in place, and the review
+// (backdatePreview, #137) lists each month's old and new amount before
+// anything is saved (#150). The earliest it can start is the first month
+// with transactions.
 
 /** The first month (YYYY-MM) with spending in budget accounts, or null. */
 async function earliestMonth(db: Db): Promise<string | null> {
@@ -521,9 +523,6 @@ async function plannedBackdate(db: Db, input: z.infer<typeof backdateInput>) {
   const effectiveFrom = `${input.fromMonth}-01`;
   const versions = await loadVersions(db);
   const own = versions.filter((v) => v.categoryId === input.categoryId);
-  if (currentVersion(own, input.categoryId, effectiveFrom)) {
-    throw new Error("A target was already in effect then. Backdating only fills months that had none, so past months keep what they were held to");
-  }
   const anchorOn = input.anchorMonth ? `${input.anchorMonth}-01` : input.periodMonths === 12 ? `${input.fromMonth.slice(0, 4)}-01-01` : effectiveFrom;
   const next = own.filter((v) => v.effectiveFrom > effectiveFrom).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
   const version: TargetVersion = {
@@ -543,8 +542,9 @@ export const backdateTarget = defineWrite({
   name: "budgets.backdateTarget",
   description:
     "Give a target (categoryId null = the buffer) an earlier start: amountCents per period from fromMonth (YYYY-MM), " +
-    "running until the target's next version, which keeps its amount. Only where no target was in effect from " +
-    "fromMonth on; never earlier than the first month with transactions, and before this month (budgets.setTarget " +
+    "running until the target's next version, which keeps its amount. A month that already had a target is changed " +
+    "too: a version starting that month is updated in place. Never earlier than the first month with transactions, " +
+    "and before this month (budgets.setTarget " +
     "covers this period). periodMonths, anchorMonth (default January for annual, else fromMonth), rollover and " +
     "sinkingFund as in budgets.setTarget. With rollover, what later periods have available changes. " +
     "budgets.backdatePreview lists the months it changes first.",
