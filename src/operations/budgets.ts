@@ -476,6 +476,48 @@ export const backdateRange = defineRead({
   run: async (db, { today: day }) => ({ earliestMonth: await earliestMonth(db), currentMonth: (day ?? today()).slice(0, 7) }),
 });
 
+const backdateInput = z.object({
+  categoryId: targetCategory,
+  fromMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  amountCents: z.number().int().min(1).max(100_000_000_00),
+  periodMonths: z.number().int().min(1).max(24).default(1),
+  anchorMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
+  rollover: z.boolean().default(false),
+  sinkingFund: z.boolean().default(false),
+  today: isoDate.optional(),
+});
+
+/**
+ * The version a backdate would write, after the same checks the write
+ * makes, shared by its preview (#137) so the warning can never list a
+ * backdate the save would refuse. Throws with the reason otherwise.
+ */
+async function plannedBackdate(db: Db, input: z.infer<typeof backdateInput>) {
+  const on = input.today ?? today();
+  if (input.fromMonth >= on.slice(0, 7)) throw new Error("That's this month or later: set the target as usual instead");
+  const first = await earliestMonth(db);
+  if (!first || input.fromMonth < first) throw new Error(`The earliest a target can start is ${first ?? "the first month with transactions"}`);
+  const effectiveFrom = `${input.fromMonth}-01`;
+  const versions = await loadVersions(db);
+  const own = versions.filter((v) => v.categoryId === input.categoryId);
+  if (currentVersion(own, input.categoryId, effectiveFrom)) {
+    throw new Error("A target was already in effect then. Backdating only fills months that had none, so past months keep what they were held to");
+  }
+  const anchorOn = input.anchorMonth ? `${input.anchorMonth}-01` : input.periodMonths === 12 ? `${input.fromMonth.slice(0, 4)}-01-01` : effectiveFrom;
+  const next = own.filter((v) => v.effectiveFrom > effectiveFrom).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
+  const version: TargetVersion = {
+    categoryId: input.categoryId,
+    effectiveFrom,
+    amountCents: input.amountCents,
+    periodMonths: input.periodMonths,
+    anchorOn,
+    rollover: input.rollover,
+    // A one-month period has nothing to set aside for.
+    sinkingFund: input.sinkingFund && input.periodMonths > 1,
+  };
+  return { on, version, versions, until: next ? next.effectiveFrom : null };
+}
+
 export const backdateTarget = defineWrite({
   name: "budgets.backdateTarget",
   description:
@@ -483,42 +525,41 @@ export const backdateTarget = defineWrite({
     "running until the target's next version, which keeps its amount. Only where no target was in effect from " +
     "fromMonth on; never earlier than the first month with transactions, and before this month (budgets.setTarget " +
     "covers this period). periodMonths, anchorMonth (default January for annual, else fromMonth), rollover and " +
-    "sinkingFund as in budgets.setTarget. With rollover, what later periods have available changes.",
-  input: z.object({
-    categoryId: targetCategory,
-    fromMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
-    amountCents: z.number().int().min(1).max(100_000_000_00),
-    periodMonths: z.number().int().min(1).max(24).default(1),
-    anchorMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
-    rollover: z.boolean().default(false),
-    sinkingFund: z.boolean().default(false),
-    today: isoDate.optional(),
-  }),
+    "sinkingFund as in budgets.setTarget. With rollover, what later periods have available changes. " +
+    "budgets.backdatePreview lists the months it changes first.",
+  input: backdateInput,
   apply: async (ctx, input) => {
     await assertExpenseCategory(ctx, input.categoryId);
-    const on = input.today ?? today();
-    if (input.fromMonth >= on.slice(0, 7)) throw new Error("That's this month or later: set the target as usual instead");
-    const first = await earliestMonth(ctx.db);
-    if (!first || input.fromMonth < first) throw new Error(`The earliest a target can start is ${first ?? "the first month with transactions"}`);
-
-    const effectiveFrom = `${input.fromMonth}-01`;
-    const versions = (await loadVersions(ctx.db)).filter((v) => v.categoryId === input.categoryId);
-    if (currentVersion(versions, input.categoryId, effectiveFrom)) {
-      throw new Error("A target was already in effect then. Backdating only fills months that had none, so past months keep what they were held to");
-    }
-    const anchorOn = input.anchorMonth ? `${input.anchorMonth}-01` : input.periodMonths === 12 ? `${input.fromMonth.slice(0, 4)}-01-01` : effectiveFrom;
-    const next = versions.filter((v) => v.effectiveFrom > effectiveFrom).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
-    const row = await writeVersion(ctx, {
-      categoryId: input.categoryId,
-      effectiveFrom,
-      amountCents: input.amountCents,
-      periodMonths: input.periodMonths,
-      anchorOn,
-      rollover: input.rollover,
-      sinkingFund: input.sinkingFund && input.periodMonths > 1,
-    });
+    const { version, until } = await plannedBackdate(ctx.db, input);
+    const row = await writeVersion(ctx, version);
     // Until the next version, or open-ended when there's none (it becomes the current target).
-    return { id: row.id, effectiveFrom, until: next ? next.effectiveFrom : null };
+    return { id: row.id, effectiveFrom: version.effectiveFrom, until };
+  },
+});
+
+export const backdatePreview = defineRead({
+  name: "budgets.backdatePreview",
+  description:
+    "What budgets.backdateTarget would change, without changing anything (#137): each month from fromMonth until the " +
+    "target's next version (or this month), with the target that month had before (null: none) and would have after, " +
+    "as budgets.status reports it, with the period it belongs to. Refuses what backdateTarget would refuse.",
+  input: backdateInput,
+  run: async (db, input) => {
+    const { on, version, versions, until } = await plannedBackdate(db, input);
+    const key = input.categoryId;
+    // Each month's target as the engine works it out, now and with the new
+    // version in place: the same figures the page shows for those months.
+    const targetIn = (all: TargetVersion[], month: number) => {
+      const s = computeStatus({ on: lastOfMonth(month), versions: all, lines: [], categories: [], adjustments: [] });
+      const t = s.targets.find((x) => x.key === (key ?? BUFFER));
+      return t ? { targetCents: t.targetCents, periodMonths: t.periodMonths, start: t.start, end: t.end } : null;
+    };
+    const last = until ? monthIndex(until) - 1 : monthIndex(on);
+    const months = [];
+    for (let m = monthIndex(version.effectiveFrom); m <= last; m++) {
+      months.push({ month: firstOfMonth(m).slice(0, 7), before: targetIn(versions, m), after: targetIn([...versions, version], m) });
+    }
+    return { months, until, rollover: version.rollover };
   },
 });
 
