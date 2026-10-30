@@ -396,3 +396,68 @@ export function recentHistory(input: {
   }
   return result;
 }
+
+// --- Monthly series (#107) ------------------------------------------------------
+
+// Months on each budget card's chart: the month shown and the ones before.
+// Six shows creep and a seasonal spike without crowding a phone-width card.
+export const SERIES_MONTHS = 6;
+
+export type MonthBar = {
+  month: string; // first of the month
+  spentCents: number;
+  // The target's monthly amount in effect that month (a multi-month
+  // target's even monthly share); null before the target existed.
+  targetCents: number | null;
+};
+
+/**
+ * Each current target's net spend in each of the last `months` months up to
+ * and including `on`'s (which is partial when `on` is today). Where the
+ * target was in effect, a month counts exactly what budgets.status counted
+ * toward it (lines resolved on their own dates). Before it existed, a month
+ * counts what the target would cover today, as recentHistory does, so the
+ * trend leading up to a new target is there to see rather than empty. Every
+ * month is listed, with $0 where nothing was spent.
+ *
+ * The reference amount is the target itself, not what was available: rollover
+ * and rebalancing change what a period can spend, not what it was meant to.
+ */
+export function monthlySeries(input: {
+  on: string;
+  versions: TargetVersion[];
+  lines: SpendLine[];
+  categories: CategoryInfo[];
+  months?: number;
+}): Map<TargetKey, MonthBar[]> {
+  const months = input.months ?? SERIES_MONTHS;
+  const end = monthIndex(input.on);
+  const start = end - months + 1;
+  const byKey = versionsByKey(input.versions);
+  const categories = new Map(input.categories.map((c) => [c.id, c]));
+
+  const result = new Map<TargetKey, MonthBar[]>();
+  for (const [key, list] of byKey) {
+    if (!versionAt(list, input.on)) continue;
+    const bars: MonthBar[] = [];
+    for (let m = start; m <= end; m++) {
+      const v = versionAt(list, firstOfMonth(m));
+      bars.push({ month: firstOfMonth(m), spentCents: 0, targetCents: v ? Math.round(v.amountCents! / v.periodMonths) : null });
+    }
+    result.set(key, bars);
+  }
+
+  for (const line of input.lines) {
+    const m = monthIndex(line.date);
+    if (m < start || m > end || line.date > input.on) continue;
+    const onItsDate = targetKeyFor(line, categories, byKey);
+    if (onItsDate === null) continue;
+    const today = targetKeyFor({ ...line, date: input.on }, categories, byKey);
+    for (const [key, bars] of result) {
+      const bar = bars[m - start];
+      // In effect then: what status counted. Not yet: what it would cover now.
+      if ((bar.targetCents !== null ? onItsDate : today) === key) bar.spentCents -= line.amountCents;
+    }
+  }
+  return result;
+}
