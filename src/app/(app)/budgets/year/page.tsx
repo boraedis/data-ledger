@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
+import { yearTotals, type YearTotal } from "@/lib/budgets/year";
 import { budgetMonthly } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
 
@@ -35,12 +36,16 @@ const monthName = (month: string, style: "narrow" | "short" | "long") =>
     timeZone: "UTC",
   });
 
-/** "+$42", "−$1.2k": the cell's over (+) or under (−), short enough for a column. */
-function compactDiff(cents: number): string {
-  const sign = cents > 0 ? "+" : cents < 0 ? "−" : "";
+/** "$42", "$1.2k": short enough for a column. */
+function compact(cents: number): string {
   const dollars = Math.abs(cents) / 100;
-  if (dollars >= 1_000) return `${sign}$${(dollars / 1_000).toFixed(dollars >= 10_000 ? 0 : 1).replace(/\.0$/, "")}k`;
-  return `${sign}$${Math.round(dollars)}`;
+  if (dollars >= 1_000) return `$${(dollars / 1_000).toFixed(dollars >= 10_000 ? 0 : 1).replace(/\.0$/, "")}k`;
+  return `$${Math.round(dollars)}`;
+}
+
+/** "+$42", "−$1.2k": the cell's over (+) or under (−). */
+function compactDiff(cents: number): string {
+  return `${cents > 0 ? "+" : cents < 0 ? "−" : ""}${compact(cents)}`;
 }
 
 // Diverging around the target: under in the on-track color, over in the
@@ -67,6 +72,8 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
   );
   const columns = rows[0]?.months.map((m) => m.month) ?? Array.from({ length: MONTHS }, (_, i) => `${shiftMonth(month, i - MONTHS + 1)}-01`);
   const partial = isCurrent ? `${month}-01` : null;
+  // Each target's 12 months, each month across targets, and the grid (#124).
+  const totals = yearTotals(rows);
 
   const href = (path: "/budgets" | "/budgets/year", next: { month?: string; gross?: boolean }) => {
     const q = new URLSearchParams();
@@ -98,7 +105,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
       </div>
       <p className="text-sm text-muted-foreground">
         Each target&apos;s spending against the target it had that month: green under, red over, deeper the further off, with the amount over (+) or under (−) where there&apos;s room.
-        A multi-month target is measured against its even monthly share. Tap a month to open it.{" "}
+        A multi-month target is measured against its even monthly share. Totals add up only the months that had a target. Tap a month to open it.{" "}
         {gross ? (
           <>
             Showing gross spending.{" "}
@@ -130,6 +137,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
             {columns.map((c) => (
               <col key={c} />
             ))}
+            <col className="w-14 sm:w-24" />
           </colgroup>
           <thead>
             <tr>
@@ -149,10 +157,13 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
                   {c.slice(5, 7) === "01" ? <span className="block text-[9px] leading-none">{c.slice(2, 4)}</span> : null}
                 </th>
               ))}
+              <th scope="col" abbr="Total of the months with a target" className="pb-1 pl-1 text-center font-medium">
+                Total
+              </th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
+            {rows.map((r, ri) => {
               const targeted = r.months.filter((m) => m.targetCents !== null);
               const over = targeted.filter((m) => m.spentCents > m.targetCents!).length;
               return (
@@ -190,10 +201,42 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
                       </td>
                     );
                   })}
+                  <TotalCell label={r.name} total={totals.byRow[ri]} />
                 </tr>
               );
             })}
           </tbody>
+          <tfoot>
+            {/* Every target together, month by month: monthly figures all, so they add up. */}
+            <tr>
+              <th scope="row" className="pr-1 pt-1 text-left align-middle text-sm font-medium">
+                All targets
+              </th>
+              {totals.byColumn.map((c, i) => (
+                <td key={columns[i]} className="h-9 p-0 pt-1">
+                  {c ? (
+                    <Link
+                      href={href("/budgets", { month: columns[i].slice(0, 7) })}
+                      aria-label={`All targets, ${monthName(columns[i], "long")}: ${formatCents(c.spentCents)} of ${formatCents(c.targetCents)}`}
+                      title={`All targets, ${monthName(columns[i], "long")}: ${formatCents(c.spentCents)} of ${formatCents(c.targetCents)}`}
+                      className={`flex h-full items-center justify-center rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 ${shade(c.spentCents, c.targetCents)}`}
+                    >
+                      <span aria-hidden className="hidden text-[10px] md:inline">
+                        {compactDiff(c.spentCents - c.targetCents)}
+                      </span>
+                    </Link>
+                  ) : (
+                    <span className="flex h-full items-center justify-center rounded-sm bg-muted/50 text-muted-foreground">
+                      <span aria-hidden className="hidden text-[10px] md:inline">
+                        –
+                      </span>
+                    </span>
+                  )}
+                </td>
+              ))}
+              <TotalCell label="All targets" total={totals.total} strong />
+            </tr>
+          </tfoot>
         </table>
       )}
 
@@ -220,5 +263,29 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
         ) : null}
       </div>
     </div>
+  );
+}
+
+// A row's year: spending against the sum of the targets its months had,
+// shaded like the months. The amount shows at every width, since this is
+// the column the row is read for.
+function TotalCell({ label, total, strong = false }: { label: string; total: YearTotal | null; strong?: boolean }) {
+  if (!total) return <td className="h-9 p-0 pl-1" />;
+  const diff = total.spentCents - total.targetCents;
+  const text = `${label}, ${total.months} month${total.months === 1 ? "" : "s"} with a target: ${formatCents(total.spentCents)} of ${formatCents(total.targetCents)}, ${formatCents(Math.abs(diff))} ${diff > 0 ? "over" : "under"}`;
+  return (
+    <td className={`h-9 p-0 pl-1 ${strong ? "pt-1" : ""}`}>
+      <span
+        role="img"
+        aria-label={text}
+        title={text}
+        className={`flex h-full flex-col items-center justify-center rounded-sm leading-tight tabular-nums ${shade(total.spentCents, total.targetCents)} ${strong ? "font-medium" : ""}`}
+      >
+        <span className="text-[10px]">{compactDiff(diff)}</span>
+        <span className="hidden text-[9px] text-muted-foreground sm:block">
+          {compact(total.spentCents)} of {compact(total.targetCents)}
+        </span>
+      </span>
+    </td>
   );
 }
