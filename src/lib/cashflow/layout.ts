@@ -3,18 +3,18 @@ import type { FlowGraph, FlowLink, FlowNode, Role } from "@/lib/cashflow/graph";
 // Where each node and band of a cash-flow Sankey (#62) sits. Pure geometry,
 // no rendering, so it's tested and the chart only draws what it's given.
 //
-// Columns are the longest path from a source: pay sits left, its taxes and
-// elections one step right, beside the accounts the take-home lands in;
-// spending follows the account it left, and a subcategory follows its
-// parent. A node is as tall as the larger of what flows in and out.
+// Columns are the graph's levels: sources, take-home and what came off the
+// paycheck, where it went, the breakdown, subcategories. A node is as tall
+// as the larger of what flows in and out.
 
 export type PlacedNode = FlowNode & { column: number; x: number; y: number; height: number; inCents: number; outCents: number };
 export type PlacedLink = FlowLink & { width: number; sourceY: number; targetY: number; x0: number; x1: number };
 export type Layout = { width: number; height: number; nodeWidth: number; columns: number; nodes: PlacedNode[]; links: PlacedLink[] };
 
-// Within a column, top to bottom: money in, then where it's kept, then
-// where it went.
-const ROLE_ORDER: Role[] = ["income", "account", "saved", "tax", "transfer", "spend"];
+// Within a column, top to bottom: income, then what was drawn on; take-home
+// above what came off the paycheck; spending, then saved and invested, then
+// debt.
+const ROLE_ORDER: Role[] = ["income", "draw", "pool", "spend", "saved", "tax", "debt"];
 
 export function layoutFlows(graph: FlowGraph, { width, nodeWidth = 10, gap = 10, minHeight = 320, perNode = 30 }: { width: number; nodeWidth?: number; gap?: number; minHeight?: number; perNode?: number }): Layout {
   const { nodes, links } = graph;
@@ -25,32 +25,16 @@ export function layoutFlows(graph: FlowGraph, { width, nodeWidth = 10, gap = 10,
     outgoing.set(l.source, [...(outgoing.get(l.source) ?? []), l]);
   }
 
-  // Longest path from a source. A cycle (rare: transfers are netted per
-  // pair) stops at the node count rather than looping. An account never
-  // sits in the income column, even in a month nothing flowed into it (a
-  // card only spent from), or its spending would cut across the pay.
-  const hasIncome = nodes.some((n) => n.role === "income");
-  const column = new Map(nodes.map((n) => [n.id, n.role === "account" && hasIncome ? 1 : 0]));
-  for (let pass = 0; pass < nodes.length; pass++) {
-    let changed = false;
-    for (const l of links) {
-      const next = column.get(l.source)! + 1;
-      if (next > column.get(l.target)! && next < nodes.length) {
-        column.set(l.target, next);
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-  const columns = Math.max(1, ...[...column.values()].map((c) => c + 1));
+  // Each node's column is its level (graph.ts), with empty levels closed
+  // up: a period with no subcategories has four columns, not five.
+  const levels = [...new Set(nodes.map((n) => n.level))].sort((a, b) => a - b);
+  const column = new Map(nodes.map((n) => [n.id, levels.indexOf(n.level)]));
+  const columns = Math.max(1, levels.length);
 
   const sum = (ls: FlowLink[] | undefined) => (ls ?? []).reduce((s, l) => s + l.valueCents, 0);
   const valueOf = (id: string) => Math.max(sum(incoming.get(id)), sum(outgoing.get(id)));
-  const byColumn = Array.from({ length: columns }, (_, c) =>
-    nodes
-      .filter((n) => column.get(n.id) === c)
-      .sort((a, b) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role) || valueOf(b.id) - valueOf(a.id) || a.label.localeCompare(b.label)),
-  );
+  const byRole = (a: FlowNode, b: FlowNode) => ROLE_ORDER.indexOf(a.role) - ROLE_ORDER.indexOf(b.role) || valueOf(b.id) - valueOf(a.id) || a.label.localeCompare(b.label);
+  const byColumn = Array.from({ length: columns }, (_, c) => nodes.filter((n) => column.get(n.id) === c).sort(byRole));
   const tallest = Math.max(1, ...byColumn.map((c) => c.length));
   const height = Math.max(minHeight, tallest * perNode);
   // One scale for every column: cents per pixel set by the fullest one.
@@ -58,7 +42,23 @@ export function layoutFlows(graph: FlowGraph, { width, nodeWidth = 10, gap = 10,
 
   const step = columns > 1 ? (width - nodeWidth) / (columns - 1) : 0;
   const placed = new Map<string, PlacedNode>();
+  // After the first column, each node sits near what feeds it (the
+  // value-weighted middle of its sources), so a bucket's breakdown stays
+  // beside the bucket instead of crossing its neighbours'.
+  const middleOfSources = (id: string) => {
+    const ins = incoming.get(id) ?? [];
+    const total = sum(ins);
+    if (!total) return Infinity;
+    const middle = ins.reduce((s, l) => {
+      const src = placed.get(l.source);
+      return s + (src ? src.y + src.height / 2 : 0) * l.valueCents;
+    }, 0) / total;
+    // Rounded, so siblings fed by one node tie (and fall back to size order)
+    // rather than sorting on floating-point noise.
+    return Math.round(middle);
+  };
   byColumn.forEach((col, c) => {
+    if (c > 0) col.sort((a, b) => middleOfSources(a.id) - middleOfSources(b.id) || byRole(a, b));
     let y = 0;
     for (const n of col) {
       const h = Math.max(1, valueOf(n.id) * scale);
