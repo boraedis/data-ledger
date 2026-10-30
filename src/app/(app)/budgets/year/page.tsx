@@ -167,7 +167,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
               const targeted = r.months.filter((m) => m.targetCents !== null);
               const over = targeted.filter((m) => m.spentCents > m.targetCents!).length;
               return (
-                <tr key={r.categoryId ?? "buffer"}>
+                <tr key={r.categoryId ?? "buffer"} id={`year-${r.categoryId ?? "buffer"}`} className="scroll-mt-4 target:[&>th]:underline">
                   <th scope="row" className="pr-1 text-left align-middle font-normal">
                     <span className="block truncate text-sm" title={r.name}>
                       {r.categoryId === null ? "Buffer" : r.name}
