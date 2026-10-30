@@ -51,7 +51,7 @@ const PRE_FICA: PayLineKind[] = ["hsa", "fsa", "health_insurance", "dental_insur
 
 // How many recent pay stubs set "the current pace": enough to smooth one
 // odd paycheck, few enough to follow a raise.
-const PACE_STUBS = 3;
+export const PACE_STUBS = 3;
 
 const DAY_MS = 86_400_000;
 const days = (from: string, to: string) => Math.round((Date.parse(to) - Date.parse(from)) / DAY_MS);

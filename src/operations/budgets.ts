@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { and, eq, inArray, isNull, min } from "drizzle-orm";
 import { z } from "zod";
-import { budgetAdjustments, budgetTargets, categories, transactions } from "@/db/schema";
+import { budgetAdjustments, budgetTargets, categories, payStubDeposits, payStubs, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import {
   BUFFER,
@@ -23,7 +23,8 @@ import { defineRead, defineWrite } from "@/operations/define";
 import type { Series } from "@/lib/recurring/detect";
 import { budgetAccountIds } from "@/operations/accounts";
 import { detectedSeries } from "@/operations/recurring";
-import { spendingLines } from "@/operations/transactions";
+import { spendingLines, uncategorizedSpend } from "@/operations/transactions";
+import { payForMonth, paySummary } from "@/lib/budgets/pay";
 import type { WriteContext } from "@/operations/tracked";
 
 // Budgets (#7): category targets with periods, rollover and an unallocated
@@ -209,6 +210,61 @@ export const budgetYear = defineRead({
       year,
       targets,
       total: { targetCents: sum((t) => t.targetCents), spentCents: sum((t) => t.spentCents), remainingCents: sum((t) => t.remainingCents) },
+    };
+  },
+});
+
+export const budgetPay = defineRead({
+  name: "budgets.pay",
+  description:
+    "The month's pay against its budget (as of `on`, default today), in cents and as a % of net pay: net pay (the " +
+    "month's pay stubs by pay date, plus in the current month paychecks still to come at the recent pace), total " +
+    "targets (each target in effect at its monthly share, buffer included), expected saving (pay less targets), " +
+    "spending so far (net spend in expense categories, budget accounts) and actual saving (pay less spending). " +
+    "Transfers, savings included, and pay are never spending; deductions taken from a paycheck before it landed " +
+    "aren't either, since net pay is already after them. netPay is null when no pay was recorded or expected. " +
+    "Spending is net of shared expenses unless gross is true.",
+  allowedActors: ["user"],
+  input: z.object({ on: isoDate.optional(), gross: z.boolean().default(false), today: isoDate.optional() }),
+  run: async (db, { on = today(), gross, today: day }) => {
+    const now = day ?? today();
+    const month = on.slice(0, 7);
+    const from = `${month}-01`;
+    const [stubs, versions, lines, deposits, { rows }, uncategorized] = await Promise.all([
+      db.select({ payDate: payStubs.payDate, periodStart: payStubs.periodStart, periodEnd: payStubs.periodEnd, netCents: payStubs.netCents, oneTime: payStubs.oneTime }).from(payStubs),
+      loadVersions(db),
+      spendingLines.run(db, { from, to: on, budgetOnly: true, gross }),
+      db.select({ transactionId: payStubDeposits.transactionId }).from(payStubDeposits),
+      labels(db),
+      uncategorizedSpend.run(db, { from, to: on }),
+    ]);
+    const pay = payForMonth(month, now, stubs);
+
+    // Each target in effect at its monthly share: a month's own target, or a
+    // twelfth of an annual one, so a month with an annual target isn't
+    // measured against the whole year's budget.
+    const keys = [...new Set(versions.map((v) => v.categoryId))];
+    const targetsCents = keys.reduce((sum, id) => {
+      const v = currentVersion(versions, id, on);
+      return v ? sum + Math.round(v.amountCents! / v.periodMonths) : sum;
+    }, 0);
+
+    // Spending: expense lines only (transfers and pay never are). A linked
+    // paycheck's deduction lines (health insurance under an expense
+    // category, say) left the gross before net pay landed, so against net
+    // pay they'd count twice.
+    const expense = new Set(rows.filter((r) => r.kind === "expense").map((r) => r.id));
+    const paycheck = new Set(deposits.map((d) => d.transactionId));
+    const spentCents = -lines.filter((l) => expense.has(l.categoryId) && !paycheck.has(l.transactionId)).reduce((sum, l) => sum + l.amountCents, 0);
+
+    return {
+      month,
+      pay,
+      summary: pay.netPayCents === null ? null : paySummary({ netPayCents: pay.netPayCents, targetsCents, spentCents }),
+      targetsCents,
+      spentCents,
+      // Money out not categorized yet isn't in spending; said so, not hidden.
+      uncategorized,
     };
   },
 });

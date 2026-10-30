@@ -1,6 +1,6 @@
 import { and, eq, gte, like, lte } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { accounts, budgetTargets, categories, commandLog, transactions } from "@/db/schema";
+import { accounts, budgetTargets, categories, commandLog, payStubLines, payStubs, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { lastOfMonth, monthIndex } from "@/lib/budgets/engine";
 import { suggestedTargetCents } from "@/lib/budgets/format";
@@ -354,5 +354,50 @@ describe("budgets.backdateTarget (#130)", () => {
     expect(result.output).toMatchObject({ until: null });
     expect(target(await status("2026-02-28"), null).targetCents).toBe(100_000);
     expect(target(await status("2026-06-15"), null).targetCents).toBe(100_000);
+  });
+});
+
+describe("budgets.pay (#128)", () => {
+  type Pay = {
+    pay: { recordedCents: number; recordedCount: number; netPayCents: number | null };
+    summary: { expectedSaving: { cents: number; percent: number | null }; actualSaving: { cents: number } } | null;
+    targetsCents: number;
+    spentCents: number;
+  };
+  const pay = async (on: string) => (await run("budgets.pay", { on, today: "2026-06-30" })).output as Pay;
+
+  it("sets the month's pay stubs against targets at their monthly share and spending so far", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-06-01" });
+    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 120_000, periodMonths: 12, today: "2026-06-01" });
+    const p = await pay("2026-06-30");
+    const stubs = (await db.select().from(payStubs)).filter((s) => s.payDate.startsWith("2026-06"));
+    expect(stubs.length).toBeGreaterThan(0);
+    expect(p.pay).toMatchObject({ recordedCount: stubs.length, recordedCents: stubs.reduce((s, x) => s + x.netCents, 0) });
+    // Monthly Groceries in full, a twelfth of the annual Coffee target.
+    expect(p.targetsCents).toBe(30_000 + 10_000);
+    expect(p.summary!.expectedSaving.cents).toBe(p.pay.netPayCents! - p.targetsCents);
+    expect(p.summary!.actualSaving.cents).toBe(p.pay.netPayCents! - p.spentCents);
+  });
+
+  it("counts a purchase as spending but never a transfer to savings", async () => {
+    const [account] = await db.select().from(accounts).where(eq(accounts.type, "credit"));
+    const before = (await pay("2026-06-30")).spentCents;
+    await db.insert(transactions).values({ accountId: account.id, postedOn: "2026-06-20", amountCents: -4_250, description: "MADE-UP BISTRO", externalId: "pay-test-1", categoryId: cat.Dining });
+    await db.insert(transactions).values({ accountId: account.id, postedOn: "2026-06-21", amountCents: -50_000, description: "TO SAVINGS", externalId: "pay-test-2", categoryId: cat.Transfers });
+    expect((await pay("2026-06-30")).spentCents).toBe(before + 4_250);
+  });
+
+  it("doesn't count a paycheck's deductions as spending, since net pay is already after them", async () => {
+    const before = await pay("2026-06-30");
+    // File the synthetic stubs' health insurance under an expense category:
+    // budgets now count it, as a line on each linked paycheck.
+    await db.update(payStubLines).set({ categoryId: cat.Car }).where(eq(payStubLines.kind, "health_insurance"));
+    const lines = (await run("transactions.spendingLines", { from: "2026-06-01", to: "2026-06-30" })).output as { categoryId: string }[];
+    expect(lines.some((l) => l.categoryId === cat.Car)).toBe(true);
+    expect((await pay("2026-06-30")).spentCents).toBe(before.spentCents);
+  });
+
+  it("says no pay was recorded for a month without stubs", async () => {
+    expect(await pay("2026-01-31")).toMatchObject({ pay: { netPayCents: null }, summary: null });
   });
 });
