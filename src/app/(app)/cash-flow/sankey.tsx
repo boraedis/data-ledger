@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { FlowGraph, Role } from "@/lib/cashflow/graph";
 import { bandPath, layoutFlows, type PlacedLink, type PlacedNode } from "@/lib/cashflow/layout";
+import { formatShare } from "@/lib/cashflow/format";
 import { formatCents } from "@/lib/money";
 
 // The cash-flow Sankey (#62), drawn from layoutFlows. Color says what a
@@ -27,7 +28,11 @@ const FILL: Record<Role, string> = {
 
 type Tip = { x: number; y: number; value: number; title: string; detail: string };
 
-export function Sankey({ graph, label }: { graph: FlowGraph; label: string }) {
+export function Sankey({ graph, label, percentOf }: { graph: FlowGraph; label: string; percentOf: number | null }) {
+  // In percent mode every figure is a share of all the money in (#62);
+  // dollars stay in the tooltip and the table.
+  const figure = (cents: number) => (percentOf ? formatShare(cents, percentOf) : formatCents(cents));
+  const both = (cents: number) => (percentOf ? `${formatShare(cents, percentOf)} (${formatCents(cents)})` : formatCents(cents));
   // Full width: the first column's labels sit right of their nodes and the
   // last column's left of theirs, so neither needs a margin.
   const layout = useMemo(() => layoutFlows(graph, { width: WIDTH - 20, gap: 14 }), [graph]);
@@ -45,12 +50,17 @@ export function Sankey({ graph, label }: { graph: FlowGraph; label: string }) {
   const linkTip = (l: PlacedLink): Omit<Tip, "x" | "y"> => ({
     value: l.valueCents,
     title: `${nodes.get(l.source)!.label} → ${nodes.get(l.target)!.label}`,
-    detail: `${l.count} ${l.count === 1 ? "transaction" : "transactions"}`,
+    detail: `${percentOf ? `${formatCents(l.valueCents)} · ` : ""}${l.count} ${l.count === 1 ? "transaction" : "transactions"}`,
   });
   const nodeTip = (n: PlacedNode): Omit<Tip, "x" | "y"> => ({
     value: Math.max(n.inCents, n.outCents),
     title: n.label,
-    detail: [n.inCents ? `in ${formatCents(n.inCents)}` : null, n.outCents ? `out ${formatCents(n.outCents)}` : null].filter(Boolean).join(" · "),
+    detail: [
+      percentOf ? formatCents(Math.max(n.inCents, n.outCents)) : null,
+      n.inCents && n.outCents && n.inCents !== n.outCents ? `in ${formatCents(n.inCents)} · out ${formatCents(n.outCents)}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · "),
   });
 
   // Tooltip at the pointer, or for keyboard focus at the mark's middle.
@@ -89,7 +99,7 @@ export function Sankey({ graph, label }: { graph: FlowGraph; label: string }) {
                   fill={bandColor(l)}
                   fillOpacity={active === id ? 0.7 : active ? 0.18 : 0.38}
                   tabIndex={0}
-                  aria-label={`${linkTip(l).title}: ${formatCents(l.valueCents)}, ${linkTip(l).detail}`}
+                  aria-label={`${linkTip(l).title}: ${both(l.valueCents)}, ${l.count} ${l.count === 1 ? "transaction" : "transactions"}`}
                   className="cursor-pointer outline-none transition-[fill-opacity]"
                   onPointerMove={(e) => show(id, linkTip(l), e)}
                   onClick={(e) => (active === id ? hide() : show(id, linkTip(l), e))}
@@ -112,7 +122,7 @@ export function Sankey({ graph, label }: { graph: FlowGraph; label: string }) {
                     rx={2}
                     fill={FILL[n.role]}
                     tabIndex={0}
-                    aria-label={`${n.label}: ${nodeTip(n).detail}`}
+                    aria-label={`${n.label}: ${both(Math.max(n.inCents, n.outCents))}`}
                     className="cursor-pointer outline-none"
                     onPointerMove={(e) => show(n.id, nodeTip(n), e)}
                     onClick={(e) => (active === n.id ? hide() : show(n.id, nodeTip(n), e))}
@@ -132,7 +142,7 @@ export function Sankey({ graph, label }: { graph: FlowGraph; label: string }) {
                     paintOrder="stroke"
                   >
                     {n.label}
-                    <tspan className="fill-muted-foreground"> {formatCents(Math.max(n.inCents, n.outCents))}</tspan>
+                    <tspan className="fill-muted-foreground"> {figure(Math.max(n.inCents, n.outCents))}</tspan>
                   </text>
                 </g>
               );
@@ -146,7 +156,7 @@ export function Sankey({ graph, label }: { graph: FlowGraph; label: string }) {
           style={{ left: tip.x, top: tip.y }}
           role="status"
         >
-          <p className="text-sm font-semibold tabular-nums text-foreground">{formatCents(tip.value)}</p>
+          <p className="text-sm font-semibold tabular-nums text-foreground">{figure(tip.value)}</p>
           <p className="text-muted-foreground">{tip.title}</p>
           {tip.detail ? <p className="text-muted-foreground">{tip.detail}</p> : null}
         </div>

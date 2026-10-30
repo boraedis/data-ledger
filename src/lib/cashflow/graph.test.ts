@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildFlowGraph, type AccountInfo, type FlowGraph, type FlowInput, type Paycheck, type Transfer } from "@/lib/cashflow/graph";
+import { formatShare } from "@/lib/cashflow/format";
 import { bandPath, layoutFlows } from "@/lib/cashflow/layout";
 import type { CategoryInfo, Lookup, SpendLine } from "@/lib/spending/analyze";
 
@@ -207,5 +208,14 @@ describe("layoutFlows", () => {
       expect(fromPay[i].sourceY - fromPay[i].width / 2).toBeCloseTo(fromPay[i - 1].sourceY + fromPay[i - 1].width / 2, 5);
     }
     expect(bandPath(fromPay[0])).toMatch(/^M\d/);
+  });
+});
+
+describe("formatShare", () => {
+  it("shows a share of all money in, with a decimal for small ones", () => {
+    expect(formatShare(257_175, 350_000)).toBe("73%");
+    expect(formatShare(5_075, 350_000)).toBe("1.5%");
+    expect(formatShare(0, 350_000)).toBe("0.0%");
+    expect(formatShare(100, 0)).toBe("—");
   });
 });
