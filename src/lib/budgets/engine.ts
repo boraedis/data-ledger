@@ -23,7 +23,7 @@
 //   reach a budget. Shared expenses arrive here already net of what
 //   friends owe (#8, in transactions.spendingLines).
 
-import { elapsedShare, evenPace } from "@/lib/pace";
+import { elapsedShare, evenPace, projectAtEnd } from "@/lib/pace";
 
 export const BUFFER = "buffer" as const;
 export type TargetKey = string; // a category id, or BUFFER
@@ -236,6 +236,9 @@ export type TargetStatus = PeriodStatus & {
   elapsedShare: number;
   // Spend you'd expect by now at an even pace (multi-month periods).
   paceCents: number | null;
+  // Spend at the period's end if it carries on at its pace so far (#147);
+  // null with nothing spent yet. Measured against availableCents.
+  projectedCents: number | null;
   // Sinking fund: what to set aside each month, and what should be set aside by now.
   setAsideMonthlyCents: number | null;
   setAsideByNowCents: number | null;
@@ -291,6 +294,7 @@ export function budgetStatus(input: {
       ...current,
       elapsedShare: elapsed,
       paceCents: multiMonth ? evenPace(0, current.availableCents, elapsed) : null,
+      projectedCents: projectAtEnd(current.spentCents, elapsed),
       setAsideMonthlyCents: setAsideMonthly,
       setAsideByNowCents: setAsideMonthly === null ? null : Math.min(current.targetCents, setAsideMonthly * monthsStarted),
     });

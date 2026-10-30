@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysInclusive, elapsedShare, evenPace, monthlyNeeded, monthsLeft } from "@/lib/pace";
+import { daysInclusive, elapsedShare, evenPace, monthlyNeeded, monthsLeft, projectAtEnd } from "@/lib/pace";
 
 describe("pace", () => {
   it("measures elapsed share inclusively, clamped", () => {
@@ -12,6 +12,15 @@ describe("pace", () => {
   it("puts an even pace on the line between start and target", () => {
     expect(evenPace(0, 1_200, 0.25)).toBe(300);
     expect(evenPace(1_000, 3_000, 0.5)).toBe(2_000);
+  });
+
+  it("projects spending to the end of a span at its pace so far (#147)", () => {
+    // $150 by day 10 of a 30-day month: $450.
+    expect(projectAtEnd(15_000, elapsedShare("2026-09-01", "2026-09-30", "2026-09-10"))).toBe(45_000);
+    // On the last day, the projection is the spend.
+    expect(projectAtEnd(15_000, elapsedShare("2026-09-01", "2026-09-30", "2026-09-30"))).toBe(15_000);
+    expect(projectAtEnd(0, 0.5)).toBeNull();
+    expect(projectAtEnd(-2_000, 0.5)).toBeNull();
   });
 
   it("spreads what's left over the months remaining, this one included", () => {
