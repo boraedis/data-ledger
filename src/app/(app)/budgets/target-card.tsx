@@ -1,11 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { historyLabel, periodLabel, scheduleLabel, type HistorySummary } from "@/lib/budgets/format";
+import { targetAnchor } from "@/lib/budgets/overview";
 import { formatCents } from "@/lib/money";
 import { TargetForm } from "./forms";
 import { MonthBars, type Bar } from "./month-bars";
+import { OPEN_TARGET } from "./overview";
 
 export type CardTarget = {
   categoryId: string | null;
@@ -32,7 +34,10 @@ export type CardTarget = {
 
 // One target's period: a bar of spent against available, an even-pace
 // marker for multi-month periods, and the arithmetic spelled out so
-// rollover and rebalancing never look like magic.
+// rollover and rebalancing never look like magic. Collapsed to that summary
+// by default (#122), so the month fits on a screen; the detail (pace, the
+// buffer's breakdown, the month bars, history, Edit) opens from the header,
+// or from the overview's link to it.
 export function TargetCard({
   target: t,
   editable,
@@ -57,6 +62,27 @@ export function TargetCard({
   covers?: { categoryId: string; name: string; spentCents: number }[];
 }) {
   const [editing, setEditing] = useState(false);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLLIElement>(null);
+  const anchor = targetAnchor(t.categoryId);
+  // Opened by an overview link, or arriving with its #anchor in the URL.
+  // Scrolled to once it has opened, so it lands on the card's new height.
+  const [revealed, setRevealed] = useState(0);
+  useEffect(() => {
+    if (revealed) ref.current?.scrollIntoView({ block: "start" });
+  }, [revealed]);
+  useEffect(() => {
+    const reveal = () => {
+      setOpen(true);
+      setRevealed((n) => n + 1);
+    };
+    if (window.location.hash === `#${anchor}`) reveal();
+    const onOpen = (e: Event) => {
+      if ((e as CustomEvent<string>).detail === anchor) reveal();
+    };
+    window.addEventListener(OPEN_TARGET, onOpen);
+    return () => window.removeEventListener(OPEN_TARGET, onOpen);
+  }, [anchor]);
   const over = t.remainingCents < 0;
   const scale = Math.max(t.availableCents, t.spentCents, 1);
   const spentWidth = (Math.max(0, t.spentCents) / scale) * 100;
@@ -68,9 +94,18 @@ export function TargetCard({
   ].filter(Boolean);
 
   return (
-    <li className="space-y-2 rounded-lg border p-3 text-sm">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-3">
+    <li id={anchor} ref={ref} className="scroll-mt-4 space-y-2 rounded-lg border p-3 text-sm">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        aria-controls={`${anchor}-detail`}
+        className="flex w-full flex-wrap items-baseline justify-between gap-x-3 text-left"
+      >
         <span className="min-w-0 font-medium">
+          <span aria-hidden className={`mr-1.5 inline-block text-xs text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}>
+            ▸
+          </span>
           {t.name}
           <span className="ml-2 text-xs font-normal text-muted-foreground">
             {periodLabel(t.start, t.end)} · {scheduleLabel(t.periodMonths)}
@@ -80,7 +115,7 @@ export function TargetCard({
         <span className="tabular-nums">
           {formatCents(t.spentCents)} <span className="text-muted-foreground">of {formatCents(t.availableCents)}</span>
         </span>
-      </div>
+      </button>
 
       <div className="relative h-2.5 rounded-sm bg-muted" aria-hidden>
         <div
@@ -104,44 +139,48 @@ export function TargetCard({
           {over ? `${formatCents(-t.remainingCents)} over` : `${formatCents(t.remainingCents)} left`}
         </span>
       </div>
-      {t.paceCents !== null ? (
-        <p className="text-xs text-muted-foreground tabular-nums">
-          <span className="mr-1 inline-block h-2 w-0.5 bg-warning align-middle" aria-hidden />
-          Even pace to date: {formatCents(t.paceCents)} ({t.spentCents <= t.paceCents ? "under" : "ahead of"} pace)
-          {t.setAsideMonthlyCents !== null
-            ? ` · Set aside ${formatCents(t.setAsideMonthlyCents)}/month; ${formatCents(t.setAsideByNowCents ?? 0)} by now`
-            : ""}
-        </p>
-      ) : null}
+      {open || editing ? (
+        <div id={`${anchor}-detail`} className="space-y-2">
+          {t.paceCents !== null ? (
+            <p className="text-xs text-muted-foreground tabular-nums">
+              <span className="mr-1 inline-block h-2 w-0.5 bg-warning align-middle" aria-hidden />
+              Even pace to date: {formatCents(t.paceCents)} ({t.spentCents <= t.paceCents ? "under" : "ahead of"} pace)
+              {t.setAsideMonthlyCents !== null
+                ? ` · Set aside ${formatCents(t.setAsideMonthlyCents)}/month; ${formatCents(t.setAsideByNowCents ?? 0)} by now`
+                : ""}
+            </p>
+          ) : null}
 
-      {covers ? <BufferCovers covers={covers} /> : null}
-      <MonthBars bars={bars} viewedMonth={viewedMonth} partialMonth={partialMonth} />
-      <p className="text-xs text-muted-foreground tabular-nums">{historyLabel(history, windowMonths)}</p>
+          {covers ? <BufferCovers covers={covers} /> : null}
+          <MonthBars bars={bars} viewedMonth={viewedMonth} partialMonth={partialMonth} />
+          <p className="text-xs text-muted-foreground tabular-nums">{historyLabel(history, windowMonths)}</p>
 
-      {editable ? (
-        editing ? (
-          <div className="border-t pt-3">
-            <TargetForm
-              initial={{
-                categoryId: t.categoryId,
-                name: t.name,
-                amountCents: t.amountCents,
-                periodMonths: t.periodMonths,
-                anchorOn: t.anchorOn,
-                rollover: t.rollover,
-                sinkingFund: t.sinkingFund,
-              }}
-              histories={history ? { [t.categoryId ?? ""]: history } : {}}
-              suggestFrom={netHistory ? { [t.categoryId ?? ""]: netHistory } : {}}
-              windowMonths={windowMonths}
-              onDone={() => setEditing(false)}
-            />
-          </div>
-        ) : (
-          <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => setEditing(true)}>
-            Edit target
-          </Button>
-        )
+          {editable ? (
+            editing ? (
+              <div className="border-t pt-3">
+                <TargetForm
+                  initial={{
+                    categoryId: t.categoryId,
+                    name: t.name,
+                    amountCents: t.amountCents,
+                    periodMonths: t.periodMonths,
+                    anchorOn: t.anchorOn,
+                    rollover: t.rollover,
+                    sinkingFund: t.sinkingFund,
+                  }}
+                  histories={history ? { [t.categoryId ?? ""]: history } : {}}
+                  suggestFrom={netHistory ? { [t.categoryId ?? ""]: netHistory } : {}}
+                  windowMonths={windowMonths}
+                  onDone={() => setEditing(false)}
+                />
+              </div>
+            ) : (
+              <Button size="xs" variant="ghost" className="text-muted-foreground" onClick={() => setEditing(true)}>
+                Edit target
+              </Button>
+            )
+          ) : null}
+        </div>
       ) : null}
     </li>
   );

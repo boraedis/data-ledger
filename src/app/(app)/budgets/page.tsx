@@ -7,6 +7,7 @@ import { budgetHistory, budgetMonthly, budgetStatus, yearlyCharges } from "@/ope
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { RebalanceForm, TargetForm, type TargetChoice } from "./forms";
+import { BudgetOverview } from "./overview";
 import { TargetCard } from "./target-card";
 
 // Budgets (#7): category targets plus one unallocated buffer, each with its
@@ -124,16 +125,30 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
           categories you actually want to watch.
         </p>
       ) : (
-        <ul className="space-y-3">
-          {status.targets.map((t) => (
-            <TargetCard key={t.categoryId ?? "buffer"} target={t} editable={isCurrent} history={histories[t.categoryId ?? ""]} netHistory={netHistories[t.categoryId ?? ""]} windowMonths={HISTORY_MONTHS}
-              bars={series.get(t.categoryId ?? "") ?? []}
-              viewedMonth={`${month}-01`}
-              partialMonth={isCurrent ? `${month}-01` : null}
-              covers={t.categoryId === null ? status.unbudgeted.covers : undefined}
-            />
-          ))}
-        </ul>
+        <>
+          {/* The month at a glance (#122); each row opens its card below. */}
+          <BudgetOverview
+            targets={status.targets.map((t) => ({
+              categoryId: t.categoryId,
+              name: t.name,
+              start: t.start,
+              end: t.end,
+              spentCents: t.spentCents,
+              availableCents: t.availableCents,
+              remainingCents: t.remainingCents,
+            }))}
+          />
+          <ul className="space-y-3">
+            {status.targets.map((t) => (
+              <TargetCard key={t.categoryId ?? "buffer"} target={t} editable={isCurrent} history={histories[t.categoryId ?? ""]} netHistory={netHistories[t.categoryId ?? ""]} windowMonths={HISTORY_MONTHS}
+                bars={series.get(t.categoryId ?? "") ?? []}
+                viewedMonth={`${month}-01`}
+                partialMonth={isCurrent ? `${month}-01` : null}
+                covers={t.categoryId === null ? status.unbudgeted.covers : undefined}
+              />
+            ))}
+          </ul>
+        </>
       )}
 
       {/* With a buffer, its card lists what it covers (#110). */}
