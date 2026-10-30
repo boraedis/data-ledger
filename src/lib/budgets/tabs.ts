@@ -1,12 +1,12 @@
 // The budgets pages' tab bar (#145). One list, so every page shows the same
 // tabs. A tab's link carries the month being looked at and the gross/net
 // setting, so switching from March's Month view opens the Year view ending
-// in March, still gross if it was. The Dashboard tab (#146) joins this list
-// when its page exists; a tab to a page that isn't there would be a dead end.
+// in March, still gross if it was.
 
-export type BudgetTab = { id: "month" | "year" | "targets"; label: string; path: string };
+export type BudgetTab = { id: "dashboard" | "month" | "year" | "targets"; label: string; path: string };
 
 export const BUDGET_TABS: BudgetTab[] = [
+  { id: "dashboard", label: "Dashboard", path: "/budgets/dashboard" },
   { id: "month", label: "Month", path: "/budgets" },
   { id: "year", label: "Year", path: "/budgets/year" },
   { id: "targets", label: "Targets", path: "/budgets/targets" },

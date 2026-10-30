@@ -10,6 +10,7 @@ import {
   currentVersion,
   firstOfMonth,
   HISTORY_MONTHS,
+  keyOf,
   lastOfMonth,
   linesForTarget,
   monthIndex,
@@ -214,15 +215,17 @@ export const budgetMonthly = defineRead({
     "and the month shows what the target would cover today. `months` widens the window (up to 24); " +
     "`includeEnded` also lists targets in effect during the window but not on `on`. Each month counts its transactions. " +
     "`details` adds, for a month with a target, the period it falls in as budgets.status had it then: dates, target, " +
-    "rollover carried in, rebalancing, available, and whether it rolls over. Net unless gross is true.",
+    "rollover carried in, rebalancing, available, and whether it rolls over. `moved` adds movedCents to each month: " +
+    "budget moved into (+) or out of (−) the target that month by budgets.rebalance. Net unless gross is true.",
   input: z.object({
     on: isoDate.optional(),
     gross: z.boolean().default(false),
     months: z.number().int().min(1).max(24).default(SERIES_MONTHS),
     includeEnded: z.boolean().default(false),
     details: z.boolean().default(false),
+    moved: z.boolean().default(false),
   }),
-  run: async (db, { on = today(), gross, months, includeEnded, details }) => {
+  run: async (db, { on = today(), gross, months, includeEnded, details, moved }) => {
     const windowStart = firstOfMonth(monthIndex(on) - months + 1);
     const versions = await loadVersions(db);
     // Rollover carries from the target's first period, so with details the
@@ -232,7 +235,7 @@ export const budgetMonthly = defineRead({
     const [lines, { rows, labelOf }, adjustments] = await Promise.all([
       spendingLines.run(db, { from: earliest, to: on, budgetOnly: true, gross }),
       labels(db),
-      details
+      details || moved
         ? db.select({ categoryId: budgetAdjustments.categoryId, on: budgetAdjustments.on, amountCents: budgetAdjustments.amountCents }).from(budgetAdjustments)
         : [],
     ]);
@@ -243,10 +246,16 @@ export const budgetMonthly = defineRead({
     return [...series].map(([key, bars]) => {
       const categoryId = key === BUFFER ? null : key;
       const own = periods?.get(key) ?? [];
+      // Rebalancing (#146) by the month it was made in: each move is a pair
+      // that nets to zero, so it shifts targets between rows without
+      // changing a month's total.
+      const movedIn = (month: string) =>
+        adjustments.filter((a) => keyOf(a.categoryId) === key && a.on.slice(0, 7) === month.slice(0, 7)).reduce((sum, a) => sum + a.amountCents, 0);
       return {
         categoryId,
         name: nameFor(labelOf, categoryId),
-        months: bars.map((b) => {
+        months: bars.map((bar) => {
+          const b = moved ? { ...bar, movedCents: movedIn(bar.month) } : bar;
           if (!periods || b.targetCents === null) return b;
           const p = own.find((x) => x.start <= b.month && b.month <= x.end);
           return {
