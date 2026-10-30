@@ -59,6 +59,9 @@ export const listTransactions = defineRead({
     "anything about spending. Page with offset. `transfer` is set when the transaction is one side of a " +
     "transfer between the owner's accounts (never spending or income); `investmentActivity` classifies " +
     "brokerage and retirement transactions (dividend, interest, buy, sell, reinvestment, fee, transfer, other). " +
+    "`transferUnmatched` is true for one filed under a transfer category whose other side wasn't found. " +
+    "`payStub` is set on a paycheck deposit linked to its pay stub (pay date, employer); `paycheckWithoutStub` " +
+    "is true for money in that looks like a paycheck (the category or payer of linked ones) but has none. " +
     "`provisionalSource` is set on a provisional transaction: one from a purchase alert that the bank hasn't " +
     "reported yet (see transactions.provisional).",
   input: z.object({
@@ -134,7 +137,7 @@ export const listTransactions = defineRead({
     const [context, { owedOff, matched }] = await Promise.all([transferAndActivity(db, rows), reimbursementAdjustments(db, ids)]);
     return rows.map(({ transferPairId, ...r }) => ({
       ...r,
-      ...context(r.accountId, r.description, transferPairId),
+      ...context(r, transferPairId),
       // Shared expenses (#8): what friends owe on it, and how much of an
       // incoming payment was matched to what they owed.
       sharedOwedCents: owedOff.get(r.id) ?? 0,
@@ -145,29 +148,68 @@ export const listTransactions = defineRead({
 });
 
 /**
- * For each transaction: the other side's account if it's a paired
- * transfer, and what kind of investment activity it is if it's in a
- * brokerage or retirement account (rule-based, src/lib/investments).
+ * For each transaction, what it's connected to, so nothing is read twice:
+ * - `transfer`: the other side's account, when it's a paired transfer
+ * - `transferUnmatched`: filed under a transfer category, but unpaired, so
+ *   its other half wasn't found (an account not connected, or not a
+ *   transfer at all)
+ * - `payStub`: the pay stub a paycheck deposit is linked to (#60, #91)
+ * - `paycheckWithoutStub`: money in that looks like a paycheck, in the
+ *   category or from the payer of the linked ones, with no stub
+ * - `investmentActivity`: what a brokerage or retirement transaction is
  */
-async function transferAndActivity(db: Db, rows: { accountId: string; transferPairId: string | null }[]) {
+async function transferAndActivity(
+  db: Db,
+  rows: { id: string; accountId: string; transferPairId: string | null; description: string; amountCents: number; categoryId: string | null; merchant: string | null }[],
+) {
+  const ids = rows.map((r) => r.id);
   const pairIds = rows.map((r) => r.transferPairId).filter((id): id is string => Boolean(id));
-  const [kinds, pairs] = await Promise.all([
+  const [kinds, pairs, transferCats, stubLinks, paycheckShapes] = await Promise.all([
     db.select({ id: accounts.id, kind: accounts.type }).from(accounts),
     pairIds.length
       ? db.select({ id: transactions.id, accountId: transactions.accountId }).from(transactions).where(inArray(transactions.id, pairIds))
       : Promise.resolve([]),
+    db.select({ id: categories.id }).from(categories).where(eq(categories.kind, "transfer")),
+    ids.length
+      ? db
+          .select({ transactionId: payStubDeposits.transactionId, payStubId: payStubs.id, payDate: payStubs.payDate, employer: payStubs.employer })
+          .from(payStubDeposits)
+          .innerJoin(payStubs, eq(payStubs.id, payStubDeposits.payStubId))
+          .where(inArray(payStubDeposits.transactionId, ids))
+      : Promise.resolve([]),
+    // What linked paychecks look like: their categories and payers.
+    db
+      .selectDistinct({ categoryId: transactions.categoryId, merchant: transactions.merchant })
+      .from(payStubDeposits)
+      .innerJoin(transactions, eq(transactions.id, payStubDeposits.transactionId)),
   ]);
   const kindOf = new Map(kinds.map((k) => [k.id, k.kind]));
   const pairAccount = new Map(pairs.map((p) => [p.id, p.accountId]));
+  const isTransferCategory = new Set(transferCats.map((c) => c.id));
+  const stubOf = new Map(stubLinks.map((l) => [l.transactionId, { payStubId: l.payStubId, payDate: l.payDate, employer: l.employer }]));
+  const paycheckCategories = new Set(paycheckShapes.map((p) => p.categoryId).filter(Boolean));
+  const paycheckPayers = new Set(paycheckShapes.map((p) => p.merchant).filter(Boolean));
   return (
-    accountId: string,
-    description: string,
+    row: { id: string; accountId: string; description: string; amountCents: number; categoryId: string | null; merchant: string | null },
     transferPairId: string | null,
-  ): { transfer: { transactionId: string; accountId: string } | null; investmentActivity: InvestmentActivity | null } => {
-    const kind = kindOf.get(accountId);
+  ): {
+    transfer: { transactionId: string; accountId: string } | null;
+    transferUnmatched: boolean;
+    payStub: { payStubId: string; payDate: string; employer: string } | null;
+    paycheckWithoutStub: boolean;
+    investmentActivity: InvestmentActivity | null;
+  } => {
+    const kind = kindOf.get(row.accountId);
+    const payStub = stubOf.get(row.id) ?? null;
     return {
       transfer: transferPairId ? { transactionId: transferPairId, accountId: pairAccount.get(transferPairId)! } : null,
-      investmentActivity: kind && isInvestmentKind(kind) ? investmentActivity(description) : null,
+      transferUnmatched: !transferPairId && row.categoryId !== null && isTransferCategory.has(row.categoryId),
+      payStub,
+      paycheckWithoutStub:
+        !payStub &&
+        row.amountCents > 0 &&
+        ((row.categoryId !== null && paycheckCategories.has(row.categoryId)) || (row.merchant !== null && paycheckPayers.has(row.merchant))),
+      investmentActivity: kind && isInvestmentKind(kind) ? investmentActivity(row.description) : null,
     };
   };
 }
@@ -331,7 +373,7 @@ export const getTransaction = defineRead({
         .orderBy(tags.name),
     ]);
     const { transferPairId, ...rest } = row;
-    const context = (await transferAndActivity(db, [row]))(row.accountId, row.description, transferPairId);
+    const context = (await transferAndActivity(db, [{ ...row, transferPairId }]))(row, transferPairId);
     return { ...rest, ...context, splits: parts, tags: tagRows };
   },
 });

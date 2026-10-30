@@ -37,7 +37,7 @@ const GROUP: Record<AccountKind, AccountGroup> = {
   brokerage: "investment",
   retirement: "investment",
   other_asset: "investment",
-  credit: "debt",
+  credit: "card",
   loan: "debt",
 };
 
@@ -65,7 +65,7 @@ export async function cashFlowInputs(db: Db, { from, to, gross }: { from: string
     }));
   const lines: SpendLine[] = rawLines.filter((l) => !stubDeposits.has(l.transactionId));
 
-  const { transfers, consumed } = await transfersIn(db, from, to);
+  const { transfers, consumed, unmatched } = await transfersIn(db, from, to);
   const uncategorized = await uncategorizedIn(db, from, to, new Set([...consumed, ...stubDeposits]), gross);
   const uncategorizedOut = uncategorized.filter((u) => u.amountCents < 0);
   return {
@@ -75,6 +75,8 @@ export async function cashFlowInputs(db: Db, { from, to, gross }: { from: string
     uncategorized,
     accounts,
     lookup,
+    // Transfers missing their other half, for the page to flag.
+    unmatched: unmatched.map((u) => ({ ...u, accountName: lookup.accountNames.get(u.accountId) ?? "" })),
     uncategorizedOut: { count: uncategorizedOut.length, cents: -uncategorizedOut.reduce((s, u) => s + u.amountCents, 0) },
   };
 }
@@ -87,7 +89,9 @@ export async function cashFlowInputs(db: Db, { from, to, gross }: { from: string
  * nothing matched is the other half missing on the way in. `consumed` is
  * every transaction a transfer accounts for.
  */
-async function transfersIn(db: Db, from: string, to: string): Promise<{ transfers: Transfer[]; consumed: Set<string> }> {
+export type UnmatchedTransfer = { transactionId: string; postedOn: string; accountId: string; amountCents: number; label: string };
+
+async function transfersIn(db: Db, from: string, to: string): Promise<{ transfers: Transfer[]; consumed: Set<string>; unmatched: UnmatchedTransfer[] }> {
   const transferCategories = await db.select({ id: categories.id, name: categories.name }).from(categories).where(eq(categories.kind, "transfer"));
   const isTransfer = new Set(transferCategories.map((c) => c.id));
   const label = new Map(transferCategories.map((c) => [c.id, c.name]));
@@ -114,6 +118,7 @@ async function transfersIn(db: Db, from: string, to: string): Promise<{ transfer
   const consumed = new Set<string>();
   const days = (a: string, b: string) => Math.abs(Date.parse(a) - Date.parse(b)) / DAY_MS;
   const transfers: Transfer[] = [];
+  const unmatched: UnmatchedTransfer[] = [];
 
   for (const o of outflows.sort((a, b) => a.postedOn.localeCompare(b.postedOn) || a.id.localeCompare(b.id))) {
     const name = (o.categoryId && label.get(o.categoryId)) || "Transfer";
@@ -121,6 +126,7 @@ async function transfersIn(db: Db, from: string, to: string): Promise<{ transfer
     if (o.transferPairId) {
       const pair = byId.get(o.transferPairId);
       transfers.push({ fromAccountId: o.accountId, toAccountId: pair?.accountId ?? null, label: name, amountCents, transactionId: o.id });
+      if (!pair) unmatched.push({ transactionId: o.id, postedOn: o.postedOn, accountId: o.accountId, amountCents: o.amountCents, label: name });
       consumed.add(o.id).add(o.transferPairId);
       continue;
     }
@@ -135,6 +141,7 @@ async function transfersIn(db: Db, from: string, to: string): Promise<{ transfer
       // Filed as a transfer, other half not found: still not spending.
       consumed.add(o.id);
       transfers.push({ fromAccountId: o.accountId, toAccountId: null, label: name, amountCents, transactionId: o.id });
+      unmatched.push({ transactionId: o.id, postedOn: o.postedOn, accountId: o.accountId, amountCents: o.amountCents, label: name });
     }
     // Uncategorized with no match: just uncategorized money out.
   }
@@ -142,8 +149,9 @@ async function transfersIn(db: Db, from: string, to: string): Promise<{ transfer
     if (used.has(i.id) || !i.categoryId || !inPeriod(i.postedOn)) continue;
     consumed.add(i.id);
     transfers.push({ fromAccountId: null, toAccountId: i.accountId, label: label.get(i.categoryId)!, amountCents: i.amountCents, transactionId: i.id });
+    unmatched.push({ transactionId: i.id, postedOn: i.postedOn, accountId: i.accountId, amountCents: i.amountCents, label: label.get(i.categoryId)! });
   }
-  return { transfers, consumed };
+  return { transfers, consumed, unmatched: unmatched.sort((a, b) => b.postedOn.localeCompare(a.postedOn)) };
 }
 
 /**

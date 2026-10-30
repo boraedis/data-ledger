@@ -17,7 +17,8 @@ const cats: CategoryInfo[] = [
 const accounts = new Map<string, AccountInfo>([
   ["checking", { name: "Everyday Checking", group: "spending" }],
   ["savings", { name: "Rainy Day Savings", group: "savings" }],
-  ["visa", { name: "Rewards Card", group: "debt" }],
+  ["visa", { name: "Rewards Card", group: "card" }],
+  ["car", { name: "Car Loan", group: "debt" }],
   ["brokerage", { name: "Index Fund Account", group: "investment" }],
 ]);
 const lookup: Lookup = { categories: new Map(cats.map((c) => [c.id, c])), accountNames: new Map([...accounts].map(([id, a]) => [id, a.name])) };
@@ -112,19 +113,36 @@ describe("buildFlowGraph: five levels", () => {
   it("nets each account into saved, invested, paid down or drawn on, never as income or spending", () => {
     // Savings: the $500 deposit plus $11.50 interest.
     expect(value(graph, "bucket:savings", "account:savings")).toBe(51_150);
-    // The brokerage got $300; the card was charged $162 and paid $100, so $62 went on credit.
     expect(value(graph, "bucket:investing", "account:brokerage")).toBe(30_000);
-    expect(value(graph, "draw:visa", "pool:take-home")).toBe(6_200);
-    expect(graph.nodes.find((x) => x.id === "draw:visa")).toMatchObject({ label: "Put on Rewards Card", level: 1 });
-    // Checking: $2,071.75 in; $1,850 rent, $25 uncategorized, $100 to the card and $300 to the brokerage out: $203.25 short.
-    expect(value(graph, "draw:checking", "pool:take-home")).toBe(20_325);
-    expect(graph.nodes.find((x) => x.id === "draw:checking")!.label).toBe("From Everyday Checking (cash on hand)");
-    expect(graph.nodes.some((x) => /Credit Card Payment/.test(x.label))).toBe(false);
+    // Checking and the card are one pool of spending money: $2,071.75 in;
+    // $1,850 rent, $162 on the card, $25 uncategorized and $300 to the
+    // brokerage out: $265.25 from cash on hand. The $100 card payment moved
+    // money inside the pool, so it appears nowhere.
+    expect(outOf(graph, "draw:spending-money")).toBe(26_525);
+    expect(graph.nodes.find((x) => x.id === "draw:spending-money")).toMatchObject({ label: "From Everyday Checking (cash on hand)", level: 2 });
+    expect(graph.nodes.some((x) => /Rewards Card|Credit Card Payment/.test(x.label))).toBe(false);
+    expect(graph.links.some((l) => l.target === "bucket:debt")).toBe(false);
   });
 
-  it("adds up: what flows into take-home is exactly what flows out of it", () => {
-    expect(into(graph, "pool:take-home")).toBe(outOf(graph, "pool:take-home"));
+  it("never counts a card payment on top of the charges it pays, whatever month they were in", () => {
+    // Last month's $900 bill paid this month, $50 charged this month.
+    const g = build({ paychecks: [paycheck], lines: [line("dining", -5_000)], transfers: [transfer("checking", "visa", 90_000, "Credit Card Payment")] });
+    expect(value(g, "pool:take-home", "bucket:spending")).toBe(5_000);
+    expect(g.links.some((l) => l.target === "bucket:debt" || l.target === "bucket:other")).toBe(false);
+    expect(g.nodes.some((x) => /Rewards Card/.test(x.label))).toBe(false);
+    expect(into(g, "pool:take-home")).toBe(outOf(g, "pool:take-home"));
+  });
+
+  it("adds up, with what was drawn on beside take-home, never in it", () => {
+    // Take-home is income only: pay and interest.
+    expect(into(graph, "pool:take-home")).toBe(257_175 + 1_150);
+    expect(graph.links.some((l) => l.source.startsWith("draw:") && l.target === "pool:take-home")).toBe(false);
+    // It pays first; cash on hand covers the rest.
+    expect(outOf(graph, "pool:take-home")).toBe(into(graph, "pool:take-home"));
+    expect(value(graph, "pool:take-home", "bucket:spending")).toBe(16_200 + 185_000 + 2_500);
     for (const b of ["bucket:spending", "bucket:investing", "bucket:savings"]) expect(outOf(graph, b)).toBe(into(graph, b));
+    const level3In = ["bucket:spending", "bucket:investing", "bucket:savings"].reduce((t, b) => t + into(graph, b), 0);
+    expect(level3In).toBe(into(graph, "pool:take-home") + outOf(graph, "draw:spending-money") + 30_000 /* 401(k) with the match */);
   });
 
   it("counts the transactions behind each flow", () => {
@@ -139,29 +157,32 @@ describe("buildFlowGraph: other cases", () => {
       lines: [line("rent", -100_000, { accountId: "checking" })],
       transfers: [transfer("brokerage", "checking", 150_000)],
     });
-    expect(value(g, "draw:brokerage", "pool:take-home")).toBe(150_000);
-    expect(g.nodes.find((x) => x.id === "draw:brokerage")!.label).toBe("From Index Fund Account");
-    expect(value(g, "bucket:savings", "account:checking")).toBe(50_000);
-    expect(g.nodes.find((x) => x.id === "account:checking")!.label).toBe("Kept in Everyday Checking");
+    expect(value(g, "draw:brokerage", "bucket:spending")).toBe(100_000);
+    expect(value(g, "draw:brokerage", "bucket:savings")).toBe(50_000);
+    expect(g.nodes.find((x) => x.id === "draw:brokerage")).toMatchObject({ label: "From Index Fund Account", level: 2 });
+    expect(value(g, "bucket:savings", "account:spending-money")).toBe(50_000);
+    expect(g.nodes.find((x) => x.id === "account:spending-money")!.label).toBe("Kept in Everyday Checking");
   });
 
-  it("shows paying a card down beyond the month's charges as debt paydown", () => {
-    const g = build({ paychecks: [paycheck], lines: [line("dining", -5_000)], transfers: [transfer("checking", "visa", 25_000)] });
-    expect(value(g, "bucket:debt", "account:visa")).toBe(20_000);
+  it("shows paying down a loan as debt paydown", () => {
+    const g = build({ paychecks: [paycheck], transfers: [transfer("checking", "car", 25_000, "Loan Payment")] });
+    expect(value(g, "bucket:debt", "account:car")).toBe(25_000);
   });
 
   it("keeps a transfer missing its other half out of income and spending", () => {
     const g = build({ paychecks: [paycheck], transfers: [transfer("checking", null, 40_000, "Loan Payment"), transfer(null, "checking", 5_000, "Between Accounts")] });
     expect(value(g, "bucket:other", "other:Loan Payment")).toBe(40_000);
-    expect(value(g, "draw:in:Between Accounts", "pool:take-home")).toBe(5_000);
+    expect(outOf(g, "draw:in:Between Accounts")).toBe(5_000);
     expect(into(g, "pool:take-home")).toBe(outOf(g, "pool:take-home"));
   });
 
   it("turns uncategorized money in into a source, and a refund-only category into one too", () => {
     const g = build({ uncategorized: [{ transactionId: "u", accountId: "checking", amountCents: 4_000 }], lines: [line("rent", 2_000, { accountId: "checking" })] });
+    // Uncategorized money in may be income: a level-1 source into take-home.
     expect(value(g, "income:uncategorized", "pool:take-home")).toBe(4_000);
-    expect(value(g, "draw:refund:category:rent", "pool:take-home")).toBe(2_000);
-    expect(into(g, "pool:take-home")).toBe(outOf(g, "pool:take-home"));
+    // A refund isn't: level 2, beside take-home.
+    expect(outOf(g, "draw:refund:category:rent")).toBe(2_000);
+    expect(g.nodes.find((x) => x.id === "draw:refund:category:rent")!.level).toBe(2);
   });
 
   it("breaks spending down by merchant on request, folding a long tail", () => {
@@ -179,7 +200,8 @@ describe("layoutFlows", () => {
 
   it("puts each level in its own column, closing up empty ones", () => {
     expect([at("pay:Acme Widgets").column, at("pool:take-home").column, at("bucket:spending").column, at("spend:category:food").column, at("spend:dining").column]).toEqual([0, 1, 2, 3, 4]);
-    expect(layoutFlows(build({ lines: [line("rent", -1_000, { accountId: "checking" })] }), { width: 800 }).columns).toBe(4);
+    // No income at all: cash on hand (level 2) pays the rent, so levels 2–4 only.
+    expect(layoutFlows(build({ lines: [line("rent", -1_000, { accountId: "checking" })] }), { width: 800 }).columns).toBe(3);
     expect(at("spend:dining").x).toBe(800 - layout.nodeWidth);
   });
 

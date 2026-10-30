@@ -15,6 +15,9 @@ export const INVESTMENT_KINDS: readonly AccountKind[] = ["brokerage", "retiremen
 // account. Credit cards and loans aren't here: nobody funds a brokerage from
 // a card, and allowing it would only add false matches.
 export const CASH_KINDS: readonly AccountKind[] = ["checking", "savings", "payment_app"];
+// What's owed: paying one from cash is a transfer, not spending (the
+// spending was counted when it was charged).
+export const DEBT_KINDS: readonly AccountKind[] = ["credit", "loan"];
 
 export function isInvestmentKind(kind: AccountKind): boolean {
   return INVESTMENT_KINDS.includes(kind);

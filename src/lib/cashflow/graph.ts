@@ -4,12 +4,13 @@ import { keysFor, type Lookup, type SpendLine } from "@/lib/spending/analyze";
 
 // Cash flow (#62): a period's money as a Sankey in five levels, left to right.
 //
-//   1. Where it came from: each employer's gross pay, the employer's own
-//      401(k) and HSA contributions, other income, and what the period drew
-//      on (savings, investments sold to cash, card balances that grew, cash
-//      on hand), so nothing is unexplained
-//   2. Take-home, one bucket, beside what came off the paycheck first:
-//      each tax, the 401(k) and HSA, insurance and other deductions
+//   1. Income: each employer's gross pay, the employer's own 401(k) and
+//      HSA contributions, other income
+//   2. Take-home, one bucket, beside what came off the paycheck first
+//      (each tax, the 401(k) and HSA, insurance and other deductions) and
+//      what the period drew on that isn't income: savings, investments
+//      moved to cash, cash on hand, refunds, a transfer in with no other
+//      half. Those feed the level-3 buckets directly, never take-home.
 //   3. Where it went: Spending, Investing, Cash savings, Debt paydown
 //   4. The breakdown: spending categories (or merchants), each investment
 //      and savings account (with what stayed in checking), each card or loan
@@ -30,8 +31,10 @@ export type FlowLink = { source: string; target: string; valueCents: number; cou
 export type FlowGraph = { nodes: FlowNode[]; links: FlowLink[] };
 
 // How an account's net movement reads: kept in a spending account, saved,
-// invested, or a debt paid down (or, the other way, drawn on).
-export type AccountGroup = "spending" | "savings" | "investment" | "debt";
+// invested, or a loan paid down (or, the other way, drawn on). A credit
+// card is spending money, not debt to pay down: its charges are spending
+// when they happen, and paying it from checking just settles them.
+export type AccountGroup = "spending" | "card" | "savings" | "investment" | "debt";
 export type AccountInfo = { name: string; group: AccountGroup };
 
 export type Paycheck = {
@@ -102,17 +105,46 @@ export function buildFlowGraph({ paychecks, lines, uncategorized, transfers, acc
     links.set(key, link);
   };
   const pool = () => node(POOL, "Take-home", "pool", 2);
+
+  // What each level-3 bucket needs, and what was drawn on to help pay for
+  // it; matched up at the end (take-home first).
+  const needs = new Map<string, { bucket: (typeof BUCKET)[keyof typeof BUCKET]; cents: number; ids: Set<string> }>();
+  const fund = (b: (typeof BUCKET)[keyof typeof BUCKET], cents: number, ids: Iterable<string>) => {
+    if (cents <= 0) return;
+    const need = needs.get(b.id) ?? { bucket: b, cents: 0, ids: new Set<string>() };
+    need.cents += cents;
+    for (const id of ids) need.ids.add(id);
+    needs.set(b.id, need);
+  };
+  const draws: { id: string; cents: number; ids: Set<string> }[] = [];
+  const drawn = (id: string, label: string, cents: number, ids: Iterable<string>) => {
+    if (cents <= 0) return;
+    node(id, label, "draw", 2);
+    draws.push({ id, cents, ids: new Set(ids) });
+  };
   const bucket = (b: (typeof BUCKET)[keyof typeof BUCKET]) => node(b.id, b.label, b.role, 3);
   const accountName = (id: string) => accounts.get(id)?.name ?? lookup.accountNames.get(id) ?? "Unknown account";
 
-  // Each account's net movement, and the transactions behind it.
+  // Each account's net movement, and the transactions behind it. Checking,
+  // payment apps and credit cards are one pool of spending money: a card
+  // payment from checking moves money inside it and cancels out, so it's
+  // never counted on top of the charges it pays for (already spending, in
+  // the month they were made).
+  const SPENDING_MONEY = "spending-money";
+  const keyOf = (accountId: string) => {
+    const group = accounts.get(accountId)?.group;
+    return group === "spending" || group === "card" ? SPENDING_MONEY : accountId;
+  };
+  const spendingNames = [...accounts.values()].filter((a) => a.group === "spending").map((a) => a.name);
+  const spendingMoney = spendingNames.length === 1 ? spendingNames[0] : "checking";
   const net = new Map<string, { cents: number; ids: Set<string> }>();
   const move = (accountId: string | null, cents: number, id: string) => {
     if (!accountId) return;
-    const n = net.get(accountId) ?? { cents: 0, ids: new Set<string>() };
+    const key = keyOf(accountId);
+    const n = net.get(key) ?? { cents: 0, ids: new Set<string>() };
     n.cents += cents;
     n.ids.add(id);
-    net.set(accountId, n);
+    net.set(key, n);
   };
 
   // 1 → 2: pay, gross, through what comes off it to take-home.
@@ -209,18 +241,18 @@ export function buildFlowGraph({ paychecks, lines, uncategorized, transfers, acc
     else if (inc.cents < 0) spend(`reversed:${categoryId}`, `Returned: ${inc.label}`, -inc.cents, [...inc.ids][0]);
   }
   if (uncategorizedIn.cents > 0) flow(node("income:uncategorized", "Uncategorized money in", "income", 1), pool(), uncategorizedIn.cents, uncategorizedIn.ids);
-  for (const [label, u] of otherIn) flow(node(`draw:in:${label}`, `${label} (other side not found)`, "draw", 1), pool(), u.cents, u.ids);
+  for (const [label, u] of otherIn) drawn(`draw:in:${label}`, `${label} (other side not found)`, u.cents, u.ids);
 
   // 2 → 3 → 4(→ 5): spending. A group refunded more than it spent is money
   // back: a source, so the totals still add up.
   for (const [key, g] of groups) {
     if (g.cents > 0) {
       const target = node(`spend:${key}`, g.label, "spend", 4);
-      flow(pool(), bucket(BUCKET.spending), g.cents, g.ids);
+      fund(BUCKET.spending, g.cents, g.ids);
       flow(bucket(BUCKET.spending), target, g.cents, g.ids);
       for (const [childKey, c] of g.children) flow(target, node(`spend:${childKey}`, c.label, "spend", 5), c.cents, c.ids);
     } else if (g.cents < 0) {
-      flow(node(`draw:refund:${key}`, `Refunds: ${g.label}`, "draw", 1), pool(), -g.cents, g.ids);
+      drawn(`draw:refund:${key}`, `Refunds: ${g.label}`, -g.cents, g.ids);
     }
   }
 
@@ -238,9 +270,9 @@ export function buildFlowGraph({ paychecks, lines, uncategorized, transfers, acc
 
   // Each account's net: an allocation when it grew, a source when drawn on.
   for (const [accountId, n] of net) {
-    const info = accounts.get(accountId);
+    const info = accountId === SPENDING_MONEY ? ({ name: spendingMoney, group: "spending" } as const) : accounts.get(accountId);
     if (!info || n.cents === 0) continue;
-    const name = accountName(accountId);
+    const name = accountId === SPENDING_MONEY ? spendingMoney : accountName(accountId);
     if (n.cents > 0) {
       const [b, label] =
         info.group === "investment"
@@ -250,17 +282,39 @@ export function buildFlowGraph({ paychecks, lines, uncategorized, transfers, acc
             : info.group === "savings"
               ? [BUCKET.savings, name]
               : [BUCKET.savings, `Kept in ${name}`];
-      flow(pool(), bucket(b), n.cents, n.ids);
+      fund(b, n.cents, n.ids);
       flow(bucket(b), node(`account:${accountId}`, label, b.role, 4), n.cents, n.ids);
     } else {
-      const label =
-        info.group === "debt" ? `Put on ${name}` : info.group === "spending" ? `From ${name} (cash on hand)` : `From ${name}`;
-      flow(node(`draw:${accountId}`, label, "draw", 1), pool(), -n.cents, n.ids);
+      // Spending money that ran down: cash on hand, or charges not yet paid.
+      const label = info.group === "spending" ? `From ${name} (cash on hand)` : `From ${name}`;
+      drawn(`draw:${accountId}`, label, -n.cents, n.ids);
     }
   }
   for (const [label, u] of otherOut) {
-    flow(pool(), bucket(BUCKET.other), u.cents, u.ids);
+    fund(BUCKET.other, u.cents, u.ids);
     flow(bucket(BUCKET.other), node(`other:${label}`, label, "debt", 4), u.cents, u.ids);
+  }
+
+  // Level 2 → 3. Which money paid for what isn't knowable, so take-home is
+  // shown paying first, in bucket order, and what was drawn on covers the
+  // rest. Exact cents: every bucket gets what it needs, every source gives
+  // what it had.
+  const takeHome = [...links.values()].filter((l) => l.target === POOL);
+  const sources = [
+    { id: POOL, cents: takeHome.reduce((s, l) => s + l.valueCents, 0) },
+    ...draws,
+  ].filter((src) => src.cents > 0);
+  for (const b of [BUCKET.spending, BUCKET.investing, BUCKET.savings, BUCKET.debt, BUCKET.other]) {
+    const need = needs.get(b.id);
+    let left = need?.cents ?? 0;
+    for (const src of sources) {
+      if (left <= 0) break;
+      const take = Math.min(left, src.cents);
+      if (take <= 0) continue;
+      flow(src.id, bucket(b), take, need!.ids);
+      src.cents -= take;
+      left -= take;
+    }
   }
 
   const kept = [...links.values()].map(({ ids, ...l }) => ({ ...l, count: ids.size }));

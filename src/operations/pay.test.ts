@@ -7,7 +7,7 @@ import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
 import { listPayStubs } from "@/operations/pay";
 import { execute, undoCommand } from "@/operations/runtime";
-import { spendingLines } from "@/operations/transactions";
+import { listTransactions, spendingLines } from "@/operations/transactions";
 
 // Pay stubs against the synthetic seed: its paychecks are the deposits,
 // and the stubs are made up to fit them. No real pay stub anywhere.
@@ -183,4 +183,21 @@ it("seeds three synthetic stubs, each linked to its paycheck and adding up", asy
     expect(s.deposits).toHaveLength(1);
     expect(s.grossCents - s.lines.reduce((sum, l) => sum + l.amountCents, 0)).toBe(s.netCents);
   }
+});
+
+it("marks each paycheck deposit with its pay stub, or as missing one, and an unpaired transfer as missing its other half", async () => {
+  const deposits = await listTransactions.run(db, { search: "ACME WIDGETS", limit: 500, offset: 0 });
+  const linked = deposits.filter((t) => t.payStub);
+  expect(linked).toHaveLength(3);
+  expect(linked[0].payStub).toMatchObject({ employer: expect.any(String), payDate: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+  // The rest of the payroll deposits: same category and payer, no stub.
+  const rest = deposits.filter((t) => !t.payStub);
+  expect(rest.length).toBeGreaterThan(0);
+  expect(rest.every((t) => t.paycheckWithoutStub)).toBe(true);
+
+  const [rent] = await db.select().from(transactions).where(like(transactions.description, "MAPLEWOOD%")).limit(1);
+  expect((await listTransactions.run(db, { search: "MAPLEWOOD", limit: 1, offset: 0 }))[0]).toMatchObject({ transferUnmatched: false, paycheckWithoutStub: false });
+  await run("transactions.setCategory", { transactionId: rent.id, categoryId: cat.Transfers });
+  const after = (await listTransactions.run(db, { search: "MAPLEWOOD", limit: 50, offset: 0 })).find((t) => t.id === rent.id)!;
+  expect(after).toMatchObject({ transfer: null, transferUnmatched: true });
 });

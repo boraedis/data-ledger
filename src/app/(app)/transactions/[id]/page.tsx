@@ -62,6 +62,28 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
           otherAccountName={otherAccount!}
           incoming={txn.amountCents > 0}
         />
+      ) : txn.transferUnmatched ? (
+        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
+          Filed as a transfer, but its other half wasn&apos;t found: no matching amount {txn.amountCents > 0 ? "left" : "arrived in"} another of your
+          accounts within 5 days. That&apos;s fine if the other account isn&apos;t connected. If it wasn&apos;t a transfer, file it as spending or
+          income below, or it counts as neither.
+        </p>
+      ) : null}
+      {txn.payStub ? (
+        <p className="rounded-lg border px-3 py-2 text-sm text-muted-foreground">
+          The deposit of the {txn.payStub.employer} pay stub dated {txn.payStub.payDate}: budgets and Cash flow count it as that paycheck&apos;s
+          gross pay and deductions, not this amount on its own.{" "}
+          <Link href="/pay" className="underline">
+            See it on Pay
+          </Link>
+        </p>
+      ) : txn.paycheckWithoutStub ? (
+        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
+          Looks like a paycheck, but no pay stub is linked to it, so it counts as this deposit only, without its taxes and deductions.{" "}
+          <Link href="/pay" className="underline">
+            Add or link its pay stub on Pay
+          </Link>
+        </p>
       ) : null}
       {/* Pending rows can be replaced when they post, so sharing waits. */}
       {!txn.pending && !txn.transfer ? (
