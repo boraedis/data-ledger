@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { historyLabel, periodLabel, scheduleLabel, type HistorySummary } from "@/lib/budgets/format";
 import { formatCents } from "@/lib/money";
 import { TargetForm } from "./forms";
+import { MonthBars, type Bar } from "./month-bars";
 
 export type CardTarget = {
   categoryId: string | null;
@@ -38,6 +39,9 @@ export function TargetCard({
   history,
   netHistory,
   windowMonths,
+  bars,
+  viewedMonth,
+  partialMonth,
 }: {
   target: CardTarget;
   editable: boolean;
@@ -45,6 +49,9 @@ export function TargetCard({
   // Net, for suggesting an amount (#106); see TargetForm.
   netHistory?: HistorySummary;
   windowMonths: number;
+  bars: Bar[];
+  viewedMonth: string;
+  partialMonth: string | null;
 }) {
   const [editing, setEditing] = useState(false);
   const over = t.remainingCents < 0;
@@ -104,6 +111,7 @@ export function TargetCard({
         </p>
       ) : null}
 
+      <MonthBars bars={bars} viewedMonth={viewedMonth} partialMonth={partialMonth} />
       <p className="text-xs text-muted-foreground tabular-nums">{historyLabel(history, windowMonths)}</p>
 
       {editable ? (
