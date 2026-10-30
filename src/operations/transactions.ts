@@ -51,6 +51,51 @@ export function awaitingCategory(db: Db): SQL {
   )!;
 }
 
+export type TransactionFilter = {
+  from?: string;
+  to?: string;
+  accountId?: string;
+  categoryId?: string;
+  tagId?: string;
+  search?: string;
+  uncategorized?: boolean;
+  budgetOnly?: boolean;
+};
+
+/**
+ * The list's filters as SQL, shared with anything acting on "everything
+ * matching this filter" (#116) so it means exactly the rows the list shows.
+ */
+export function transactionFilters(db: Db, input: TransactionFilter): SQL[] {
+  const filters: SQL[] = [];
+  if (input.from) filters.push(gte(transactions.postedOn, input.from));
+  if (input.to) filters.push(lte(transactions.postedOn, input.to));
+  if (input.accountId) filters.push(eq(transactions.accountId, input.accountId));
+  if (input.uncategorized) filters.push(isNull(transactions.categoryId), eq(transactions.isSplit, false));
+  if (input.budgetOnly) filters.push(inArray(transactions.accountId, budgetAccountIds(db)));
+  if (input.categoryId) {
+    const viaSplit = db
+      .select({ id: transactionSplits.transactionId })
+      .from(transactionSplits)
+      .where(eq(transactionSplits.categoryId, input.categoryId));
+    filters.push(sql`(${transactions.categoryId} = ${input.categoryId} or ${transactions.id} in ${viaSplit})`);
+  }
+  if (input.tagId) {
+    filters.push(
+      inArray(
+        transactions.id,
+        db.select({ id: transactionTags.transactionId }).from(transactionTags).where(eq(transactionTags.tagId, input.tagId)),
+      ),
+    );
+  }
+  if (input.search) {
+    // Escape LIKE wildcards so a search for "100%" means the text "100%".
+    const pattern = `%${input.search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    filters.push(sql`(${transactions.merchant} ilike ${pattern} or ${transactions.description} ilike ${pattern})`);
+  }
+  return filters;
+}
+
 export const listTransactions = defineRead({
   name: "transactions.list",
   description:
@@ -79,32 +124,7 @@ export const listTransactions = defineRead({
     offset: z.number().int().min(0).default(0),
   }),
   run: async (db, input) => {
-    const filters: SQL[] = [];
-    if (input.from) filters.push(gte(transactions.postedOn, input.from));
-    if (input.to) filters.push(lte(transactions.postedOn, input.to));
-    if (input.accountId) filters.push(eq(transactions.accountId, input.accountId));
-    if (input.uncategorized) filters.push(isNull(transactions.categoryId), eq(transactions.isSplit, false));
-    if (input.budgetOnly) filters.push(inArray(transactions.accountId, budgetAccountIds(db)));
-    if (input.categoryId) {
-      const viaSplit = db
-        .select({ id: transactionSplits.transactionId })
-        .from(transactionSplits)
-        .where(eq(transactionSplits.categoryId, input.categoryId));
-      filters.push(sql`(${transactions.categoryId} = ${input.categoryId} or ${transactions.id} in ${viaSplit})`);
-    }
-    if (input.tagId) {
-      filters.push(
-        inArray(
-          transactions.id,
-          db.select({ id: transactionTags.transactionId }).from(transactionTags).where(eq(transactionTags.tagId, input.tagId)),
-        ),
-      );
-    }
-    if (input.search) {
-      // Escape LIKE wildcards so a search for "100%" means the text "100%".
-      const pattern = `%${input.search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-      filters.push(sql`(${transactions.merchant} ilike ${pattern} or ${transactions.description} ilike ${pattern})`);
-    }
+    const filters = transactionFilters(db, input);
     // Only what a model needs: no account numbers or balances exist in this
     // shape, and nothing should add them (AGENTS.md, minimal data to models).
     const rows = await db

@@ -48,6 +48,7 @@ import {
   uncategorizedSpend,
   unmatchTransfer,
 } from "@/operations/transactions";
+import { moveToCategory, moveToCategoryPreview } from "@/operations/recategorize";
 
 // The one list of everything that can be done to the ledger. The UI calls
 // these, Tally gets them as tools (#11), and the nightly pipeline runs them. Adding a capability means adding it
@@ -70,6 +71,8 @@ export const operations: Operation[] = [
   reapplyRule,
   deleteRule,
   listTransactions,
+  moveToCategoryPreview,
+  moveToCategory,
   getTransaction,
   spendingLines,
   uncategorizedSpend,
