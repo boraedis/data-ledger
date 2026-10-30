@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { payForMonth, paySummary } from "./pay";
+import { payForMonth, paySummary, typicalMonth } from "./pay";
 
 // Made-up biweekly stubs, $1,500 net each.
 const stub = (payDate: string, netCents = 150_000, oneTime = false) => ({ payDate, periodStart: payDate, periodEnd: payDate, netCents, oneTime });
@@ -29,5 +29,38 @@ describe("pay against the budget (#128)", () => {
 
   it("has no pay at all with no stubs", () => {
     expect(payForMonth("2026-10", "2026-10-20", []).netPayCents).toBeNull();
+  });
+});
+
+describe("a typical month's pay (#142)", () => {
+  // Made-up biweekly $3,000 paychecks through 2026, starting Jan 2.
+  const paychecks = Array.from({ length: 26 }, (_, i) => stub(new Date(Date.parse("2026-01-02") + i * 14 * 86_400_000).toISOString().slice(0, 10), 300_000));
+
+  it("is the recent paycheck times 26 over 12: $6,500, against $9,000 landed in a 3-paycheck month and $6,000 in a 2-paycheck one", () => {
+    expect(typicalMonth(paychecks, "2026-12-31")).toEqual({ cents: 650_000, paceCents: 300_000, perYear: 26 });
+    // January 2026 has three paydays (2, 16, 30); February two.
+    expect(payForMonth("2026-01", "2026-12-31", paychecks).netPayCents).toBe(900_000);
+    expect(payForMonth("2026-02", "2026-12-31", paychecks).netPayCents).toBe(600_000);
+  });
+
+  it("gives months with different paychecks the same expected saving", () => {
+    const typical = typicalMonth(paychecks, "2026-12-31")!.cents;
+    const jan = paySummary({ netPayCents: typical, targetsCents: 500_000, spentCents: 450_000 });
+    const feb = paySummary({ netPayCents: typical, targetsCents: 500_000, spentCents: 470_000 });
+    expect(jan.expectedSaving).toEqual(feb.expectedSaving);
+    expect(jan.expectedSaving).toEqual({ cents: 150_000, percent: 23 });
+  });
+
+  it("isn't set by a bonus, which lands as extra in its month", () => {
+    const withBonus = [...paychecks, stub("2026-03-06", 1_000_000, true)];
+    expect(typicalMonth(withBonus, "2026-12-31")!.cents).toBe(650_000);
+    expect(payForMonth("2026-03", "2026-12-31", withBonus).netPayCents).toBe(600_000 + 1_000_000);
+  });
+
+  it("follows the pay of the time, and has none without regular stubs", () => {
+    const raised = [...paychecks.slice(0, 10), ...paychecks.slice(10).map((s) => ({ ...s, netCents: 330_000 }))];
+    expect(typicalMonth(raised, "2026-03-31")!.cents).toBe(650_000);
+    expect(typicalMonth(raised, "2026-12-31")!.cents).toBe(715_000);
+    expect(typicalMonth([stub("2026-03-06", 1_000_000, true)], "2026-12-31")).toBeNull();
   });
 });

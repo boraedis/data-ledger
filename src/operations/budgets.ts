@@ -26,7 +26,7 @@ import type { Series } from "@/lib/recurring/detect";
 import { budgetAccountIds } from "@/operations/accounts";
 import { detectedSeries } from "@/operations/recurring";
 import { spendingLines, uncategorizedSpend } from "@/operations/transactions";
-import { payForMonth, paySummary } from "@/lib/budgets/pay";
+import { payForMonth, paySummary, typicalMonth } from "@/lib/budgets/pay";
 import type { WriteContext } from "@/operations/tracked";
 
 // Budgets (#7): category targets with periods, rollover and an unallocated
@@ -299,8 +299,10 @@ export const budgetYear = defineRead({
 export const budgetPay = defineRead({
   name: "budgets.pay",
   description:
-    "The month's pay against its budget (as of `on`, default today), in cents and as a % of net pay: net pay (the " +
-    "month's pay stubs by pay date, plus in the current month paychecks still to come at the recent pace), total " +
+    "The month's pay against its budget (as of `on`, default today), in cents and as a % of net pay. Net pay is a " +
+    "typical month (`typical`: the recent regular paycheck times paychecks a year, over 12), so every month is measured " +
+    "the same; `pay` is what landed (the month's pay stubs by pay date, plus in the current month paychecks still to " +
+    "come at the recent pace), and landedDifferenceCents is that less the typical month. Total " +
     "targets (each target in effect at its monthly share, buffer included), expected saving (pay less targets), " +
     "spending so far (net spend in expense categories, budget accounts) and actual saving (pay less spending). " +
     "Transfers, savings included, and pay are never spending; deductions taken from a paycheck before it landed " +
@@ -321,6 +323,11 @@ export const budgetPay = defineRead({
       uncategorizedSpend.run(db, { from, to: on }),
     ]);
     const pay = payForMonth(month, now, stubs);
+    // Measured against a typical month (#142), not the paychecks that
+    // happened to land in this one: a third biweekly paycheck isn't a raise.
+    // As of the month's end (or today), so the past keeps the pay it had.
+    const typical = typicalMonth(stubs, on < now ? on : now);
+    const basisCents = typical?.cents ?? pay.netPayCents;
 
     // Each target in effect at its monthly share: a month's own target, or a
     // twelfth of an annual one, so a month with an annual target isn't
@@ -342,7 +349,11 @@ export const budgetPay = defineRead({
     return {
       month,
       pay,
-      summary: pay.netPayCents === null ? null : paySummary({ netPayCents: pay.netPayCents, targetsCents, spentCents }),
+      typical,
+      // What landed against the typical month: + extra (a third paycheck, a
+      // bonus), − short. Null without both.
+      landedDifferenceCents: typical && pay.netPayCents !== null ? pay.netPayCents - typical.cents : null,
+      summary: basisCents === null ? null : paySummary({ netPayCents: basisCents, targetsCents, spentCents }),
       targetsCents,
       spentCents,
       // Money out not categorized yet isn't in spending; said so, not hidden.

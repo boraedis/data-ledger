@@ -153,7 +153,14 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
               remainingCents: t.remainingCents,
             }))}
           />
-          <PayStrip summary={payVsBudget.summary} pay={payVsBudget.pay} isCurrent={isCurrent} uncategorized={payVsBudget.uncategorized} />
+          <PayStrip
+            summary={payVsBudget.summary}
+            pay={payVsBudget.pay}
+            typical={payVsBudget.typical}
+            landedDifferenceCents={payVsBudget.landedDifferenceCents}
+            isCurrent={isCurrent}
+            uncategorized={payVsBudget.uncategorized}
+          />
           <ul className="space-y-3">
             {status.targets.map((t) => (
               <TargetCard key={t.categoryId ?? "buffer"} target={t} editable={isCurrent} history={histories[t.categoryId ?? ""]} netHistory={netHistories[t.categoryId ?? ""]} windowMonths={HISTORY_MONTHS}

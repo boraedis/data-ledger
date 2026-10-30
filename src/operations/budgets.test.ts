@@ -360,6 +360,8 @@ describe("budgets.backdateTarget (#130)", () => {
 describe("budgets.pay (#128)", () => {
   type Pay = {
     pay: { recordedCents: number; recordedCount: number; netPayCents: number | null };
+    typical: { cents: number } | null;
+    landedDifferenceCents: number | null;
     summary: { expectedSaving: { cents: number; percent: number | null }; actualSaving: { cents: number } } | null;
     targetsCents: number;
     spentCents: number;
@@ -375,8 +377,11 @@ describe("budgets.pay (#128)", () => {
     expect(p.pay).toMatchObject({ recordedCount: stubs.length, recordedCents: stubs.reduce((s, x) => s + x.netCents, 0) });
     // Monthly Groceries in full, a twelfth of the annual Coffee target.
     expect(p.targetsCents).toBe(30_000 + 10_000);
-    expect(p.summary!.expectedSaving.cents).toBe(p.pay.netPayCents! - p.targetsCents);
-    expect(p.summary!.actualSaving.cents).toBe(p.pay.netPayCents! - p.spentCents);
+    // Measured against a typical month (#142); what landed is reported beside it.
+    expect(p.typical!.cents).toBeGreaterThan(0);
+    expect(p.summary!.expectedSaving.cents).toBe(p.typical!.cents - p.targetsCents);
+    expect(p.summary!.actualSaving.cents).toBe(p.typical!.cents - p.spentCents);
+    expect(p.landedDifferenceCents).toBe(p.pay.netPayCents! - p.typical!.cents);
   });
 
   it("counts a purchase as spending but never a transfer to savings", async () => {
@@ -397,8 +402,8 @@ describe("budgets.pay (#128)", () => {
     expect((await pay("2026-06-30")).spentCents).toBe(before.spentCents);
   });
 
-  it("says no pay was recorded for a month without stubs", async () => {
-    expect(await pay("2026-01-31")).toMatchObject({ pay: { netPayCents: null }, summary: null });
+  it("says no pay was recorded for a month before any stubs", async () => {
+    expect(await pay("2026-01-31")).toMatchObject({ pay: { netPayCents: null }, typical: null, summary: null });
   });
 });
 
