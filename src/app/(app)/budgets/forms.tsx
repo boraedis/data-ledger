@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { historyLabel, type HistorySummary } from "@/lib/budgets/format";
 import { parseAmountCents } from "@/lib/money";
 import { rebalance, removeTarget, setTarget } from "./actions";
 
@@ -32,11 +33,16 @@ const PERIODS = [
 export function TargetForm({
   choices,
   initial,
+  histories,
+  windowMonths,
   onDone,
 }: {
   // Categories to pick from when adding; omitted when editing one target.
   choices?: TargetChoice[];
   initial?: TargetChoice & { amountCents: number; periodMonths: number; anchorOn: string; rollover: boolean; sinkingFund: boolean };
+  // What each category usually costs (#105), by category id ("" for the buffer).
+  histories: Record<string, HistorySummary>;
+  windowMonths: number;
   onDone?: () => void;
 }) {
   const [choice, setChoice] = useState<string>(initial ? (initial.categoryId ?? "") : (choices?.[0]?.categoryId ?? ""));
@@ -98,6 +104,8 @@ export function TargetForm({
         <label className="space-y-1">
           <span className="block text-xs text-muted-foreground">Amount per period</span>
           <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="0.00" />
+          {/* A sense of what it usually costs, so the target isn't a guess. */}
+          <span className="block text-xs text-muted-foreground tabular-nums">{historyLabel(histories[selected], windowMonths)}</span>
         </label>
         <label className="space-y-1">
           <span className="block text-xs text-muted-foreground">Period</span>

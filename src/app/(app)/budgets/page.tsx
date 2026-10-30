@@ -2,7 +2,8 @@ import Link from "next/link";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
-import { budgetStatus } from "@/operations/budgets";
+import { HISTORY_MONTHS } from "@/lib/budgets/engine";
+import { budgetHistory, budgetStatus } from "@/operations/budgets";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { RebalanceForm, TargetForm, type TargetChoice } from "./forms";
@@ -32,7 +33,15 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
   // Net by default (your share of shared expenses); ?gross=1 shows spending
   // as charged, before what friends owe comes off.
   const gross = sp.gross === "1";
-  const [status, cats] = await Promise.all([read(db, budgetStatus, { on, gross }), read(db, listCategories, {})]);
+  const [status, cats, history] = await Promise.all([
+    read(db, budgetStatus, { on, gross }),
+    read(db, listCategories, {}),
+    read(db, budgetHistory, { on, gross }),
+  ]);
+  // What each category usually costs (#105), keyed like the forms' choices.
+  const histories = Object.fromEntries(
+    history.map((h) => [h.categoryId ?? "", { averageCents: h.averageCents, months: h.months, overMonths: h.overMonths, comparedMonths: h.comparedMonths }]),
+  );
   const hrefWith = (next: { month?: string; gross?: boolean }) => {
     const q = new URLSearchParams();
     const m = next.month ?? month;
@@ -98,7 +107,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
       ) : (
         <ul className="space-y-3">
           {status.targets.map((t) => (
-            <TargetCard key={t.categoryId ?? "buffer"} target={t} editable={isCurrent} />
+            <TargetCard key={t.categoryId ?? "buffer"} target={t} editable={isCurrent} history={histories[t.categoryId ?? ""]} windowMonths={HISTORY_MONTHS} />
           ))}
         </ul>
       )}
@@ -134,7 +143,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
           {choices.length ? (
             <section className="space-y-2 rounded-lg border p-3">
               <h2 className="text-lg font-medium">Add a target</h2>
-              <TargetForm choices={choices} />
+              <TargetForm choices={choices} histories={histories} windowMonths={HISTORY_MONTHS} />
             </section>
           ) : null}
         </>

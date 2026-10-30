@@ -305,3 +305,94 @@ export function budgetStatus(input: {
     },
   };
 }
+
+// --- Recent history (#105) ------------------------------------------------------
+
+// Full months looked back over, the current partial month left out. Three
+// is enough to see what a category usually costs without a year-old habit
+// dragging on it; a setting can come later if it proves too short.
+export const HISTORY_MONTHS = 3;
+
+export type CategoryHistory = {
+  key: TargetKey;
+  // Each month's net spend, oldest first, from the first month with any.
+  months: { month: string; spentCents: number }[];
+  // Average over those months; null when there's no spend in the window at all.
+  averageCents: number | null;
+  // Monthly targets only: how many of those months went over today's target
+  // (would this target have held?), out of how many.
+  overMonths: number | null;
+  comparedMonths: number;
+};
+
+/**
+ * What each expense category (and the buffer) cost in each of the last
+ * `months` full months before `on`. A category covers what a target on it
+ * would cover today: its own lines and those of its children without a
+ * target of their own, so a category with no target yet gets the same
+ * figure as one with. The buffer covers what draws from it today. A
+ * category first seen inside the window is averaged from that month on, so
+ * a new one isn't diluted by months before it existed; one with nothing in
+ * the window has no history rather than $0.
+ */
+export function recentHistory(input: {
+  on: string;
+  versions: TargetVersion[];
+  lines: SpendLine[];
+  categories: CategoryInfo[];
+  months?: number;
+}): Map<TargetKey, CategoryHistory> {
+  const months = input.months ?? HISTORY_MONTHS;
+  const end = monthIndex(input.on) - 1;
+  const start = end - months + 1;
+  const byKey = versionsByKey(input.versions);
+  const categories = new Map(input.categories.map((c) => [c.id, c]));
+  const hasOwn = (id: string) => Boolean(versionAt(byKey.get(id), input.on));
+
+  // Every key a line counts toward: its category, its parent when the line's
+  // category has no target of its own, and the buffer when that's where it
+  // draws from today.
+  const spent = new Map<TargetKey, number[]>();
+  const add = (key: TargetKey, index: number, cents: number) => {
+    const row = spent.get(key) ?? new Array<number>(months).fill(0);
+    row[index] += cents;
+    spent.set(key, row);
+  };
+  const seen = new Map<TargetKey, number>();
+  const note = (key: TargetKey, index: number) => seen.set(key, Math.min(seen.get(key) ?? Infinity, index));
+  for (const line of input.lines) {
+    const m = monthIndex(line.date);
+    if (m < start || m > end) continue;
+    const category = categories.get(line.categoryId);
+    if (!category || category.kind !== "expense") continue;
+    const i = m - start;
+    const keys = [category.id];
+    if (category.parentId && !hasOwn(category.id)) keys.push(category.parentId);
+    if (targetKeyFor({ ...line, date: input.on }, categories, byKey) === BUFFER) keys.push(BUFFER);
+    for (const key of keys) {
+      add(key, i, -line.amountCents);
+      note(key, i);
+    }
+  }
+
+  const result = new Map<TargetKey, CategoryHistory>();
+  const keys = [BUFFER, ...input.categories.filter((c) => c.kind === "expense").map((c) => c.id)];
+  for (const key of keys) {
+    const first = seen.get(key);
+    const row = spent.get(key);
+    const list = first === undefined || !row ? [] : row.slice(first).map((spentCents, j) => ({ month: firstOfMonth(start + first + j), spentCents }));
+    const total = list.reduce((s, m) => s + m.spentCents, 0);
+
+    let overMonths: number | null = null;
+    let comparedMonths = 0;
+    const current = versionAt(byKey.get(key), input.on);
+    // Against today's target, not the one each month had: a target set this
+    // month would otherwise have nothing to compare with until next quarter.
+    if (current && current.periodMonths === 1) {
+      overMonths = list.filter((m) => m.spentCents > current.amountCents!).length;
+      comparedMonths = list.length;
+    }
+    result.set(key, { key, months: list, averageCents: list.length ? Math.round(total / list.length) : null, overMonths, comparedMonths });
+  }
+  return result;
+}

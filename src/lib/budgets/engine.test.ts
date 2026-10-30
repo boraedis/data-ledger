@@ -7,6 +7,7 @@ import {
   lastOfMonth,
   monthIndex,
   naturalPeriod,
+  recentHistory,
   type CategoryInfo,
   type SpendLine,
   type TargetVersion,
@@ -151,5 +152,65 @@ describe("budgetStatus", () => {
     expect(target(march, "food").availableCents).toBe(45_000);
     expect(target(march, "car").availableCents).toBe(25_000);
     expect(target(status("2026-04-02", versions, [], adjustments), "food").availableCents).toBe(50_000);
+  });
+});
+
+describe("recentHistory", () => {
+  const history = (on: string, versions: TargetVersion[], lines: SpendLine[]) => recentHistory({ on, versions, lines, categories: cats });
+
+  it("averages the last three full months, leaving out the current one", () => {
+    const h = history("2026-05-14", [], [
+      spend("2026-01-20", "car", 999), // before the window
+      spend("2026-02-03", "car", 100),
+      spend("2026-03-03", "car", 200),
+      spend("2026-04-03", "car", 300),
+      spend("2026-05-02", "car", 5_000), // this month: left out
+    ]).get("car")!;
+    expect(h.months.map((m) => [m.month, m.spentCents])).toEqual([
+      ["2026-02-01", 10_000],
+      ["2026-03-01", 20_000],
+      ["2026-04-01", 30_000],
+    ]);
+    expect(h.averageCents).toBe(20_000);
+  });
+
+  it("nets refunds, counts an empty month inside the history as $0, and starts a new category at its first month", () => {
+    const h = history("2026-05-14", [], [
+      spend("2026-02-03", "gifts", 80),
+      spend("2026-02-10", "gifts", -20), // a refund
+      spend("2026-04-03", "gifts", 30),
+      spend("2026-03-09", "car", 90), // first seen in March
+    ]);
+    expect(h.get("gifts")!.months.map((m) => m.spentCents)).toEqual([6_000, 0, 3_000]);
+    expect(h.get("gifts")!.averageCents).toBe(3_000);
+    expect(h.get("car")!.months).toHaveLength(2);
+    expect(h.get("car")!.averageCents).toBe(4_500);
+  });
+
+  it("has no history, not $0, for a category with nothing in the window", () => {
+    expect(history("2026-05-14", [], [spend("2025-12-01", "car", 50)]).get("car")).toMatchObject({ averageCents: null, months: [] });
+  });
+
+  it("covers what a target would cover today: a parent takes children without their own, the buffer the rest", () => {
+    const lines = [spend("2026-04-02", "groceries", 100), spend("2026-04-03", "dining", 40), spend("2026-04-04", "car", 60)];
+    // Dining has its own target, so Food covers only groceries.
+    const h = history("2026-05-14", [v({ categoryId: "dining" }), v({ categoryId: null })], lines);
+    expect(h.get("food")!.averageCents).toBe(10_000);
+    expect(h.get("dining")!.averageCents).toBe(4_000);
+    expect(h.get(BUFFER)!.averageCents).toBe(16_000); // groceries and car draw from it today
+    expect(h.get("paycheck")).toBeUndefined();
+  });
+
+  it("counts months over today's monthly target, even one set this month", () => {
+    const versions = [v({ categoryId: "car", amountCents: 15_000 }), v({ categoryId: "car", effectiveFrom: "2026-05-01", amountCents: 15_000 })];
+    const h = history("2026-05-14", versions, [spend("2026-02-03", "car", 160), spend("2026-03-03", "car", 140), spend("2026-04-03", "car", 200)]);
+    expect(h.get("car")).toMatchObject({ overMonths: 2, comparedMonths: 3 });
+    expect(history("2026-05-14", [v({ categoryId: "car", effectiveFrom: "2026-05-01", amountCents: 15_000 })], [spend("2026-02-03", "car", 160)]).get("car")).toMatchObject({
+      overMonths: 1,
+      comparedMonths: 3, // February, then two months at $0
+    });
+    // No over count for an annual target, or with no target at all.
+    expect(history("2026-05-14", [v({ categoryId: "car", periodMonths: 12 })], [spend("2026-02-03", "car", 160)]).get("car")!.overMonths).toBeNull();
+    expect(history("2026-05-14", [], [spend("2026-02-03", "car", 160)]).get("car")!.overMonths).toBeNull();
   });
 });
