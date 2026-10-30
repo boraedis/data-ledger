@@ -26,7 +26,10 @@ import { execute } from "@/operations/runtime";
 // "transactions__list".
 export const toolName = (op: Operation) => op.name.replace(/\./g, "__");
 
-export const MAX_RESULT_CHARS = 12_000;
+// Small on purpose: six rounds of results, plus replayed history, must fit
+// the model's 32k context (model/serve.py) with the tool schemas and the
+// reply. A bigger cap tipped long chats into HTTP 400.
+export const MAX_RESULT_CHARS = 4_000;
 
 export function tallyOperations(): Operation[] {
   return operations.filter((op) => !op.allowedActors || op.allowedActors.includes("tally"));
