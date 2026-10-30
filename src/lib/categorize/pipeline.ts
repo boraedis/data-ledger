@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNotNull, isNull, notInArray, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNotNull, isNull, lte, notInArray, or } from "drizzle-orm";
 import { accounts, categories, categorySuggestions, payStubDeposits, payStubs, rules, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import {
@@ -12,8 +12,8 @@ import { categoryOptions } from "@/lib/categorize/labels";
 import { firstMatchingRule, merchantMemory, type RuleLike } from "@/lib/categorize/match";
 import { chat, modelIsConfigured } from "@/lib/model/client";
 import type { AccountKind } from "@/lib/account-kinds";
-import { CASH_KINDS, DEBT_KINDS, INVESTMENT_KINDS } from "@/lib/investments/activity";
-import { findTransferPairs } from "@/lib/investments/transfers";
+import { CASH_KINDS, DEBT_KINDS, INVESTMENT_KINDS, } from "@/lib/investments/activity";
+import { findTransferPairs, TRANSFER_WINDOW_DAYS } from "@/lib/investments/transfers";
 import { findMatches } from "@/lib/provisional/match";
 import { openDeposits } from "@/operations/pay";
 import { execute } from "@/operations/runtime";
@@ -198,9 +198,22 @@ export async function linkPayStubsStep(db: Db): Promise<number> {
  * transfer category: if the owner filed it as spending or income, that
  * stands. Each side pairs only with its single closest match.
  */
-export async function matchTransfersStep(db: Db): Promise<number> {
+// One pass per pair of account kinds. Shared by the nightly pass and by the
+// pass for the one transaction the owner just filed.
+const TRANSFER_PASSES: { from: readonly AccountKind[]; to: readonly AccountKind[]; what: string; outOnly: boolean }[] = [
+  { from: CASH_KINDS, to: INVESTMENT_KINDS, what: "between cash and investment accounts", outOnly: false },
+  { from: CASH_KINDS, to: DEBT_KINDS, what: "paying a card or loan", outOnly: true },
+  { from: CASH_KINDS, to: CASH_KINDS, what: "between cash accounts", outOnly: true },
+];
+
+const transferSelect = { id: transactions.id, accountId: transactions.accountId, amountCents: transactions.amountCents, postedOn: transactions.postedOn };
+
+// A row can be paired only while it's open: posted, not provisional or
+// split, not already paired or rejected, and uncategorized or filed as a
+// transfer.
+function openForTransfers(db: Db) {
   const transferCategories = db.select({ id: categories.id }).from(categories).where(eq(categories.kind, "transfer"));
-  const open = and(
+  return and(
     eq(transactions.pending, false),
     isNull(transactions.provisionalSource),
     isNull(transactions.transferPairId),
@@ -208,21 +221,19 @@ export async function matchTransfersStep(db: Db): Promise<number> {
     eq(transactions.isSplit, false),
     or(isNull(transactions.categoryId), inArray(transactions.categoryId, transferCategories)),
   );
-  const select = { id: transactions.id, accountId: transactions.accountId, amountCents: transactions.amountCents, postedOn: transactions.postedOn };
+}
+
+export async function matchTransfersStep(db: Db): Promise<number> {
+  const open = openForTransfers(db);
   const rowsIn = (kinds: readonly AccountKind[]) =>
     db
-      .select(select)
+      .select(transferSelect)
       .from(transactions)
       .innerJoin(accounts, eq(accounts.id, transactions.accountId))
       .where(and(open, inArray(accounts.type, [...kinds])));
 
-  const passes: { from: readonly AccountKind[]; to: readonly AccountKind[]; what: string; outOnly: boolean }[] = [
-    { from: CASH_KINDS, to: INVESTMENT_KINDS, what: "between cash and investment accounts", outOnly: false },
-    { from: CASH_KINDS, to: DEBT_KINDS, what: "paying a card or loan", outOnly: true },
-    { from: CASH_KINDS, to: CASH_KINDS, what: "between cash accounts", outOnly: true },
-  ];
   let matched = 0;
-  for (const pass of passes) {
+  for (const pass of TRANSFER_PASSES) {
     // Re-read each time: what one pass paired is no longer open.
     const [a, b] = await Promise.all([rowsIn(pass.from), rowsIn(pass.to)]);
     // One-way passes pair money out of the first with money into the second.
@@ -239,6 +250,60 @@ export async function matchTransfersStep(db: Db): Promise<number> {
     if (result.status === "applied") matched += (result.output as { matched: number }).matched;
   }
   return matched;
+}
+
+const DAY_MS = 86_400_000;
+
+/**
+ * The owner just filed one transaction as a transfer (or cleared its
+ * category). Pair it with its other half if exactly one fits, looking only
+ * at open rows close to it in amount and date. Runs on that change only,
+ * never on a schedule, and changes nothing else.
+ */
+export async function matchTransfersAround(db: Db, transactionId: string): Promise<number> {
+  const [row] = await db
+    .select({ ...transferSelect, kind: accounts.type })
+    .from(transactions)
+    .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+    .where(eq(transactions.id, transactionId));
+  if (!row || row.amountCents === 0) return 0;
+
+  // Rows that could compete for either side: the same amount, out or in,
+  // within twice the pairing window. The row itself is among them when it's
+  // open, so a row that isn't open simply finds no pair.
+  const days = 2 * TRANSFER_WINDOW_DAYS;
+  const shift = (offset: number) => new Date(Date.parse(row.postedOn) + offset * DAY_MS).toISOString().slice(0, 10);
+  const magnitude = Math.abs(row.amountCents);
+  const nearby = await db
+    .select({ ...transferSelect, kind: accounts.type })
+    .from(transactions)
+    .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+    .where(
+      and(
+        openForTransfers(db),
+        or(eq(transactions.amountCents, magnitude), eq(transactions.amountCents, -magnitude)),
+        gte(transactions.postedOn, shift(-days)),
+        lte(transactions.postedOn, shift(days)),
+        inArray(accounts.type, [...CASH_KINDS, ...INVESTMENT_KINDS, ...DEBT_KINDS]),
+      ),
+    );
+
+  for (const pass of TRANSFER_PASSES) {
+    const a = nearby.filter((t) => pass.from.includes(t.kind));
+    const b = nearby.filter((t) => pass.to.includes(t.kind));
+    const sources = pass.outOnly ? a.filter((t) => t.amountCents < 0) : a;
+    const targets = pass.outOnly ? b.filter((t) => t.amountCents > 0) : b;
+    const pairs = findTransferPairs(sources, targets).filter((p) => p.cashId === transactionId || p.investmentId === transactionId);
+    if (pairs.length === 0) continue;
+    const result = await execute(db, {
+      operation: "transactions.matchTransfers",
+      actor: "matcher",
+      reason: `Matched a transfer you filed ${pass.what}`,
+      input: { pairs },
+    });
+    return result.status === "applied" ? (result.output as { matched: number }).matched : 0;
+  }
+  return 0;
 }
 
 export async function runCategorization(
