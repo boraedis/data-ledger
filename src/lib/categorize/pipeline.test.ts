@@ -1,8 +1,8 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, isNotNull } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { accounts, categories, commandLog, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { backfillMerchantsIfNeeded, runCategorization } from "@/lib/categorize/pipeline";
+import { backfillMerchantsIfNeeded, matchTransfersAround, runCategorization } from "@/lib/categorize/pipeline";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
 import { listRecurring } from "@/operations/recurring";
@@ -226,5 +226,27 @@ describe("category tree", () => {
     await expect(
       user("rules.create", { matchField: "merchant", matchType: "equals", pattern: "Xx", categoryId: cat.Coffee, minAmountCents: 500, maxAmountCents: 100 }),
     ).rejects.toThrow(/above the maximum/);
+  });
+});
+
+describe("matchTransfersAround", () => {
+  it("pairs only the transaction the owner just filed, as one matcher command, and never scans the rest", async () => {
+    const [payment] = await db.select().from(transactions).where(eq(transactions.description, "PLACEHOLDER CARD CO PAYMENT")).limit(1);
+    await user("transactions.setCategory", { transactionId: payment.id, categoryId: cat.Transfers });
+    expect(await matchTransfersAround(db, payment.id)).toBe(1);
+    const [after] = await db.select().from(transactions).where(eq(transactions.id, payment.id));
+    expect(after.transferPairId).not.toBeNull();
+    // Exactly one pair in the whole ledger: the payment and its credit.
+    expect(await db.select().from(transactions).where(isNotNull(transactions.transferPairId))).toHaveLength(2);
+    expect((await db.select().from(commandLog)).filter((c) => c.actor === "matcher").map((c) => c.reason)).toEqual([
+      "Matched a transfer you filed paying a card or loan",
+    ]);
+  });
+
+  it("does nothing for a transaction filed as spending", async () => {
+    const [payment] = await db.select().from(transactions).where(eq(transactions.description, "PLACEHOLDER CARD CO PAYMENT")).limit(1);
+    await user("transactions.setCategory", { transactionId: payment.id, categoryId: cat.Dining });
+    expect(await matchTransfersAround(db, payment.id)).toBe(0);
+    expect((await db.select().from(transactions).where(eq(transactions.id, payment.id)))[0].transferPairId).toBeNull();
   });
 });

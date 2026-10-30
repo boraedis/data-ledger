@@ -17,7 +17,8 @@ export const TRANSFER_WINDOW_DAYS = 5;
 /**
  * The matcher's passes, in order: what one pass pairs is gone before the
  * next. One-way passes pair money out of `from` with money into `to`.
- * Shared with the misfiled-transfer check (#102), which must look for
+ * Shared by the nightly pass, the pass for one transaction the owner just
+ * filed (#103), and the misfiled-transfer check (#102), which must look for
  * exactly the pairs the matcher would make.
  */
 export const TRANSFER_PASSES: { from: readonly AccountKind[]; to: readonly AccountKind[]; what: string; outOnly: boolean }[] = [
