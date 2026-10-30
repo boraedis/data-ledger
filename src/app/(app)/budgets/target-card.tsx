@@ -48,6 +48,7 @@ export function TargetCard({
   viewedMonth,
   partialMonth,
   covers,
+  backdate,
 }: {
   target: CardTarget;
   editable: boolean;
@@ -60,6 +61,7 @@ export function TargetCard({
   partialMonth: string | null;
   // The buffer's card only: every category it covers, with this period's spend (#110).
   covers?: { categoryId: string; name: string; spentCents: number }[];
+  backdate?: { earliestMonth: string | null; currentMonth: string };
 }) {
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(false);
@@ -171,6 +173,7 @@ export function TargetCard({
                   histories={history ? { [t.categoryId ?? ""]: history } : {}}
                   suggestFrom={netHistory ? { [t.categoryId ?? ""]: netHistory } : {}}
                   windowMonths={windowMonths}
+                  backdate={backdate}
                   onDone={() => setEditing(false)}
                 />
               </div>

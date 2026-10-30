@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, min } from "drizzle-orm";
 import { z } from "zod";
 import { budgetAdjustments, budgetTargets, categories, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
@@ -21,6 +21,7 @@ import {
 import { categoryOptions } from "@/lib/categorize/labels";
 import { defineRead, defineWrite } from "@/operations/define";
 import type { Series } from "@/lib/recurring/detect";
+import { budgetAccountIds } from "@/operations/accounts";
 import { detectedSeries } from "@/operations/recurring";
 import { spendingLines } from "@/operations/transactions";
 import type { WriteContext } from "@/operations/tracked";
@@ -328,6 +329,79 @@ export const setTarget = defineWrite({
       sinkingFund: input.sinkingFund && input.periodMonths > 1,
     });
     return { id: row.id, effectiveFrom };
+  },
+});
+
+// --- Backdating a target (#130) -------------------------------------------------
+//
+// After backfilling a year of transactions, earlier months have spending
+// and nothing to measure it against. A target can be given an earlier
+// start, but only where no target was in effect: it fills a gap, running
+// until the target's next version, and never rewrites a month that
+// already had one (which would silently change what that month was held
+// to). The earliest it can start is the first month with transactions.
+
+/** The first month (YYYY-MM) with spending in budget accounts, or null. */
+async function earliestMonth(db: Db): Promise<string | null> {
+  const [row] = await db
+    .select({ first: min(transactions.postedOn) })
+    .from(transactions)
+    .where(inArray(transactions.accountId, budgetAccountIds(db)));
+  return row?.first ? String(row.first).slice(0, 7) : null;
+}
+
+export const backdateRange = defineRead({
+  name: "budgets.backdateRange",
+  description:
+    "How far back a target can be backdated (budgets.backdateTarget): the first month with transactions in budget " +
+    "accounts (YYYY-MM, null with none), and this month, which backdating stops short of.",
+  input: z.object({ today: isoDate.optional() }),
+  run: async (db, { today: day }) => ({ earliestMonth: await earliestMonth(db), currentMonth: (day ?? today()).slice(0, 7) }),
+});
+
+export const backdateTarget = defineWrite({
+  name: "budgets.backdateTarget",
+  description:
+    "Give a target (categoryId null = the buffer) an earlier start: amountCents per period from fromMonth (YYYY-MM), " +
+    "running until the target's next version, which keeps its amount. Only where no target was in effect from " +
+    "fromMonth on; never earlier than the first month with transactions, and before this month (budgets.setTarget " +
+    "covers this period). periodMonths, anchorMonth (default January for annual, else fromMonth), rollover and " +
+    "sinkingFund as in budgets.setTarget. With rollover, what later periods have available changes.",
+  input: z.object({
+    categoryId: targetCategory,
+    fromMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+    amountCents: z.number().int().min(1).max(100_000_000_00),
+    periodMonths: z.number().int().min(1).max(24).default(1),
+    anchorMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).optional(),
+    rollover: z.boolean().default(false),
+    sinkingFund: z.boolean().default(false),
+    today: isoDate.optional(),
+  }),
+  apply: async (ctx, input) => {
+    await assertExpenseCategory(ctx, input.categoryId);
+    const on = input.today ?? today();
+    if (input.fromMonth >= on.slice(0, 7)) throw new Error("That's this month or later: set the target as usual instead");
+    const first = await earliestMonth(ctx.db);
+    if (!first || input.fromMonth < first) throw new Error(`The earliest a target can start is ${first ?? "the first month with transactions"}`);
+
+    const effectiveFrom = `${input.fromMonth}-01`;
+    const versions = (await loadVersions(ctx.db)).filter((v) => v.categoryId === input.categoryId);
+    if (currentVersion(versions, input.categoryId, effectiveFrom)) {
+      throw new Error("A target was already in effect then. Backdating only fills months that had none, so past months keep what they were held to");
+    }
+    const anchorOn = input.anchorMonth ? `${input.anchorMonth}-01` : input.periodMonths === 12 ? `${input.fromMonth.slice(0, 4)}-01-01` : effectiveFrom;
+    const next = versions.filter((v) => v.effectiveFrom > effectiveFrom).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom))[0];
+    const row = await writeVersion(ctx, {
+      categoryId: input.categoryId,
+      effectiveFrom,
+      amountCents: input.amountCents,
+      periodMonths: input.periodMonths,
+      anchorOn,
+      rollover: input.rollover,
+      sinkingFund: input.sinkingFund && input.periodMonths > 1,
+    });
+    // Until the next version, or open-ended when there's none (it becomes the current target).
+    return { id: row.id, effectiveFrom, until: next ? next.effectiveFrom : null };
   },
 });
 

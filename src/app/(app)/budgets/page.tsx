@@ -3,7 +3,7 @@ import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { HISTORY_MONTHS } from "@/lib/budgets/engine";
-import { budgetHistory, budgetMonthly, budgetStatus, budgetYear, yearlyCharges } from "@/operations/budgets";
+import { backdateRange, budgetHistory, budgetMonthly, budgetStatus, budgetYear, yearlyCharges } from "@/operations/budgets";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { RebalanceForm, TargetForm, type TargetChoice } from "./forms";
@@ -40,7 +40,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
   const monthYear = Number(month.slice(0, 4));
   const yearParam = typeof sp.year === "string" && /^\d{4}$/.test(sp.year) ? Math.min(Number(sp.year), thisYear) : null;
   const year = yearParam ?? monthYear;
-  const [status, cats, history, netHistory, monthly, yearly, yearTotals] = await Promise.all([
+  const [status, cats, history, netHistory, monthly, yearly, yearTotals, range] = await Promise.all([
     read(db, budgetStatus, { on, gross }),
     read(db, listCategories, {}),
     read(db, budgetHistory, { on, gross }),
@@ -52,6 +52,8 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
     // shows on the current month.
     isCurrent ? read(db, yearlyCharges, { on }) : [],
     read(db, budgetYear, { year, gross }),
+    // How far back a target can start (#130); the forms only show this month.
+    isCurrent ? read(db, backdateRange, {}) : undefined,
   ]);
   // What each category usually costs (#105), keyed like the forms' choices.
   const byCategory = (rows: typeof history) =>
@@ -155,6 +157,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
                 viewedMonth={`${month}-01`}
                 partialMonth={isCurrent ? `${month}-01` : null}
                 covers={t.categoryId === null ? status.unbudgeted.covers : undefined}
+                  backdate={range}
               />
             ))}
           </ul>
@@ -216,6 +219,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
                 suggestFrom={netHistories}
                 windowMonths={HISTORY_MONTHS}
                 yearly={yearly.filter((y) => choices.some((c) => c.categoryId === y.categoryId))}
+                backdate={range}
               />
             </section>
           ) : null}
