@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
-import { budgetAdjustments, budgetTargets, categories } from "@/db/schema";
+import { budgetAdjustments, budgetTargets, categories, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import {
   BUFFER,
@@ -19,6 +19,8 @@ import {
 } from "@/lib/budgets/engine";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { defineRead, defineWrite } from "@/operations/define";
+import type { Series } from "@/lib/recurring/detect";
+import { detectedSeries } from "@/operations/recurring";
 import { spendingLines } from "@/operations/transactions";
 import type { WriteContext } from "@/operations/tracked";
 
@@ -157,6 +159,54 @@ export const budgetMonthly = defineRead({
     return [...series].map(([key, months]) => {
       const categoryId = key === BUFFER ? null : key;
       return { categoryId, name: nameFor(labelOf, categoryId), months };
+    });
+  },
+});
+
+export const yearlyCharges = defineRead({
+  name: "budgets.yearlyCharges",
+  description:
+    "Annual charges found by recurring-charge detection (two charges about a year apart, still current, not " +
+    "dismissed or cancelled on Subscriptions), grouped by the expense category of their latest charge: a starting " +
+    "point for an annual sinking-fund target. amountCents is the latest charge (summed when a category has several), " +
+    "setAsideMonthlyCents a twelfth of it, and anchorMonth the month after the largest one's last charge, so the " +
+    "year being saved for ends with its next charge. Nothing is written; the owner sets the target.",
+  input: z.object({ on: isoDate.optional() }),
+  run: async (db, { on = today() }) => {
+    // Subscriptions or not: an insurance premium or a yearly registration is
+    // as much a budget-wrecker as a software plan, and detection already
+    // finds any merchant charged on a yearly rhythm. What the owner has said
+    // isn't recurring (dismissed) or has ended (cancelled) is left out.
+    const annual = (await detectedSeries(db, on)).filter(
+      ({ series, status }) => series.cadence.name === "annual" && series.active && status !== "dismissed" && status !== "cancelled",
+    );
+    if (annual.length === 0) return [];
+    const lastIds = annual.map(({ series }) => series.occurrences.at(-1)!.chargeIds[0]);
+    const [rows, { rows: cats, labelOf }] = await Promise.all([
+      db.select({ id: transactions.id, categoryId: transactions.categoryId }).from(transactions).where(inArray(transactions.id, lastIds)),
+      labels(db),
+    ]);
+    const categoryOf = new Map(rows.map((r) => [r.id, r.categoryId]));
+    const expense = new Set(cats.filter((c) => c.kind === "expense").map((c) => c.id));
+
+    const byCategory = new Map<string, Series[]>();
+    for (const { series } of annual) {
+      const categoryId = categoryOf.get(series.occurrences.at(-1)!.chargeIds[0]);
+      // Uncategorized, or filed somewhere a target can't go: nothing to suggest yet.
+      if (!categoryId || !expense.has(categoryId)) continue;
+      byCategory.set(categoryId, [...(byCategory.get(categoryId) ?? []), series]);
+    }
+    return [...byCategory].map(([categoryId, list]) => {
+      const largest = list.reduce((a, b) => (b.latestCents > a.latestCents ? b : a));
+      const amountCents = list.reduce((sum, s) => sum + s.latestCents, 0);
+      return {
+        categoryId,
+        name: nameFor(labelOf, categoryId),
+        charges: list.map((s) => ({ merchant: s.merchant, latestCents: s.latestCents, lastOn: s.lastOn, nextExpectedOn: s.nextExpectedOn })),
+        amountCents,
+        setAsideMonthlyCents: Math.round(amountCents / 12),
+        anchorMonth: firstOfMonth(monthIndex(largest.lastOn) + 1).slice(0, 7),
+      };
     });
   },
 });
