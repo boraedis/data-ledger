@@ -25,7 +25,7 @@ import {
 } from "@/operations/reimbursements";
 import { investmentIncome } from "@/operations/investments";
 import { createCategory, deleteCategory, listCategories, moveCategory, renameCategory } from "@/operations/categories";
-import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
+import { createRule, deleteRule, listRules, reapplyPreview, reapplyRule, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
 import { taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
@@ -66,6 +66,8 @@ export const operations: Operation[] = [
   listRules,
   createRule,
   updateRule,
+  reapplyPreview,
+  reapplyRule,
   deleteRule,
   listTransactions,
   getTransaction,
