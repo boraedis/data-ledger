@@ -12,7 +12,7 @@ describe("budget tabs (#145)", () => {
 
   it("keeps this month and net out of the URL", () => {
     const view = budgetView({}, TODAY);
-    expect(BUDGET_TABS.map((t) => budgetHref(t.path, view))).toEqual(["/budgets", "/budgets/year", "/budgets/targets"]);
+    expect(BUDGET_TABS.map((t) => budgetHref(t.path, view))).toEqual(["/budgets/dashboard", "/budgets", "/budgets/year", "/budgets/targets"]);
   });
 
   it("never carries a month later than this one, or a malformed one", () => {

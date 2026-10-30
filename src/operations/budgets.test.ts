@@ -224,6 +224,27 @@ describe("budgets.monthly over a year (#108)", () => {
   });
 });
 
+describe("budgets.monthly with moved budget (#146)", () => {
+  type Moved = { categoryId: string | null; months: { month: string; targetCents: number | null; movedCents?: number }[] }[];
+
+  it("puts a rebalance in the month it was made, as a pair that nets to zero, matching the card", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 60_000, today: "2026-05-10" });
+    await run("budgets.setTarget", { categoryId: null, amountCents: 40_000, today: "2026-05-10" });
+    await run("budgets.rebalance", { fromCategoryId: null, toCategoryId: cat.Groceries, amountCents: 5_000, on: "2026-06-10" });
+
+    const rows = (await run("budgets.monthly", { on: "2026-06-30", months: 2, moved: true })).output as Moved;
+    const moved = (id: string | null) => rows.find((r) => r.categoryId === id)!.months.map((m) => m.movedCents);
+    expect(moved(cat.Groceries)).toEqual([0, 5_000]);
+    expect(moved(null)).toEqual([0, -5_000]);
+    // Target plus moved is what the card has available (no rollover here).
+    const june = rows.find((r) => r.categoryId === cat.Groceries)!.months[1];
+    expect(june.targetCents! + june.movedCents!).toBe(target(await status("2026-06-30"), cat.Groceries).availableCents);
+    // Without the flag, the cells are as before.
+    const plain = (await run("budgets.monthly", { on: "2026-06-30", months: 2 })).output as Moved;
+    expect(plain[0].months[0]).not.toHaveProperty("movedCents");
+  });
+});
+
 describe("budgets.yearlyCharges (#109)", () => {
   type Yearly = { categoryId: string; amountCents: number; setAsideMonthlyCents: number; anchorMonth: string; charges: { merchant: string }[] }[];
   const yearly = async () => (await run("budgets.yearlyCharges", { on: "2026-06-30" })).output as Yearly;
