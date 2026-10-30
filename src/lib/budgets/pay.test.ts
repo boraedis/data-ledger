@@ -64,3 +64,9 @@ describe("a typical month's pay (#142)", () => {
     expect(typicalMonth([stub("2026-03-06", 1_000_000, true)], "2026-12-31")).toBeNull();
   });
 });
+
+describe("pay across the year (#138)", () => {
+  it("shows the issue's example: $36,000 pay against $28,800 of targets saves $7,200 (20%)", () => {
+    expect(paySummary({ netPayCents: 3_600_000, targetsCents: 2_880_000, spentCents: 0 }).expectedSaving).toEqual({ cents: 720_000, percent: 20 });
+  });
+});

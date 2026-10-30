@@ -5,8 +5,8 @@ import { formatCents } from "@/lib/money";
 // to spend, and what's left to save, planned and actual. Each figure has its
 // share of net pay. Server-rendered.
 
-type Figure = { cents: number; percent: number | null };
-type Summary = { netPay: Figure; targets: Figure; expectedSaving: Figure; spent: Figure; actualSaving: Figure };
+export type Figure = { cents: number; percent: number | null };
+export type Summary = { netPay: Figure; targets: Figure; expectedSaving: Figure; spent: Figure; actualSaving: Figure };
 
 const stillToCome = (pay: { expectedCount: number; expectedCents: number }) =>
   `incl. ${pay.expectedCount} paycheck${pay.expectedCount === 1 ? "" : "s"} still to come at your recent pace (${formatCents(pay.expectedCents)})`;
@@ -19,7 +19,7 @@ function landedNote(pay: { netPayCents: number | null; expectedCount: number; ex
   return `${landed}: ${difference > 0 ? `+${formatCents(difference)} extra` : `${formatCents(-difference)} short`} this month`;
 }
 
-function Tile({ label, figure, note, signed = false }: { label: string; figure: Figure; note?: string; signed?: boolean }) {
+export function Tile({ label, figure, note, signed = false }: { label: string; figure: Figure; note?: string; signed?: boolean }) {
   const negative = signed && figure.cents < 0;
   return (
     <div className="space-y-0.5 rounded-lg border px-3 py-2">
