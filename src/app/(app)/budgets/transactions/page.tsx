@@ -4,6 +4,8 @@ import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { targetTransactions } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
+import { budgetView } from "@/lib/budgets/tabs";
+import { BudgetTabs } from "../tabs";
 
 // The transactions behind one budget card (#135): the lines budgets counted
 // toward that target this period, from the same calculation as the card,
@@ -19,11 +21,10 @@ const day = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString("
 export default async function TargetTransactionsPage(props: PageProps<"/budgets/transactions">) {
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
-  const thisMonth = today.slice(0, 7);
-  const requested = typeof sp.month === "string" && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : thisMonth;
-  const month = requested > thisMonth ? thisMonth : requested;
+  const view = budgetView(sp, today);
+  const { month, thisMonth } = view;
   const on = month === thisMonth ? today : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
-  const gross = sp.gross === "1";
+  const gross = view.gross;
   const target = typeof sp.target === "string" ? sp.target : "buffer";
   const categoryId = target === "buffer" ? null : target;
 
@@ -39,6 +40,8 @@ export default async function TargetTransactionsPage(props: PageProps<"/budgets/
 
   return (
     <div className="space-y-4">
+      {/* A month card's lines, so Month stays the current tab. */}
+      <BudgetTabs current="month" view={view} />
       <Link href={back} className="text-sm text-muted-foreground hover:text-foreground">
         ← Budgets
       </Link>

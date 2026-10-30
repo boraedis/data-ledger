@@ -1,14 +1,13 @@
 import Link from "next/link";
-import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { HISTORY_MONTHS } from "@/lib/budgets/engine";
-import { backdateRange, budgetHistory, budgetMonthly, budgetPay, budgetStatus, budgetYear, yearlyCharges } from "@/operations/budgets";
-import { listCategories } from "@/operations/categories";
+import { budgetHref, budgetView } from "@/lib/budgets/tabs";
+import { backdateRange, budgetHistory, budgetMonthly, budgetPay, budgetStatus, budgetYear } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
-import { RebalanceForm, TargetForm, type TargetChoice } from "./forms";
 import { BudgetOverview } from "./overview";
 import { PayStrip } from "./pay-strip";
+import { BudgetTabs } from "./tabs";
 import { TargetCard } from "./target-card";
 import { YearSummary } from "./year-summary";
 
@@ -25,9 +24,8 @@ function shiftMonth(month: string, by: number): string {
 export default async function BudgetsPage(props: PageProps<"/budgets">) {
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
-  const thisMonth = today.slice(0, 7);
-  const requested = typeof sp.month === "string" && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : thisMonth;
-  const month = requested > thisMonth ? thisMonth : requested;
+  const view = budgetView(sp, today);
+  const { month, thisMonth } = view;
   const isCurrent = month === thisMonth;
   // A past month is shown as of its last day.
   const on = isCurrent ? today : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
@@ -35,25 +33,21 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
   const db = getDb();
   // Net by default (your share of shared expenses); ?gross=1 shows spending
   // as charged, before what friends owe comes off.
-  const gross = sp.gross === "1";
+  const gross = view.gross;
   // The year across every target (#123): the viewed month's, unless ?year= picks another.
   const thisYear = Number(thisMonth.slice(0, 4));
   const monthYear = Number(month.slice(0, 4));
   const yearParam = typeof sp.year === "string" && /^\d{4}$/.test(sp.year) ? Math.min(Number(sp.year), thisYear) : null;
   const year = yearParam ?? monthYear;
-  const [status, cats, history, netHistory, monthly, yearly, yearTotals, range, payVsBudget] = await Promise.all([
+  const [status, history, netHistory, monthly, yearTotals, range, payVsBudget] = await Promise.all([
     read(db, budgetStatus, { on, gross }),
-    read(db, listCategories, {}),
     read(db, budgetHistory, { on, gross }),
     // Suggested targets (#106) come from net spend whichever view is shown,
     // since targets are net.
     gross ? read(db, budgetHistory, { on, gross: false }) : null,
     read(db, budgetMonthly, { on, gross }),
-    // Yearly bills worth saving toward (#109), for the add form, which only
-    // shows on the current month.
-    isCurrent ? read(db, yearlyCharges, { on }) : [],
     read(db, budgetYear, { year, gross }),
-    // How far back a target can start (#130); the forms only show this month.
+    // How far back a target can start (#130); the cards' forms only show this month.
     isCurrent ? read(db, backdateRange, {}) : undefined,
     // Pay against the month's budget (#128).
     read(db, budgetPay, { on, gross }),
@@ -82,13 +76,6 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
     monthly.map((s) => [s.categoryId ?? "", s.months.map((m) => ({ ...m, href: hrefWith({ month: m.month.slice(0, 7) }) }))]),
   );
 
-  const targeted = new Set(status.targets.map((t) => t.categoryId));
-  const choices: TargetChoice[] = [
-    ...(targeted.has(null) ? [] : [{ categoryId: null, name: "Everything else (buffer)" }]),
-    ...categoryOptions(cats)
-      .filter((o) => o.kind === "expense" && !targeted.has(o.id))
-      .map((o) => ({ categoryId: o.id, name: o.label })),
-  ];
   const buffer = status.targets.find((t) => t.categoryId === null);
   const monthLabel = new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
@@ -96,11 +83,10 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
     <div className="space-y-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold">Budgets</h1>
-        <nav className="flex items-center gap-3 text-sm">
-          {/* The 12 months ending here, every target at once (#108). */}
-          <Link href={hrefWith({}).replace("/budgets", "/budgets/year")} className="text-muted-foreground underline hover:text-foreground">
-            Year view
-          </Link>
+        <BudgetTabs current="month" view={view} />
+      </div>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <nav aria-label="Month" className="flex items-center gap-3 text-sm">
           <Link href={hrefWith({ month: shiftMonth(month, -1) })} className="text-muted-foreground hover:text-foreground">
             ← Earlier
           </Link>
@@ -137,7 +123,10 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
       {status.targets.length === 0 ? (
         <p className="text-muted-foreground">
           No targets {isCurrent ? "yet" : "in effect then"}. A good start: a buffer for everything, then targets for the few
-          categories you actually want to watch.
+          categories you actually want to watch.{" "}
+          <Link href={budgetHref("/budgets/targets", view)} className="underline">
+            Add a target
+          </Link>
         </p>
       ) : (
         <>
@@ -216,31 +205,14 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
         }}
       />
 
+      {/* Adding a target and moving budget between them live on Targets (#145). */}
       {isCurrent ? (
-        <>
-          {status.targets.length >= 2 ? (
-            <section className="space-y-2">
-              <h2 className="text-lg font-medium">Move budget this period</h2>
-              <p className="text-xs text-muted-foreground">
-                Shifts money between two targets for the current period only; both targets stay as they are.
-              </p>
-              <RebalanceForm targets={status.targets.map((t) => ({ categoryId: t.categoryId, name: t.name }))} />
-            </section>
-          ) : null}
-          {choices.length ? (
-            <section className="space-y-2 rounded-lg border p-3">
-              <h2 className="text-lg font-medium">Add a target</h2>
-              <TargetForm
-                choices={choices}
-                histories={histories}
-                suggestFrom={netHistories}
-                windowMonths={HISTORY_MONTHS}
-                yearly={yearly.filter((y) => choices.some((c) => c.categoryId === y.categoryId))}
-                backdate={range}
-              />
-            </section>
-          ) : null}
-        </>
+        <p className="text-sm text-muted-foreground">
+          <Link href={budgetHref("/budgets/targets", view)} className="underline">
+            Add a target or move budget
+          </Link>{" "}
+          on Targets.
+        </p>
       ) : null}
       <p className="text-xs text-muted-foreground">
         Every change is in <Link href="/activity" className="underline">Activity</Link> and can be undone there.

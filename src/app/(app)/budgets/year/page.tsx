@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
+import { budgetView } from "@/lib/budgets/tabs";
 import { yearTotals } from "@/lib/budgets/year";
 import { budgetMonthly, budgetPayYear } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
 import { YearGrid, type GridColumn, type GridRow } from "./grid";
+import { BudgetTabs } from "../tabs";
 import { PayYear } from "./pay-year";
 
 // Every target's spend against target, month by month (#108): one row per
@@ -40,12 +42,11 @@ const monthName = (month: string, style: "narrow" | "short" | "long") =>
 export default async function BudgetYearPage(props: PageProps<"/budgets/year">) {
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
-  const thisMonth = today.slice(0, 7);
-  const requested = typeof sp.month === "string" && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : thisMonth;
-  const month = requested > thisMonth ? thisMonth : requested;
+  const view = budgetView(sp, today);
+  const { month, thisMonth } = view;
   const isCurrent = month === thisMonth;
   const on = isCurrent ? today : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
-  const gross = sp.gross === "1";
+  const gross = view.gross;
 
   // One-time stubs (bonuses) count unless ?bonus=0 leaves them out (#138).
   const includeOneTime = sp.bonus !== "0";
@@ -108,7 +109,10 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
     <div className="space-y-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold">Budgets by month</h1>
-        <nav className="flex items-center gap-3 text-sm">
+        <BudgetTabs current="year" view={view} />
+      </div>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <nav aria-label="Months" className="flex items-center gap-3 text-sm">
           <Link href={href("/budgets/year", { month: shiftMonth(month, -MONTHS) })} className="text-muted-foreground hover:text-foreground">
             ← Earlier
           </Link>
@@ -139,8 +143,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
               Show gross
             </Link>
           </>
-        )}{" "}
-        · <Link href={href("/budgets", {})} className="underline">Back to {monthName(month, "long")}</Link>
+        )}
       </p>
 
       {rows.length === 0 ? (
