@@ -296,6 +296,43 @@ export const budgetYear = defineRead({
   },
 });
 
+// --- Pay against the budget (#128, #138, #142) ---------------------------------
+//
+// The month view and the Year view count pay, targets and spending by the
+// same rules, from these helpers, so the two can't drift apart.
+
+async function loadPayInputs(db: Db, { from, to, gross }: { from: string; to: string; gross: boolean }) {
+  const [stubs, versions, lines, deposits, { rows }] = await Promise.all([
+    db.select({ payDate: payStubs.payDate, periodStart: payStubs.periodStart, periodEnd: payStubs.periodEnd, netCents: payStubs.netCents, oneTime: payStubs.oneTime }).from(payStubs),
+    loadVersions(db),
+    spendingLines.run(db, { from, to, budgetOnly: true, gross }),
+    db.select({ transactionId: payStubDeposits.transactionId }).from(payStubDeposits),
+    labels(db),
+  ]);
+  // Spending: expense lines only (transfers and pay never are). A linked
+  // paycheck's deduction lines (health insurance under an expense
+  // category, say) left the gross before net pay landed, so against net
+  // pay they'd count twice.
+  const expense = new Set(rows.filter((r) => r.kind === "expense").map((r) => r.id));
+  const paycheck = new Set(deposits.map((d) => d.transactionId));
+  const spending = lines.filter((l) => expense.has(l.categoryId) && !paycheck.has(l.transactionId));
+  return { stubs, versions, spending };
+}
+
+// Each target in effect on `on` at its monthly share: a month's own target,
+// or a twelfth of an annual one, so a month with an annual target isn't
+// measured against the whole year's budget.
+function monthlyTargetsCents(versions: TargetVersion[], on: string): number {
+  const keys = [...new Set(versions.map((v) => v.categoryId))];
+  return keys.reduce((sum, id) => {
+    const v = currentVersion(versions, id, on);
+    return v ? sum + Math.round(v.amountCents! / v.periodMonths) : sum;
+  }, 0);
+}
+
+const spentBetween = (spending: { date: string; amountCents: number }[], from: string, to: string) =>
+  -spending.filter((l) => l.date >= from && l.date <= to).reduce((sum, l) => sum + l.amountCents, 0);
+
 export const budgetPay = defineRead({
   name: "budgets.pay",
   description:
@@ -314,12 +351,8 @@ export const budgetPay = defineRead({
     const now = day ?? today();
     const month = on.slice(0, 7);
     const from = `${month}-01`;
-    const [stubs, versions, lines, deposits, { rows }, uncategorized] = await Promise.all([
-      db.select({ payDate: payStubs.payDate, periodStart: payStubs.periodStart, periodEnd: payStubs.periodEnd, netCents: payStubs.netCents, oneTime: payStubs.oneTime }).from(payStubs),
-      loadVersions(db),
-      spendingLines.run(db, { from, to: on, budgetOnly: true, gross }),
-      db.select({ transactionId: payStubDeposits.transactionId }).from(payStubDeposits),
-      labels(db),
+    const [{ stubs, versions, spending }, uncategorized] = await Promise.all([
+      loadPayInputs(db, { from, to: on, gross }),
       uncategorizedSpend.run(db, { from, to: on }),
     ]);
     const pay = payForMonth(month, now, stubs);
@@ -328,23 +361,8 @@ export const budgetPay = defineRead({
     // As of the month's end (or today), so the past keeps the pay it had.
     const typical = typicalMonth(stubs, on < now ? on : now);
     const basisCents = typical?.cents ?? pay.netPayCents;
-
-    // Each target in effect at its monthly share: a month's own target, or a
-    // twelfth of an annual one, so a month with an annual target isn't
-    // measured against the whole year's budget.
-    const keys = [...new Set(versions.map((v) => v.categoryId))];
-    const targetsCents = keys.reduce((sum, id) => {
-      const v = currentVersion(versions, id, on);
-      return v ? sum + Math.round(v.amountCents! / v.periodMonths) : sum;
-    }, 0);
-
-    // Spending: expense lines only (transfers and pay never are). A linked
-    // paycheck's deduction lines (health insurance under an expense
-    // category, say) left the gross before net pay landed, so against net
-    // pay they'd count twice.
-    const expense = new Set(rows.filter((r) => r.kind === "expense").map((r) => r.id));
-    const paycheck = new Set(deposits.map((d) => d.transactionId));
-    const spentCents = -lines.filter((l) => expense.has(l.categoryId) && !paycheck.has(l.transactionId)).reduce((sum, l) => sum + l.amountCents, 0);
+    const targetsCents = monthlyTargetsCents(versions, on);
+    const spentCents = spentBetween(spending, from, on);
 
     return {
       month,
@@ -358,6 +376,63 @@ export const budgetPay = defineRead({
       spentCents,
       // Money out not categorized yet isn't in spending; said so, not hidden.
       uncategorized,
+    };
+  },
+});
+
+export const budgetPayYear = defineRead({
+  name: "budgets.payYear",
+  description:
+    "Pay against the budget over the Year view's months (the `months` ending with `on`'s, default 12): for each month " +
+    "the net pay that landed (pay stubs by pay date, with this month's paychecks still to come at the recent pace), " +
+    "total targets at their monthly share, spending, expected saving (pay less targets) and saved (pay less spending), " +
+    "by the same rules as budgets.pay. The year adds up the months with pay; months without any are left out, and " +
+    "counted. Unlike the month view this is actual pay, not a typical month, so the year is the sum of its months. " +
+    "includeOneTime false leaves one-time stubs (bonuses) out. Spending is net unless gross is true.",
+  allowedActors: ["user"],
+  input: z.object({
+    on: isoDate.optional(),
+    gross: z.boolean().default(false),
+    months: z.number().int().min(1).max(24).default(12),
+    includeOneTime: z.boolean().default(true),
+    today: isoDate.optional(),
+  }),
+  run: async (db, { on = today(), gross, months, includeOneTime, today: day }) => {
+    const now = day ?? today();
+    const end = monthIndex(on);
+    const from = firstOfMonth(end - months + 1);
+    const { stubs, versions, spending } = await loadPayInputs(db, { from, to: on, gross });
+    const counted = includeOneTime ? stubs : stubs.filter((s) => !s.oneTime);
+    type PayMonth = { month: string; payCents: number | null; targetsCents: number; spentCents: number; expectedSavingCents: number | null; savedCents: number | null };
+    const rows: PayMonth[] = [];
+    for (let m = end - months + 1; m <= end; m++) {
+      const start = firstOfMonth(m);
+      const monthOn = m === end ? on : lastOfMonth(m);
+      const pay = payForMonth(start.slice(0, 7), now, counted).netPayCents;
+      const targetsCents = monthlyTargetsCents(versions, monthOn);
+      const spentCents = spentBetween(spending, start, monthOn);
+      rows.push({
+        month: start,
+        payCents: pay,
+        targetsCents,
+        spentCents,
+        expectedSavingCents: pay === null ? null : pay - targetsCents,
+        savedCents: pay === null ? null : pay - spentCents,
+      });
+    }
+    // The year: the months with pay, each counted in full, so it's always
+    // the sum of the monthly figures shown under the grid.
+    const withPay = rows.filter((r) => r.payCents !== null);
+    const sum = (pick: (r: PayMonth) => number) => withPay.reduce((s, r) => s + pick(r), 0);
+    const totals = { netPayCents: sum((r) => r.payCents!), targetsCents: sum((r) => r.targetsCents), spentCents: sum((r) => r.spentCents) };
+    return {
+      months: rows,
+      monthsWithoutPay: rows.length - withPay.length,
+      // One-time stubs (bonuses) paid in the window, and whether they're left out.
+      oneTimeCount: stubs.filter((s) => s.oneTime && s.payDate >= from && s.payDate <= on).length,
+      oneTimeLeftOut: !includeOneTime,
+      totals,
+      summary: withPay.length ? paySummary(totals) : null,
     };
   },
 });

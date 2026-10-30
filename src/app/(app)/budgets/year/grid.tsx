@@ -36,6 +36,8 @@ export type GridCell = {
   transactionsHref: string | null;
 };
 export type GridRow = { key: string; name: string; isBuffer: boolean; months: GridCell[]; total: YearTotal | null; over: number; targeted: number };
+// Pay and saving for each month (#138), under the grid.
+export type PayMonth = { month: string; payCents: number | null; savedCents: number | null };
 export type GridColumn = { month: string; href: string; total: YearTotal | null; over: number; targets: number };
 
 const monthName = (month: string, style: "narrow" | "short" | "long") =>
@@ -75,12 +77,16 @@ export function YearGrid({
   grand,
   viewedMonth,
   partial,
+  pay,
+  payTotals,
 }: {
   rows: GridRow[];
   columns: GridColumn[];
   grand: YearTotal | null;
   viewedMonth: string;
   partial: string | null;
+  pay?: PayMonth[];
+  payTotals?: { netPayCents: number; savedCents: number } | null;
 }) {
   const [tip, setTip] = useState<Tip | null>(null);
   const touch = useRef(false);
@@ -345,6 +351,45 @@ export function YearGrid({
             true,
           )}
         </tr>
+        {pay ? (
+          <>
+            {/* Where the saving falls (#138): pay as it landed, and pay less spending. */}
+            <tr>
+              <th scope="row" className="pr-1 pt-2 text-left align-middle text-sm font-normal">
+                Net pay
+              </th>
+              {pay.map((p) => (
+                <td key={p.month} className="h-7 p-0 pt-2 text-center text-[10px] tabular-nums text-muted-foreground">
+                  <span className="sr-only">{monthName(p.month, "long")}: </span>
+                  {p.payCents === null ? <span aria-label="no pay recorded">–</span> : <span className="hidden md:inline">{compact(p.payCents)}</span>}
+                  {p.payCents !== null ? <span className="md:hidden" aria-hidden>•</span> : null}
+                </td>
+              ))}
+              <td className="h-7 p-0 pl-1 pt-2 text-center text-[10px] font-medium tabular-nums">{payTotals ? compact(payTotals.netPayCents) : ""}</td>
+            </tr>
+            <tr>
+              <th scope="row" className="pr-1 text-left align-middle text-sm font-normal">
+                Saved
+              </th>
+              {pay.map((p) => (
+                <td key={p.month} className={`h-7 p-0 text-center text-[10px] tabular-nums ${p.savedCents !== null && p.savedCents < 0 ? "text-negative" : ""}`}>
+                  <span className="sr-only">{monthName(p.month, "long")}: </span>
+                  {p.savedCents === null ? (
+                    <span className="text-muted-foreground">–</span>
+                  ) : (
+                    <>
+                      <span className="hidden md:inline">{compactDiff(p.savedCents)}</span>
+                      <span className="md:hidden">{p.savedCents < 0 ? "−" : "+"}</span>
+                    </>
+                  )}
+                </td>
+              ))}
+              <td className={`h-7 p-0 pl-1 text-center text-[10px] font-medium tabular-nums ${payTotals && payTotals.savedCents < 0 ? "text-negative" : ""}`}>
+                {payTotals ? compactDiff(payTotals.savedCents) : ""}
+              </td>
+            </tr>
+          </>
+        ) : null}
       </tfoot>
     </table>
   );

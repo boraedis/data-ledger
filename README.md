@@ -278,6 +278,11 @@ the owner's own (see below).
   - A period that straddles the year, such as an annual target starting in April, counts the year's months of its target pro rata, and the spending dated in the year.
   - The target is the target, not what rollover or rebalancing made available.
   - The total is the sum of the targets, with nothing counted twice. Each row opens that target's row in the Year view.
+- **Pay across the year** (#138): the Year view gets the month strip's five figures for its 12 months, and Net pay and Saved rows under the grid (`budgets.payYear`).
+  - **Same rules as the month view.** They share their code: pay stubs by pay date (with this month's paychecks still to come), targets at their monthly share, and spending without paychecks' deductions.
+  - **Actual pay, not a typical month (#142),** so the year is always the sum of the months shown.
+  - **Months with no pay** are left out of the year, along with their targets and spending, and the strip says how many.
+  - **Bonuses:** one-time stubs count in the month they're paid. `?bonus=0` (a link on the strip) leaves them out.
 - **Year view tooltips** (#139): every square, and every total, has a styled tooltip in place of the browser's native one.
   - It opens on hover, keyboard focus or a tap, and Escape or a tap elsewhere closes it. On a phone a tap opens it rather than following the link, and it carries the links instead: the month, and its transactions.
   - A square shows the target (a multi-month target's share), spent, how far under or over, and how many transactions. With rollover it adds what rolled in and what was available.

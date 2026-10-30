@@ -540,3 +540,39 @@ describe("budgets.monthly details for the Year view tooltip (#139)", () => {
     expect(target(await status("2026-04-30"), cat.Dining)).toMatchObject({ carryInCents: 8_750, availableCents: 48_750 });
   });
 });
+
+describe("budgets.payYear (#138)", () => {
+  type Year = {
+    months: { month: string; payCents: number | null; targetsCents: number; expectedSavingCents: number | null; savedCents: number | null; spentCents: number }[];
+    monthsWithoutPay: number;
+    totals: { netPayCents: number; targetsCents: number; spentCents: number };
+    summary: { expectedSaving: { cents: number } } | null;
+  };
+  const year = async (on: string, extra: Record<string, unknown> = {}) =>
+    (await run("budgets.payYear", { on, today: "2026-06-30", ...extra })).output as Year;
+
+  it("adds up only the months with pay, says how many were left out, and matches the sum of the months", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-01-10" });
+    const y = await year("2026-06-30");
+    const withPay = y.months.filter((m) => m.payCents !== null);
+    expect(withPay.length).toBeGreaterThan(0);
+    expect(y.monthsWithoutPay).toBe(12 - withPay.length);
+    expect(y.totals.netPayCents).toBe(withPay.reduce((s, m) => s + m.payCents!, 0));
+    // The year's expected saving is the months' expected saving added up.
+    expect(y.summary!.expectedSaving.cents).toBe(withPay.reduce((s, m) => s + m.expectedSavingCents!, 0));
+    // Each month by the month view's own rules.
+    const june = (await run("budgets.pay", { on: "2026-06-30", today: "2026-06-30" })).output as { pay: { netPayCents: number }; targetsCents: number; spentCents: number };
+    expect(y.months.at(-1)).toMatchObject({ month: "2026-06-01", payCents: june.pay.netPayCents, targetsCents: june.targetsCents, spentCents: june.spentCents });
+  });
+
+  it("follows the year shown, and can leave a bonus out", async () => {
+    // A window that ends before any pay stub has none.
+    expect((await year("2025-06-30")).summary).toBeNull();
+    const stubs = await db.select().from(payStubs);
+    const latest = stubs.sort((a, b) => b.payDate.localeCompare(a.payDate))[0];
+    await db.update(payStubs).set({ oneTime: true }).where(eq(payStubs.id, latest.id));
+    const all = await year("2026-06-30");
+    const regular = await year("2026-06-30", { includeOneTime: false });
+    expect(all.totals.netPayCents - regular.totals.netPayCents).toBe(latest.netCents);
+  });
+});

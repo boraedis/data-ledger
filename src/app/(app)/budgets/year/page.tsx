@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { yearTotals } from "@/lib/budgets/year";
-import { budgetMonthly } from "@/operations/budgets";
+import { budgetMonthly, budgetPayYear } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
 import { YearGrid, type GridColumn, type GridRow } from "./grid";
+import { PayYear } from "./pay-year";
 
 // Every target's spend against target, month by month (#108): one row per
 // target (the buffer first), one column per month for the last 12, so a
@@ -46,7 +47,11 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
   const on = isCurrent ? today : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
   const gross = sp.gross === "1";
 
-  const rows = (await read(getDb(), budgetMonthly, { on, gross, months: MONTHS, includeEnded: true, details: true })).sort((a, b) =>
+  // One-time stubs (bonuses) count unless ?bonus=0 leaves them out (#138).
+  const includeOneTime = sp.bonus !== "0";
+  const db = getDb();
+  const payYear = await read(db, budgetPayYear, { on, gross, months: MONTHS, includeOneTime });
+  const rows = (await read(db, budgetMonthly, { on, gross, months: MONTHS, includeEnded: true, details: true })).sort((a, b) =>
     a.categoryId === null ? -1 : b.categoryId === null ? 1 : a.name.localeCompare(b.name),
   );
   const columns = rows[0]?.months.map((m) => m.month) ?? Array.from({ length: MONTHS }, (_, i) => `${shiftMonth(month, i - MONTHS + 1)}-01`);
@@ -54,11 +59,12 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
   // Each target's 12 months, each month across targets, and the grid (#124).
   const totals = yearTotals(rows);
 
-  const href = (path: "/budgets" | "/budgets/year", next: { month?: string; gross?: boolean }) => {
+  const href = (path: "/budgets" | "/budgets/year", next: { month?: string; gross?: boolean; bonus?: boolean }) => {
     const q = new URLSearchParams();
     const m = next.month ?? month;
     if (m !== thisMonth) q.set("month", m);
     if (next.gross ?? gross) q.set("gross", "1");
+    if (path === "/budgets/year" && !(next.bonus ?? includeOneTime)) q.set("bonus", "0");
     const s = q.toString();
     return s ? `${path}?${s}` : path;
   };
@@ -140,7 +146,25 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
       {rows.length === 0 ? (
         <p className="text-muted-foreground">No targets in effect in these months.</p>
       ) : (
-        <YearGrid rows={gridRows} columns={gridColumns} grand={totals.total} viewedMonth={month} partial={partial} />
+        <>
+          <PayYear
+            summary={payYear.summary}
+            monthsWithoutPay={payYear.monthsWithoutPay}
+            isCurrent={isCurrent}
+            oneTimeCount={payYear.oneTimeCount}
+            oneTimeLeftOut={payYear.oneTimeLeftOut}
+            toggleOneTimeHref={href("/budgets/year", { bonus: !includeOneTime })}
+          />
+          <YearGrid
+            rows={gridRows}
+            columns={gridColumns}
+            grand={totals.total}
+            viewedMonth={month}
+            partial={partial}
+            pay={payYear.months.map((m) => ({ month: m.month, payCents: m.payCents, savedCents: m.savedCents }))}
+            payTotals={payYear.summary ? { netPayCents: payYear.totals.netPayCents, savedCents: payYear.summary.actualSaving.cents } : null}
+          />
+        </>
       )}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
