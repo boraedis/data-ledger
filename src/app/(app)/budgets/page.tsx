@@ -3,11 +3,12 @@ import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { HISTORY_MONTHS } from "@/lib/budgets/engine";
-import { backdateRange, budgetHistory, budgetMonthly, budgetStatus, budgetYear, yearlyCharges } from "@/operations/budgets";
+import { backdateRange, budgetHistory, budgetMonthly, budgetPay, budgetStatus, budgetYear, yearlyCharges } from "@/operations/budgets";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { RebalanceForm, TargetForm, type TargetChoice } from "./forms";
 import { BudgetOverview } from "./overview";
+import { PayStrip } from "./pay-strip";
 import { TargetCard } from "./target-card";
 import { YearSummary } from "./year-summary";
 
@@ -40,7 +41,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
   const monthYear = Number(month.slice(0, 4));
   const yearParam = typeof sp.year === "string" && /^\d{4}$/.test(sp.year) ? Math.min(Number(sp.year), thisYear) : null;
   const year = yearParam ?? monthYear;
-  const [status, cats, history, netHistory, monthly, yearly, yearTotals, range] = await Promise.all([
+  const [status, cats, history, netHistory, monthly, yearly, yearTotals, range, payVsBudget] = await Promise.all([
     read(db, budgetStatus, { on, gross }),
     read(db, listCategories, {}),
     read(db, budgetHistory, { on, gross }),
@@ -54,6 +55,8 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
     read(db, budgetYear, { year, gross }),
     // How far back a target can start (#130); the forms only show this month.
     isCurrent ? read(db, backdateRange, {}) : undefined,
+    // Pay against the month's budget (#128).
+    read(db, budgetPay, { on, gross }),
   ]);
   // What each category usually costs (#105), keyed like the forms' choices.
   const byCategory = (rows: typeof history) =>
@@ -150,6 +153,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
               remainingCents: t.remainingCents,
             }))}
           />
+          <PayStrip summary={payVsBudget.summary} pay={payVsBudget.pay} isCurrent={isCurrent} uncategorized={payVsBudget.uncategorized} />
           <ul className="space-y-3">
             {status.targets.map((t) => (
               <TargetCard key={t.categoryId ?? "buffer"} target={t} editable={isCurrent} history={histories[t.categoryId ?? ""]} netHistory={netHistories[t.categoryId ?? ""]} windowMonths={HISTORY_MONTHS}
