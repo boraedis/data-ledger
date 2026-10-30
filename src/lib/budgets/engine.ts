@@ -126,6 +126,24 @@ export function targetKeyFor(
   return BUFFER;
 }
 
+/**
+ * The lines one target counted (#135): each resolved on its own date, as
+ * budgetStatus resolves them, between start and end. Their spending is the
+ * card's spent figure exactly, refunds included.
+ */
+export function linesForTarget<L extends SpendLine>(input: {
+  key: TargetKey;
+  start: string;
+  end: string;
+  versions: TargetVersion[];
+  lines: L[];
+  categories: CategoryInfo[];
+}): L[] {
+  const byKey = versionsByKey(input.versions);
+  const categories = new Map(input.categories.map((c) => [c.id, c]));
+  return input.lines.filter((l) => l.date >= input.start && l.date <= input.end && targetKeyFor(l, categories, byKey) === input.key);
+}
+
 // --- Periods and status -------------------------------------------------------
 
 export type PeriodStatus = {

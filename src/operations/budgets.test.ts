@@ -401,3 +401,59 @@ describe("budgets.pay (#128)", () => {
     expect(await pay("2026-01-31")).toMatchObject({ pay: { netPayCents: null }, summary: null });
   });
 });
+
+describe("budgets.targetTransactions (#135)", () => {
+  type Lines = { spentCents: number; totalCents: number; lines: { transactionId: string; amountCents: number; categoryName: string }[] } | null;
+  const lines = async (categoryId: string | null, on: string, gross = false) =>
+    (await run("budgets.targetTransactions", { categoryId, on, gross })).output as Lines;
+  let cardId: string;
+  const purchase = async (postedOn: string, amountCents: number, categoryId: string, externalId: string) =>
+    (await db.insert(transactions).values({ accountId: cardId, postedOn, amountCents, description: `MADE-UP ${externalId}`, externalId, categoryId }).returning())[0];
+
+  beforeEach(async () => {
+    [{ id: cardId }] = await db.select().from(accounts).where(eq(accounts.type, "credit"));
+    // Only these made-up purchases are Dining.
+    await db.update(transactions).set({ categoryId: null }).where(eq(transactions.categoryId, cat.Dining));
+  });
+
+  it("lists the three purchases behind a $400 Dining target, totalling $312.50 as the card does", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-05-01" });
+    for (const [day, cents, id] of [["2026-05-03", -10_000, "d1"], ["2026-05-12", -11_250, "d2"], ["2026-05-20", -10_000, "d3"]] as const) {
+      await purchase(day, cents, cat.Dining, id);
+    }
+    const l = (await lines(cat.Dining, "2026-05-31"))!;
+    expect(l.lines).toHaveLength(3);
+    expect(l).toMatchObject({ totalCents: 31_250, spentCents: 31_250 });
+    expect(target(await status("2026-05-31"), cat.Dining).spentCents).toBe(31_250);
+  });
+
+  it("includes a refund, which lowers the total as on the card", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-05-01" });
+    await purchase("2026-05-03", -10_000, cat.Dining, "d1");
+    await purchase("2026-05-09", 2_500, cat.Dining, "refund");
+    const l = (await lines(cat.Dining, "2026-05-31"))!;
+    expect(l.lines.map((x) => x.amountCents).sort((a, b) => a - b)).toEqual([-10_000, 2_500]);
+    expect(l).toMatchObject({ totalCents: 7_500, spentCents: 7_500 });
+  });
+
+  it("gives the buffer every category without a target, never transfers or income, matching its card", async () => {
+    await run("budgets.setTarget", { categoryId: null, amountCents: 100_000, today: "2026-06-01" });
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-06-01" });
+    await purchase("2026-06-10", -50_000, cat.Transfers, "to-savings");
+    const l = (await lines(null, "2026-06-30"))!;
+    expect(l.totalCents).toBe(target(await status("2026-06-30"), null).spentCents);
+    expect(l.totalCents).toBeGreaterThan(0);
+    const names = new Set(l.lines.map((x) => x.categoryName));
+    for (const excluded of ["Groceries", "Transfers", "Paycheck"]) expect(names.has(excluded)).toBe(false);
+  });
+
+  it("in the gross view, doesn't net off what friends owe", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-05-01" });
+    const dinner = await purchase("2026-05-15", -12_000, cat.Dining, "shared");
+    // A made-up friend owes half of it.
+    const alex = (await run("people.create", { name: "Alex" })).output as { id: string };
+    await run("reimbursements.setShares", { transactionId: dinner.id, shares: [{ personId: alex.id, amountCents: 6_000 }] });
+    expect((await lines(cat.Dining, "2026-05-31"))!.totalCents).toBe(6_000);
+    expect((await lines(cat.Dining, "2026-05-31", true))!.totalCents).toBe(12_000);
+  });
+});

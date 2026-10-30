@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { historyLabel, periodLabel, scheduleLabel, type HistorySummary } from "@/lib/budgets/format";
@@ -49,6 +50,7 @@ export function TargetCard({
   partialMonth,
   covers,
   backdate,
+  transactionsHref,
 }: {
   target: CardTarget;
   editable: boolean;
@@ -62,6 +64,8 @@ export function TargetCard({
   // The buffer's card only: every category it covers, with this period's spend (#110).
   covers?: { categoryId: string; name: string; spentCents: number }[];
   backdate?: { earliestMonth: string | null; currentMonth: string };
+  // The transactions behind its spent figure (#135).
+  transactionsHref: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(false);
@@ -137,8 +141,13 @@ export function TargetCard({
 
       <div className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground tabular-nums">
         <span>{parts.join(" ")}</span>
-        <span className={over ? "font-medium text-negative" : ""}>
-          {over ? `${formatCents(-t.remainingCents)} over` : `${formatCents(t.remainingCents)} left`}
+        <span className="flex gap-3">
+          <Link href={transactionsHref} className="underline underline-offset-2 hover:text-foreground">
+            Transactions
+          </Link>
+          <span className={over ? "font-medium text-negative" : ""}>
+            {over ? `${formatCents(-t.remainingCents)} over` : `${formatCents(t.remainingCents)} left`}
+          </span>
         </span>
       </div>
       {open || editing ? (
