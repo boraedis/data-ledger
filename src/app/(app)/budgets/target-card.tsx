@@ -36,11 +36,14 @@ export function TargetCard({
   target: t,
   editable,
   history,
+  netHistory,
   windowMonths,
 }: {
   target: CardTarget;
   editable: boolean;
   history?: HistorySummary;
+  // Net, for suggesting an amount (#106); see TargetForm.
+  netHistory?: HistorySummary;
   windowMonths: number;
 }) {
   const [editing, setEditing] = useState(false);
@@ -117,6 +120,7 @@ export function TargetCard({
                 sinkingFund: t.sinkingFund,
               }}
               histories={history ? { [t.categoryId ?? ""]: history } : {}}
+              suggestFrom={netHistory ? { [t.categoryId ?? ""]: netHistory } : {}}
               windowMonths={windowMonths}
               onDone={() => setEditing(false)}
             />

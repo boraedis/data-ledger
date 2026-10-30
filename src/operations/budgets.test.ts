@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { budgetTargets, categories, commandLog, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { lastOfMonth, monthIndex } from "@/lib/budgets/engine";
+import { suggestedTargetCents } from "@/lib/budgets/format";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
 import { execute, undoCommand } from "@/operations/runtime";
@@ -136,5 +137,24 @@ describe("budgets.history (#105)", () => {
     // June, the current month, isn't in it.
     expect(groceries.months.some((m) => m.month === "2026-06-01")).toBe(false);
     expect(h.find((r) => r.categoryId === cat.Car)).toMatchObject({ averageCents: null, months: [] });
+  });
+
+  it("suggests a target only with two months of history, writes nothing for it, and saves it as the owner (#106)", async () => {
+    // One May purchase is all Car has: a single month, so no suggestion.
+    const [may] = await db.select().from(transactions).where(and(like(transactions.description, "QUILLFIELD%"), gte(transactions.postedOn, "2026-05-01"), lte(transactions.postedOn, "2026-05-31"))).limit(1);
+    await db.update(transactions).set({ categoryId: cat.Car }).where(eq(transactions.id, may.id));
+    const h = await history("2026-06-15");
+    expect(h.find((r) => r.categoryId === cat.Car)!.months).toHaveLength(1);
+    expect(suggestedTargetCents(h.find((r) => r.categoryId === cat.Car), 1)).toBeNull();
+
+    const suggestion = suggestedTargetCents(h.find((r) => r.categoryId === cat.Groceries), 1)!;
+    expect(suggestion % 100).toBe(0);
+    // Reading history and working out a suggestion wrote nothing.
+    expect(await db.select().from(budgetTargets)).toHaveLength(0);
+    expect(await db.select().from(commandLog).where(eq(commandLog.operation, "budgets.setTarget"))).toHaveLength(0);
+
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: suggestion, today: "2026-06-15" });
+    expect(await db.select().from(budgetTargets)).toMatchObject([{ categoryId: cat.Groceries, amountCents: suggestion }]);
+    expect(await db.select().from(commandLog).where(eq(commandLog.operation, "budgets.setTarget"))).toMatchObject([{ actor: "user", status: "applied" }]);
   });
 });

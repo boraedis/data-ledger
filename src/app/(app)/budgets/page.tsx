@@ -33,15 +33,21 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
   // Net by default (your share of shared expenses); ?gross=1 shows spending
   // as charged, before what friends owe comes off.
   const gross = sp.gross === "1";
-  const [status, cats, history] = await Promise.all([
+  const [status, cats, history, netHistory] = await Promise.all([
     read(db, budgetStatus, { on, gross }),
     read(db, listCategories, {}),
     read(db, budgetHistory, { on, gross }),
+    // Suggested targets (#106) come from net spend whichever view is shown,
+    // since targets are net.
+    gross ? read(db, budgetHistory, { on, gross: false }) : null,
   ]);
   // What each category usually costs (#105), keyed like the forms' choices.
-  const histories = Object.fromEntries(
-    history.map((h) => [h.categoryId ?? "", { averageCents: h.averageCents, months: h.months, overMonths: h.overMonths, comparedMonths: h.comparedMonths }]),
-  );
+  const byCategory = (rows: typeof history) =>
+    Object.fromEntries(
+      rows.map((h) => [h.categoryId ?? "", { averageCents: h.averageCents, months: h.months, overMonths: h.overMonths, comparedMonths: h.comparedMonths }]),
+    );
+  const histories = byCategory(history);
+  const netHistories = netHistory ? byCategory(netHistory) : histories;
   const hrefWith = (next: { month?: string; gross?: boolean }) => {
     const q = new URLSearchParams();
     const m = next.month ?? month;
@@ -107,7 +113,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
       ) : (
         <ul className="space-y-3">
           {status.targets.map((t) => (
-            <TargetCard key={t.categoryId ?? "buffer"} target={t} editable={isCurrent} history={histories[t.categoryId ?? ""]} windowMonths={HISTORY_MONTHS} />
+            <TargetCard key={t.categoryId ?? "buffer"} target={t} editable={isCurrent} history={histories[t.categoryId ?? ""]} netHistory={netHistories[t.categoryId ?? ""]} windowMonths={HISTORY_MONTHS} />
           ))}
         </ul>
       )}
@@ -143,7 +149,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
           {choices.length ? (
             <section className="space-y-2 rounded-lg border p-3">
               <h2 className="text-lg font-medium">Add a target</h2>
-              <TargetForm choices={choices} histories={histories} windowMonths={HISTORY_MONTHS} />
+              <TargetForm choices={choices} histories={histories} suggestFrom={netHistories} windowMonths={HISTORY_MONTHS} />
             </section>
           ) : null}
         </>
