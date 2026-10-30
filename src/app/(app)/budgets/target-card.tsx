@@ -42,6 +42,7 @@ export function TargetCard({
   bars,
   viewedMonth,
   partialMonth,
+  covers,
 }: {
   target: CardTarget;
   editable: boolean;
@@ -52,6 +53,8 @@ export function TargetCard({
   bars: Bar[];
   viewedMonth: string;
   partialMonth: string | null;
+  // The buffer's card only: every category it covers, with this period's spend (#110).
+  covers?: { categoryId: string; name: string; spentCents: number }[];
 }) {
   const [editing, setEditing] = useState(false);
   const over = t.remainingCents < 0;
@@ -111,6 +114,7 @@ export function TargetCard({
         </p>
       ) : null}
 
+      {covers ? <BufferCovers covers={covers} /> : null}
       <MonthBars bars={bars} viewedMonth={viewedMonth} partialMonth={partialMonth} />
       <p className="text-xs text-muted-foreground tabular-nums">{historyLabel(history, windowMonths)}</p>
 
@@ -140,5 +144,43 @@ export function TargetCard({
         )
       ) : null}
     </li>
+  );
+}
+
+// What the buffer draws from (#110): categories with spending this period in
+// view, the ones with nothing yet folded away, and a total that is the
+// card's spent figure.
+function BufferCovers({ covers }: { covers: { categoryId: string; name: string; spentCents: number }[] }) {
+  const spending = covers.filter((c) => c.spentCents !== 0).sort((a, b) => b.spentCents - a.spentCents);
+  const quiet = covers.filter((c) => c.spentCents === 0).sort((a, b) => a.name.localeCompare(b.name));
+  return (
+    <div className="space-y-1.5 text-xs text-muted-foreground">
+      <p>
+        Covers every expense category without a target of its own or its parent&apos;s ({covers.length}). Spending in them
+        counts here; give a category its own target to take it out.
+      </p>
+      {spending.length ? (
+        <ul className="divide-y rounded-md border text-sm text-foreground">
+          {spending.map((c) => (
+            <li key={c.categoryId} className="flex justify-between gap-3 px-2 py-1">
+              <span className="truncate">{c.name}</span>
+              <span className="tabular-nums">{formatCents(c.spentCents)}</span>
+            </li>
+          ))}
+          <li className="flex justify-between gap-3 px-2 py-1 font-medium">
+            <span>Spent from the buffer</span>
+            <span className="tabular-nums">{formatCents(spending.reduce((sum, c) => sum + c.spentCents, 0))}</span>
+          </li>
+        </ul>
+      ) : null}
+      {quiet.length ? (
+        <details>
+          <summary className="cursor-pointer hover:text-foreground">
+            {quiet.length} more with nothing spent this period
+          </summary>
+          <p className="mt-1">{quiet.map((c) => c.name).join(" · ")}</p>
+        </details>
+      ) : null}
+    </div>
   );
 }
