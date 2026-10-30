@@ -505,7 +505,7 @@ export const backdateRange = defineRead({
   name: "budgets.backdateRange",
   description:
     "How far back a target can be backdated (budgets.backdateTarget): the first month with transactions in budget " +
-    "accounts (YYYY-MM, null with none), and this month, which backdating stops short of.",
+    "accounts (YYYY-MM, null with none), and this month, the latest a backdate can start.",
   input: z.object({ today: isoDate.optional() }),
   run: async (db, { today: day }) => ({ earliestMonth: await earliestMonth(db), currentMonth: (day ?? today()).slice(0, 7) }),
 });
@@ -528,7 +528,7 @@ const backdateInput = z.object({
  */
 async function plannedBackdate(db: Db, input: z.infer<typeof backdateInput>) {
   const on = input.today ?? today();
-  if (input.fromMonth >= on.slice(0, 7)) throw new Error("That's this month or later: set the target as usual instead");
+  if (input.fromMonth > on.slice(0, 7)) throw new Error("A target can't start after this month");
   const first = await earliestMonth(db);
   if (!first || input.fromMonth < first) throw new Error(`The earliest a target can start is ${first ?? "the first month with transactions"}`);
   const effectiveFrom = `${input.fromMonth}-01`;
@@ -555,8 +555,8 @@ export const backdateTarget = defineWrite({
     "Give a target (categoryId null = the buffer) an earlier start: amountCents per period from fromMonth (YYYY-MM), " +
     "running until the target's next version, which keeps its amount. A month that already had a target is changed " +
     "too: a version starting that month is updated in place. Never earlier than the first month with transactions, " +
-    "and before this month (budgets.setTarget " +
-    "covers this period). periodMonths, anchorMonth (default January for annual, else fromMonth), rollover and " +
+    "and not after this month (budgets.setTarget " +
+    "covers changes from the current period's start). periodMonths, anchorMonth (default January for annual, else fromMonth), rollover and " +
     "sinkingFund as in budgets.setTarget. With rollover, what later periods have available changes. " +
     "budgets.backdatePreview lists the months it changes first.",
   input: backdateInput,

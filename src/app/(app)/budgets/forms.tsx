@@ -105,7 +105,7 @@ export function TargetForm({
     setSinkingFund(true);
     setError(null);
   };
-  const backdating = Boolean(backdate && fromMonth && fromMonth < backdate.currentMonth);
+  const backdating = Boolean(backdate && fromMonth && fromMonth <= backdate.currentMonth);
   // A backdate is saved only after its months are shown (#137). The preview
   // belongs to the exact inputs it was made for; changing any of them
   // drops it, so what's confirmed is what was shown.
@@ -223,7 +223,7 @@ export function TargetForm({
             {PERIODS.some((p) => p.months === periodMonths) ? null : <option value={periodMonths}>Every {periodMonths} months</option>}
           </select>
         </label>
-        {backdate?.earliestMonth && backdate.earliestMonth < backdate.currentMonth ? (
+        {backdate?.earliestMonth && backdate.earliestMonth <= backdate.currentMonth ? (
           <label className="space-y-1">
             <span className="block text-xs text-muted-foreground">Applies from</span>
             {/* Blank is this period; an earlier month gives months before it a target (#130). */}

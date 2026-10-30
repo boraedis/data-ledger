@@ -364,9 +364,26 @@ describe("budgets.backdateTarget (#130)", () => {
     expect((await status("2026-02-28")).targets.some((t) => t.categoryId === cat.Dining)).toBe(false);
   });
 
-  it("never goes before the first transactions, and not into this month", async () => {
+  it("never goes before the first transactions, and not after this month", async () => {
     await expect(backdate({ categoryId: cat.Coffee, fromMonth: "2015-01", amountCents: 1_000 })).rejects.toThrow(/earliest a target can start/);
-    await expect(backdate({ categoryId: cat.Coffee, fromMonth: "2026-06", amountCents: 1_000 })).rejects.toThrow(/this month or later/);
+    await expect(backdate({ categoryId: cat.Coffee, fromMonth: "2026-07", amountCents: 1_000 })).rejects.toThrow(/after this month/);
+  });
+
+  it("changes this month's target too, showing the change first, and runs it until the next version", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-06-10" });
+    // The review lists June alone, from $400 to $350, with no later version to stop at.
+    const review = (await run("budgets.backdatePreview", { today: "2026-06-15", categoryId: cat.Dining, fromMonth: "2026-06", amountCents: 35_000 })).output as {
+      months: { month: string; before: { targetCents: number } | null; after: { targetCents: number } | null }[];
+      until: string | null;
+    };
+    expect(review.months.map((m) => [m.month, m.before?.targetCents, m.after?.targetCents])).toEqual([["2026-06", 40_000, 35_000]]);
+    expect(review.until).toBeNull();
+
+    const result = await backdate({ categoryId: cat.Dining, fromMonth: "2026-06", amountCents: 35_000 });
+    expect(result.output).toMatchObject({ effectiveFrom: "2026-06-01", until: null });
+    expect(target(await status("2026-06-30"), cat.Dining).targetCents).toBe(35_000);
+    // May keeps whatever it had before June: nothing, here.
+    expect((await status("2026-05-31")).targets.some((t) => t.categoryId === cat.Dining)).toBe(false);
   });
 
   it("backdates the buffer too, and a new target with nothing after it runs on to today", async () => {
@@ -513,7 +530,7 @@ describe("budgets.backdatePreview (#137)", () => {
   });
 
   it("refuses what the save would refuse", async () => {
-    await expect(preview({ categoryId: cat.Coffee, fromMonth: "2026-06", amountCents: 1_000 })).rejects.toThrow(/this month or later/);
+    await expect(preview({ categoryId: cat.Coffee, fromMonth: "2026-07", amountCents: 1_000 })).rejects.toThrow(/after this month/);
     await expect(preview({ categoryId: cat.Coffee, fromMonth: "2015-01", amountCents: 1_000 })).rejects.toThrow(/earliest a target can start/);
   });
 });
