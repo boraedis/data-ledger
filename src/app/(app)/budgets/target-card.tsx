@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { periodLabel, scheduleLabel } from "@/lib/budgets/format";
+import { historyLabel, periodLabel, scheduleLabel, type HistorySummary } from "@/lib/budgets/format";
 import { formatCents } from "@/lib/money";
 import { TargetForm } from "./forms";
 
@@ -32,7 +32,17 @@ export type CardTarget = {
 // One target's period: a bar of spent against available, an even-pace
 // marker for multi-month periods, and the arithmetic spelled out so
 // rollover and rebalancing never look like magic.
-export function TargetCard({ target: t, editable }: { target: CardTarget; editable: boolean }) {
+export function TargetCard({
+  target: t,
+  editable,
+  history,
+  windowMonths,
+}: {
+  target: CardTarget;
+  editable: boolean;
+  history?: HistorySummary;
+  windowMonths: number;
+}) {
   const [editing, setEditing] = useState(false);
   const over = t.remainingCents < 0;
   const scale = Math.max(t.availableCents, t.spentCents, 1);
@@ -91,6 +101,8 @@ export function TargetCard({ target: t, editable }: { target: CardTarget; editab
         </p>
       ) : null}
 
+      <p className="text-xs text-muted-foreground tabular-nums">{historyLabel(history, windowMonths)}</p>
+
       {editable ? (
         editing ? (
           <div className="border-t pt-3">
@@ -104,6 +116,8 @@ export function TargetCard({ target: t, editable }: { target: CardTarget; editab
                 rollover: t.rollover,
                 sinkingFund: t.sinkingFund,
               }}
+              histories={history ? { [t.categoryId ?? ""]: history } : {}}
+              windowMonths={windowMonths}
               onDone={() => setEditing(false)}
             />
           </div>

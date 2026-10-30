@@ -8,6 +8,11 @@ import {
   budgetStatus as computeStatus,
   changeEffectiveFrom,
   currentVersion,
+  firstOfMonth,
+  HISTORY_MONTHS,
+  lastOfMonth,
+  monthIndex,
+  recentHistory,
   type TargetVersion,
 } from "@/lib/budgets/engine";
 import { categoryOptions } from "@/lib/categorize/labels";
@@ -84,6 +89,36 @@ export const budgetStatus = defineRead({
         byCategory: status.unbudgeted.byCategory.map((c) => ({ ...c, name: nameFor(labelOf, c.categoryId) })),
       },
     };
+  },
+});
+
+export const budgetHistory = defineRead({
+  name: "budgets.history",
+  description:
+    `What each expense category (and the buffer, categoryId null) usually costs: net spend in each of the last ` +
+    `${HISTORY_MONTHS} full months before \`on\` (default today; the current month is left out) and their average, ` +
+    "in cents. A category covers its own spending and its subcategories' without their own target, as a target on " +
+    "it would today. averageCents is null with no spending in the window (no history, not $0). For a monthly " +
+    "target, overMonths of comparedMonths went over today's target. Net unless gross is true.",
+  input: z.object({ on: isoDate.optional(), gross: z.boolean().default(false) }),
+  run: async (db, { on = today(), gross }) => {
+    const end = monthIndex(on) - 1;
+    const [versions, lines, { rows, labelOf }] = await Promise.all([
+      loadVersions(db),
+      // The same lines budgets.status counts, for the window only.
+      spendingLines.run(db, { from: firstOfMonth(end - HISTORY_MONTHS + 1), to: lastOfMonth(end), budgetOnly: true, gross }),
+      labels(db),
+    ]);
+    const history = recentHistory({
+      on,
+      versions,
+      lines: lines.map((l) => ({ date: l.date, amountCents: l.amountCents, categoryId: l.categoryId })),
+      categories: rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind })),
+    });
+    return [...history.values()].map(({ key, ...h }) => {
+      const categoryId = key === BUFFER ? null : key;
+      return { categoryId, name: nameFor(labelOf, categoryId), ...h };
+    });
   },
 });
 

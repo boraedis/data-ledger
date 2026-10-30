@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createManualAccount, deleteManualAccount, listAccounts, setManualValue, updateAccount } from "@/operations/accounts";
-import { budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
+import { budgetHistory, budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
 import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goals";
 import { applySnapshot } from "@/operations/import";
 import { createPayStub, deletePayStub, linkPayDeposit, listPayStubs, payDepositCandidates, updatePayStub } from "@/operations/pay";
@@ -72,6 +72,7 @@ export const operations: Operation[] = [
   uncategorizedSpend,
   investmentIncome,
   budgetStatus,
+  budgetHistory,
   listTargets,
   setTarget,
   removeTarget,

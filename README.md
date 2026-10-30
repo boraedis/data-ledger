@@ -210,8 +210,9 @@ the owner's own (see below).
 - **Rollover:** per target, the remainder (or overspend) carries into the next period while rollover stays on. A gap resets it.
 - **Annual and other multi-month targets** show year-to-date (period-to-date) spend against an even-pace marker. With a sinking fund, they also show the monthly set-aside and how much should be set aside by now.
 - **Rebalancing:** `budgets.rebalance` moves money between two targets for the current period only, as a dated adjustment pair. Both targets stay as they are.
+- **What it usually costs** (#105): each target card, and the target form, shows the category's average monthly net spend over the last 3 full months (the current month left out), from the same lines budgets count (`budgets.history`, `recentHistory` in the engine). A category covers its subcategories without their own target, as a target on it would; a category first seen inside the window is averaged from then; nothing in the window reads "No spending", not $0. For a monthly target it adds how many of those months went over today's target.
 - **Operations:**
-  - **Reads:** `budgets.status` and `budgets.targets`. Budget figures come from transactions, not balances, so Tally may read them.
+  - **Reads:** `budgets.status`, `budgets.history` and `budgets.targets`. Budget figures come from transactions, not balances, so Tally may read them.
   - **Writes:** `budgets.setTarget`, `removeTarget` and `rebalance`. All are logged and undoable, and Tally's are proposals.
 
 ### Savings goals

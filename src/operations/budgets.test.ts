@@ -2,6 +2,7 @@ import { and, eq, gte, like, lte } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { budgetTargets, categories, commandLog, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
+import { lastOfMonth, monthIndex } from "@/lib/budgets/engine";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
 import { execute, undoCommand } from "@/operations/runtime";
@@ -111,5 +112,29 @@ describe("budgets", () => {
     expect(result.status).toBe("proposed");
     expect(await db.select().from(budgetTargets)).toHaveLength(0);
     expect((await db.select().from(commandLog).where(eq(commandLog.actor, "tally")))[0].status).toBe("proposed");
+  });
+});
+
+describe("budgets.history (#105)", () => {
+  type History = { categoryId: string | null; averageCents: number | null; months: { month: string; spentCents: number }[]; overMonths: number | null; comparedMonths: number }[];
+  const history = async (on: string) => (await run("budgets.history", { on })).output as History;
+
+  it("averages the three full months before this one from the same lines budgets count, and shows no history for an unused category", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-03-01" });
+    const h = await history("2026-06-15");
+    const groceries = h.find((r) => r.categoryId === cat.Groceries)!;
+    expect(groceries.months.map((m) => m.month)).toEqual(["2026-03-01", "2026-04-01", "2026-05-01"]);
+    // Each month is what budgets.status counted for it.
+    for (const m of groceries.months) {
+      const s = await status(lastOfMonth(monthIndex(m.month)));
+      expect(m.spentCents).toBe(target(s, cat.Groceries).spentCents);
+    }
+    const sum = groceries.months.reduce((s, m) => s + m.spentCents, 0);
+    expect(groceries.averageCents).toBe(Math.round(sum / 3));
+    expect(groceries.comparedMonths).toBe(3);
+    expect(groceries.overMonths).toBe(groceries.months.filter((m) => m.spentCents > 30_000).length);
+    // June, the current month, isn't in it.
+    expect(groceries.months.some((m) => m.month === "2026-06-01")).toBe(false);
+    expect(h.find((r) => r.categoryId === cat.Car)).toMatchObject({ averageCents: null, months: [] });
   });
 });
