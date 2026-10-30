@@ -3,8 +3,8 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { historyLabel, type HistorySummary } from "@/lib/budgets/format";
-import { parseAmountCents } from "@/lib/money";
+import { historyLabel, suggestedTargetCents, type HistorySummary } from "@/lib/budgets/format";
+import { formatCents, parseAmountCents } from "@/lib/money";
 import { rebalance, removeTarget, setTarget } from "./actions";
 
 // The budget forms. Amounts are typed as dollars and become integer cents
@@ -34,6 +34,7 @@ export function TargetForm({
   choices,
   initial,
   histories,
+  suggestFrom,
   windowMonths,
   onDone,
 }: {
@@ -42,11 +43,17 @@ export function TargetForm({
   initial?: TargetChoice & { amountCents: number; periodMonths: number; anchorOn: string; rollover: boolean; sinkingFund: boolean };
   // What each category usually costs (#105), by category id ("" for the buffer).
   histories: Record<string, HistorySummary>;
+  // Net history to suggest an amount from (#106): the same as histories,
+  // except on the gross view, where suggesting gross would set a target
+  // the net budget never reaches.
+  suggestFrom: Record<string, HistorySummary>;
   windowMonths: number;
   onDone?: () => void;
 }) {
   const [choice, setChoice] = useState<string>(initial ? (initial.categoryId ?? "") : (choices?.[0]?.categoryId ?? ""));
-  const [amount, setAmount] = useState(initial ? (initial.amountCents / 100).toFixed(2) : "");
+  // Null while adding and untouched: the field then shows the suggestion,
+  // following the category and period until the owner types.
+  const [amount, setAmount] = useState<string | null>(initial ? (initial.amountCents / 100).toFixed(2) : null);
   const [periodMonths, setPeriodMonths] = useState(initial?.periodMonths ?? 1);
   const [anchorMonth, setAnchorMonth] = useState(initial?.anchorOn.slice(0, 7) ?? "");
   const [rollover, setRollover] = useState(initial?.rollover ?? false);
@@ -61,10 +68,13 @@ export function TargetForm({
     initial || !choices || choices.some((c) => (c.categoryId ?? "") === choice) ? choice : (choices[0]?.categoryId ?? "");
   const categoryId = selected === "" ? null : selected;
   const name = initial?.name ?? choices?.find((c) => (c.categoryId ?? "") === selected)?.name ?? "";
+  // Only a value in the field; nothing is written until the owner saves.
+  const suggestion = suggestedTargetCents(suggestFrom[selected], periodMonths);
+  const shown = amount ?? (suggestion === null ? "" : String(suggestion / 100));
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    const amountCents = toCents(amount);
+    const amountCents = toCents(shown);
     if (amountCents === null) return setError("Enter an amount like 400 or 1,250.00");
     startTransition(async () => {
       const result = await setTarget(
@@ -76,7 +86,7 @@ export function TargetForm({
       // A fresh form after adding: settings carried over from the last
       // target are how one gets rollover it never asked for.
       if (!initial) {
-        setAmount("");
+        setAmount(null);
         setPeriodMonths(1);
         setAnchorMonth("");
         setRollover(false);
@@ -103,9 +113,22 @@ export function TargetForm({
         ) : null}
         <label className="space-y-1">
           <span className="block text-xs text-muted-foreground">Amount per period</span>
-          <Input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="0.00" />
+          <Input value={shown} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="0.00" />
           {/* A sense of what it usually costs, so the target isn't a guess. */}
           <span className="block text-xs text-muted-foreground tabular-nums">{historyLabel(histories[selected], windowMonths)}</span>
+          {suggestion === null ? null : amount === null ? (
+            <span className="block text-xs text-muted-foreground">Filled in from the average. Change it freely.</span>
+          ) : toCents(amount) === suggestion ? null : (
+            // A way back to the suggestion after typing over it, or when
+            // editing a target that has drifted from what the category costs.
+            <button
+              type="button"
+              className="block text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground tabular-nums"
+              onClick={() => setAmount(initial ? String(suggestion / 100) : null)}
+            >
+              Use suggested {formatCents(suggestion)}
+            </button>
+          )}
         </label>
         <label className="space-y-1">
           <span className="block text-xs text-muted-foreground">Period</span>

@@ -34,3 +34,20 @@ export function historyLabel(h: HistorySummary | undefined, windowMonths: number
   const avg = `Avg ${formatCents(h.averageCents)}/month over the last ${n === 1 ? "month" : `${n} months`}`;
   return h.overMonths !== null && h.comparedMonths > 0 ? `${avg} · over target in ${h.overMonths} of ${h.comparedMonths}` : avg;
 }
+
+/** History needed before a target is suggested: one month is too easy to mistake for normal. */
+export const SUGGEST_MIN_MONTHS = 2;
+
+/**
+ * A starting amount for a target (#106): the monthly average times the
+ * period's length, rounded to whole dollars. Null with under two months of
+ * history, so a category first used last month isn't handed a target
+ * built from one month. Only ever a value for the form; nothing is saved
+ * until the owner saves the target.
+ */
+export function suggestedTargetCents(h: HistorySummary | undefined, periodMonths: number): number | null {
+  if (!h || h.averageCents === null || h.months.length < SUGGEST_MIN_MONTHS) return null;
+  // Rounded after scaling, so an annual suggestion isn't twelve rounding errors.
+  const cents = Math.round((h.averageCents * periodMonths) / 100) * 100;
+  return cents > 0 ? cents : null;
+}
