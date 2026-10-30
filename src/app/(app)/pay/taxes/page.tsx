@@ -84,6 +84,9 @@ export default async function TaxesPage(props: PageProps<"/pay/taxes">) {
               <p className="text-sm text-muted-foreground">
                 in federal income tax · {estimate.stubCount} pay stub{estimate.stubCount === 1 ? "" : "s"} so far, {estimate.remainingPaychecks} more paycheck
                 {estimate.remainingPaychecks === 1 ? "" : "s"} expected (every {estimate.cadenceDays} days)
+                {estimate.oneTimeCount
+                  ? ` · ${estimate.oneTimeCount} one-time (counted so far, not in the pace for the paychecks to come)`
+                  : ""}
               </p>
             </section>
           ) : (

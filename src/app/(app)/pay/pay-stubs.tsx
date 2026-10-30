@@ -35,6 +35,12 @@ function StubCard({ stub, options }: { stub: Stub; options: CategoryOption[] }) 
         <span className="min-w-0">
           <span className="block font-medium">
             {stub.payDate} · {stub.employer}
+            {stub.oneTime ? (
+              // Why the tax estimate leaves it out of its pace (#113).
+              <span className="ml-2 rounded-sm border px-1 py-px text-[10px] font-normal text-muted-foreground" title="Counted in the year so far, not in the tax estimate's pace">
+                one-time
+              </span>
+            ) : null}
           </span>
           <span className="block text-xs text-muted-foreground">
             {stub.periodStart} to {stub.periodEnd} ·{" "}

@@ -16,6 +16,8 @@ export type EstimateStub = {
   lines: { kind: PayLineKind; amountCents: number }[];
   // Paid by the employer on top (#92), from the stub's memo box.
   employer?: { kind: EmployerPayKind; amountCents: number }[];
+  // A bonus or other one-off pay (#113): in the year to date, not the pace.
+  oneTime?: boolean;
 };
 
 export type Assumptions = {
@@ -80,15 +82,20 @@ export function estimateYear(year: number, stubs: EstimateStub[], assumptions: A
   const own = stubs.filter((s) => s.payDate.startsWith(`${year}-`)).sort((a, b) => a.payDate.localeCompare(b.payDate));
   if (own.length === 0) return null;
 
-  const cadence = cadenceDays(own);
-  const lastPayDate = own.at(-1)!.payDate;
-  const remaining = remainingPaychecks(lastPayDate, cadence, year);
-  const recent = own.slice(-PACE_STUBS);
+  // The paychecks still to come follow the regular ones: a bonus counts in
+  // full toward the year to date, but its date and size say nothing about
+  // when the next paycheck lands or what it will be (#113). With only
+  // one-off stubs so far there's no pace, so nothing is projected.
+  const regular = own.filter((s) => !s.oneTime);
+  const cadence = cadenceDays(regular.length ? regular : own);
+  const lastPayDate = (regular.length ? regular : own).at(-1)!.payDate;
+  const remaining = regular.length ? remainingPaychecks(lastPayDate, cadence, year) : 0;
+  const recent = regular.slice(-PACE_STUBS);
 
   // Year to date, and year to date plus the recent average for each
   // paycheck still to come.
   const total = (pick: (s: EstimateStub) => number) => own.reduce((sum, s) => sum + pick(s), 0);
-  const pace = (pick: (s: EstimateStub) => number) => Math.round(recent.reduce((sum, s) => sum + pick(s), 0) / recent.length);
+  const pace = (pick: (s: EstimateStub) => number) => (recent.length ? Math.round(recent.reduce((sum, s) => sum + pick(s), 0) / recent.length) : 0);
   const figure = (pick: (s: EstimateStub) => number) => ({ ytdCents: total(pick), projectedCents: total(pick) + pace(pick) * remaining });
   const ofKinds = (kinds: PayLineKind[]) => (s: EstimateStub) => s.lines.filter((l) => kinds.includes(l.kind)).reduce((sum, l) => sum + l.amountCents, 0);
   const ofEmployer = (kinds: EmployerPayKind[]) => (s: EstimateStub) =>
@@ -175,6 +182,7 @@ export function estimateYear(year: number, stubs: EstimateStub[], assumptions: A
   return {
     year,
     stubCount: own.length,
+    oneTimeCount: own.length - regular.length,
     firstPeriodStart,
     missingEarlierPay,
     lastPayDate,

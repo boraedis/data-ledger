@@ -1,0 +1,1 @@
+ALTER TABLE "pay_stubs" ADD COLUMN "one_time" boolean DEFAULT false NOT NULL;
