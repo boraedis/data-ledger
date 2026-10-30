@@ -7,6 +7,7 @@ import { listAccounts } from "@/operations/accounts";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { listTags } from "@/operations/tags";
+import { manualMatches } from "@/operations/manual";
 import { listTransactions } from "@/operations/transactions";
 
 const PAGE_SIZE = 100;
@@ -31,11 +32,12 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
   const page = Math.max(Number(param(sp.page) ?? 1) || 1, 1);
 
   const db = getDb();
-  const [rows, cats, tagList, accts] = await Promise.all([
+  const [rows, cats, tagList, accts, toMerge] = await Promise.all([
     read(db, listTransactions, { ...filters, limit: PAGE_SIZE + 1, offset: (page - 1) * PAGE_SIZE }),
     read(db, listCategories, {}),
     read(db, listTags, {}),
     read(db, listAccounts, {}),
+    read(db, manualMatches, {}),
   ]);
   const hasMore = rows.length > PAGE_SIZE;
   const visible = rows.slice(0, PAGE_SIZE);
@@ -56,7 +58,34 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Transactions</h1>
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold">Transactions</h1>
+        <Link href="/transactions/new" className="h-9 rounded-md border px-3 py-1.5 text-sm hover:bg-accent">
+          Add transaction
+        </Link>
+      </div>
+      {toMerge.length ? (
+        // Added by hand, and now the bank has something just like it: the
+        // owner decides (#64); until then only the bank's counts.
+        <details className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning" open={toMerge.length <= 3}>
+          <summary className="cursor-pointer">
+            {toMerge.length} you added by hand {toMerge.length === 1 ? "looks" : "look"} like {toMerge.length === 1 ? "one" : "ones"} the bank
+            reported: merge or keep both
+          </summary>
+          <ul className="mt-2 divide-y divide-warning/30 text-foreground">
+            {toMerge.map((m) => (
+              <li key={m.id}>
+                <Link href={`/transactions/${m.id}`} className="flex justify-between gap-3 py-1.5 hover:underline">
+                  <span className="min-w-0 truncate">
+                    {m.postedOn} · {m.accountName} · {m.description}
+                  </span>
+                  <span className="shrink-0 tabular-nums">{formatCents(m.amountCents)}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
       <form className="flex flex-wrap items-center gap-2" action="/transactions">
         <input
           name="q"
@@ -114,6 +143,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     {t.experiencedOn ? ` (for ${t.experiencedOn})` : ""} · {accountName.get(t.accountId)}
                     {t.pending ? " · pending" : ""}
                     {t.provisionalSource ? " · from an alert, not yet from the bank" : ""}
+                    {t.manual ? " · added by hand" : ""}
                   </span>
                   <span className="mt-0.5 flex flex-wrap gap-1 text-xs">
                     {t.isSplit ? (

@@ -1,0 +1,1 @@
+ALTER TABLE "transactions" ADD COLUMN "not_duplicate" boolean DEFAULT false NOT NULL;

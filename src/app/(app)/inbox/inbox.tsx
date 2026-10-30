@@ -18,6 +18,7 @@ export type InboxRow = {
   accountName: string;
   pending: boolean;
   provisionalSource: "email" | "apple_pay" | null;
+  manual: boolean;
   suggestedCategoryId: string | null;
   suggestionSource: "memory" | "model" | null;
   suggestionConfidence: number | null;
@@ -389,7 +390,8 @@ export function Inbox({
                     <span className="block truncate text-xs text-muted-foreground">
                       {row.postedOn} · {row.accountName}
                       {row.pending ? " · pending" : ""}
-                      {row.provisionalSource ? " · from an alert" : ""} · {row.description}
+                      {row.provisionalSource ? " · from an alert" : ""}
+                      {row.manual ? " · added by hand" : ""} · {row.description}
                     </span>
                     {row.suggestedCategoryId ? (
                       <span className="block truncate text-xs text-muted-foreground">
