@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { historyLabel, suggestedTargetCents, type HistorySummary } from "@/lib/budgets/format";
 import { formatCents, parseAmountCents } from "@/lib/money";
-import { rebalance, removeTarget, setTarget } from "./actions";
+import { backdateTarget, rebalance, removeTarget, setTarget } from "./actions";
 
 // The budget forms. Amounts are typed as dollars and become integer cents
 // here; everything else is validated by the operations.
@@ -49,6 +49,7 @@ export function TargetForm({
   suggestFrom,
   windowMonths,
   yearly = [],
+  backdate,
   onDone,
 }: {
   // Categories to pick from when adding; omitted when editing one target.
@@ -63,6 +64,9 @@ export function TargetForm({
   windowMonths: number;
   // Yearly bills in categories without a target yet (adding only).
   yearly?: YearlySuggestion[];
+  // How far back a target can start (#130): the first month with
+  // transactions, and this month. Without it there's no "applies from".
+  backdate?: { earliestMonth: string | null; currentMonth: string };
   onDone?: () => void;
 }) {
   const [choice, setChoice] = useState<string>(initial ? (initial.categoryId ?? "") : (choices?.[0]?.categoryId ?? ""));
@@ -73,6 +77,8 @@ export function TargetForm({
   const [anchorMonth, setAnchorMonth] = useState(initial?.anchorOn.slice(0, 7) ?? "");
   const [rollover, setRollover] = useState(initial?.rollover ?? false);
   const [sinkingFund, setSinkingFund] = useState(initial?.sinkingFund ?? false);
+  // Blank: the current period, as before. An earlier month backdates.
+  const [fromMonth, setFromMonth] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -99,6 +105,7 @@ export function TargetForm({
     setSinkingFund(true);
     setError(null);
   };
+  const backdating = Boolean(backdate && fromMonth && fromMonth < backdate.currentMonth);
   const usingBill =
     bill !== undefined && periodMonths === 12 && sinkingFund && anchorMonth === bill.anchorMonth && toCents(shown) === bill.amountCents;
 
@@ -107,10 +114,8 @@ export function TargetForm({
     const amountCents = toCents(shown);
     if (amountCents === null) return setError("Enter an amount like 400 or 1,250.00");
     startTransition(async () => {
-      const result = await setTarget(
-        { categoryId, amountCents, periodMonths, anchorMonth: periodMonths > 1 && anchorMonth ? anchorMonth : undefined, rollover, sinkingFund: sinkingFund && periodMonths > 1 },
-        name,
-      );
+      const input = { categoryId, amountCents, periodMonths, anchorMonth: periodMonths > 1 && anchorMonth ? anchorMonth : undefined, rollover, sinkingFund: sinkingFund && periodMonths > 1 };
+      const result = backdating ? await backdateTarget({ ...input, fromMonth }, name) : await setTarget(input, name);
       if (result?.error) return setError(result.error);
       setError(null);
       // A fresh form after adding: settings carried over from the last
@@ -121,6 +126,7 @@ export function TargetForm({
         setAnchorMonth("");
         setRollover(false);
         setSinkingFund(false);
+        setFromMonth("");
       }
       onDone?.();
     });
@@ -204,6 +210,13 @@ export function TargetForm({
             {PERIODS.some((p) => p.months === periodMonths) ? null : <option value={periodMonths}>Every {periodMonths} months</option>}
           </select>
         </label>
+        {backdate?.earliestMonth && backdate.earliestMonth < backdate.currentMonth ? (
+          <label className="space-y-1">
+            <span className="block text-xs text-muted-foreground">Applies from</span>
+            {/* Blank is this period; an earlier month gives months before it a target (#130). */}
+            <Input type="month" value={fromMonth} min={backdate.earliestMonth} max={backdate.currentMonth} onChange={(e) => setFromMonth(e.target.value)} />
+          </label>
+        ) : null}
         {periodMonths > 1 ? (
           <label className="space-y-1">
             <span className="block text-xs text-muted-foreground">Periods start in</span>
@@ -224,9 +237,24 @@ export function TargetForm({
           </label>
         ) : null}
       </div>
-      <p className="text-xs text-muted-foreground">
-        A change applies from the start of the current period. Earlier periods keep the target they had.
-      </p>
+      {backdating ? (
+        <p className="text-xs text-muted-foreground">
+          Applies from{" "}
+          {new Date(`${fromMonth}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })} until this
+          target&apos;s next version, which keeps its amount. It only fills months that had no target; a month
+          that already had one keeps it.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          A change applies from the start of the current period. Earlier periods keep the target they had.
+        </p>
+      )}
+      {backdating && rollover ? (
+        // Rollover carries each period's leftover into the next, so starting earlier changes what later months have available.
+        <p className="text-xs text-warning">
+          With rollover, what&apos;s left or overspent in these earlier months carries forward, so what later months have available will change.
+        </p>
+      ) : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" size="sm" disabled={pending}>

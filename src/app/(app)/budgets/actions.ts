@@ -33,6 +33,15 @@ export async function setTarget(input: TargetInput, name: string) {
   return run("budgets.setTarget", { ...input }, `Set the ${name} target to $${(input.amountCents / 100).toFixed(2)}`);
 }
 
+// An earlier start for a target (#130): fills months that had none.
+export async function backdateTarget(input: TargetInput & { fromMonth: string }, name: string) {
+  return run(
+    "budgets.backdateTarget",
+    { ...input },
+    `Backdated the ${name} target to ${input.fromMonth}: $${(input.amountCents / 100).toFixed(2)} until its next version`,
+  );
+}
+
 export async function removeTarget(categoryId: string | null, name: string) {
   return run("budgets.removeTarget", { categoryId }, `Removed the ${name} target`);
 }

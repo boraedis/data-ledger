@@ -323,3 +323,36 @@ describe("budgets.year (#123)", () => {
     expect((await year(2027)).targets.find((t) => t.categoryId === cat.Coffee)).toMatchObject({ periods: 2, targetCents: 30_000 + 90_000, spentCents: 0 });
   });
 });
+
+describe("budgets.backdateTarget (#130)", () => {
+  const backdate = (input: Record<string, unknown>) => run("budgets.backdateTarget", { today: "2026-06-15", ...input });
+
+  it("fills March to May before a June version, which keeps its amount, and leaves earlier months alone", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 35_000, today: "2026-06-10" });
+    const result = await backdate({ categoryId: cat.Dining, fromMonth: "2026-03", amountCents: 40_000 });
+    expect(result.output).toMatchObject({ effectiveFrom: "2026-03-01", until: "2026-06-01" });
+
+    for (const on of ["2026-03-31", "2026-04-30", "2026-05-31"]) expect(target(await status(on), cat.Dining).targetCents).toBe(40_000);
+    expect(target(await status("2026-06-30"), cat.Dining).targetCents).toBe(35_000);
+    // February had no target and still has none: spending only.
+    expect((await status("2026-02-28")).targets.some((t) => t.categoryId === cat.Dining)).toBe(false);
+
+    // The log keeps the chosen start month.
+    const [logged] = await db.select().from(commandLog).where(eq(commandLog.operation, "budgets.backdateTarget"));
+    expect(logged).toMatchObject({ actor: "user", input: expect.objectContaining({ fromMonth: "2026-03" }) });
+  });
+
+  it("only fills months with no target, never before the first transactions, and not this month", async () => {
+    await backdate({ categoryId: cat.Dining, fromMonth: "2026-03", amountCents: 40_000 });
+    await expect(backdate({ categoryId: cat.Dining, fromMonth: "2026-04", amountCents: 1_000 })).rejects.toThrow(/already in effect/);
+    await expect(backdate({ categoryId: cat.Coffee, fromMonth: "2015-01", amountCents: 1_000 })).rejects.toThrow(/earliest a target can start/);
+    await expect(backdate({ categoryId: cat.Coffee, fromMonth: "2026-06", amountCents: 1_000 })).rejects.toThrow(/this month or later/);
+  });
+
+  it("backdates the buffer too, and a new target with nothing after it runs on to today", async () => {
+    const result = await backdate({ categoryId: null, fromMonth: "2026-02", amountCents: 100_000 });
+    expect(result.output).toMatchObject({ until: null });
+    expect(target(await status("2026-02-28"), null).targetCents).toBe(100_000);
+    expect(target(await status("2026-06-15"), null).targetCents).toBe(100_000);
+  });
+});
