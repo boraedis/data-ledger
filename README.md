@@ -121,6 +121,29 @@ never overwrites a category that's already set:
    above `MODEL_AUTO_APPLY_THRESHOLD`, default 90%). After confirming,
    "Always categorize this merchant this way" makes it a rule in one tap.
 
+**Fixing past transactions** (#100, `/categories/reapply`): since nothing
+above touches a category that's already set, a rule fixed later doesn't
+reach what was already filed. The owner reaches back by hand, never on a
+schedule:
+
+- **Re-apply a rule** (`rules.reapplyPreview`, `rules.reapply`): a preview
+  of every categorized transaction the rules, run today, would file
+  differently (the first matching rule still wins), with old and new
+  category and a total, before anything is written.
+  - Ticked by default: rows whose category a rule or another machine step
+    set.
+  - Left unticked unless the owner ticks them: rows the owner set (or
+    approved from Tally), rows with no record of who set them (worked out
+    from the command log, and checked against the current category), and
+    rows filed as transfers, which a rule would turn into spending counted
+    twice.
+  - Apply re-checks each row, so nothing that changed since the preview is
+    overwritten. It's one command as `user`, undone together.
+- **Transfers across all history**: `transactions.misfiledTransfers` over
+  every date, settled pair by pair as on Cash flow. Transfers that are
+  uncategorized or already filed as transfers are paired by the matcher,
+  so they need no step here.
+
 Until #86, memory and the model's confident answers were applied without
 asking (logged and undoable). Only the owner's explicit rules do that
 now; the rest is a confirmation.
