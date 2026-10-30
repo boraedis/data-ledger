@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cashFlowInputs } from "@/lib/cashflow/data";
+import { formatShare } from "@/lib/cashflow/format";
 import { buildFlowGraph, type FlowGraph } from "@/lib/cashflow/graph";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
@@ -41,17 +42,22 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const period = parsePeriod(params, today);
   const by: Grouping = GROUPINGS.some((g) => g.id === one(sp.by)) ? (one(sp.by) as Grouping) : "category";
   const gross = one(sp.gross) === "1";
+  const percent = one(sp.show) === "percent";
 
   const { paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut } = await cashFlowInputs(getDb(), { from: period.from, to: period.to, gross });
   const graph = buildFlowGraph({ paychecks, lines, uncategorized, transfers, accounts, by, lookup });
   const t = totals(graph);
+  // Percent mode's 100%: all the money in for the period, income and what
+  // was drawn on, which is also everything that went out.
+  const totalIn = t.income + t.drawn;
   const label = new Map(graph.nodes.map((n) => [n.id, n.label]));
 
-  const href = (next: { period?: PeriodParams; by?: Grouping; gross?: boolean }) => {
+  const href = (next: { period?: PeriodParams; by?: Grouping; gross?: boolean; percent?: boolean }) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(next.period ?? params)) if (v) q.set(k, v);
     if ((next.by ?? by) !== "category") q.set("by", next.by ?? by);
     if (next.gross ?? gross) q.set("gross", "1");
+    if (next.percent ?? percent) q.set("show", "percent");
     const qs = q.toString();
     return `/cash-flow${qs ? `?${qs}` : ""}`;
   };
@@ -82,6 +88,14 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
             </Link>
             <Link href={href({ period: { year: period.from.slice(0, 4) } })} aria-current={period.kind === "year" ? "page" : undefined} className={tab(period.kind === "year")}>
               Year
+            </Link>
+          </nav>
+          <nav aria-label="Show amounts as" className="flex gap-3">
+            <Link href={href({ percent: false })} aria-current={!percent ? "page" : undefined} className={tab(!percent)}>
+              $
+            </Link>
+            <Link href={href({ percent: true })} aria-current={percent ? "page" : undefined} className={tab(percent)}>
+              %
             </Link>
           </nav>
           <nav aria-label="Break spending down by" className="flex gap-3">
@@ -116,7 +130,10 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
                 <span className="size-2 rounded-sm" style={{ background: color as string }} aria-hidden />
                 {name}
               </dt>
-              <dd className="tabular-nums">{formatCents(cents as number)}</dd>
+              <dd className="tabular-nums">
+                {percent ? formatShare(cents as number, totalIn) : formatCents(cents as number)}
+                {percent ? <span className="ml-1 text-xs text-muted-foreground">{formatCents(cents as number)}</span> : null}
+              </dd>
             </div>
           ) : null,
         )}
@@ -157,7 +174,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
         <p className="text-muted-foreground">Nothing categorized in {period.label} yet.</p>
       ) : (
         <>
-          <Sankey graph={graph} label={`Cash flow for ${period.label}`} />
+          <Sankey graph={graph} label={`Cash flow for ${period.label}`} percentOf={percent ? totalIn : null} />
           <details className="text-sm">
             <summary className="cursor-pointer text-muted-foreground">Every flow as a table</summary>
             <table className="mt-2 w-full">
@@ -174,6 +191,9 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
                     Amount
                   </th>
                   <th scope="col" className="pb-1 text-right font-normal">
+                    Share
+                  </th>
+                  <th scope="col" className="pb-1 text-right font-normal">
                     Transactions
                   </th>
                 </tr>
@@ -186,6 +206,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
                       <td className="py-1 pr-2">{label.get(l.source)}</td>
                       <td className="py-1 pr-2">{label.get(l.target)}</td>
                       <td className="py-1 pr-2 text-right tabular-nums">{formatCents(l.valueCents)}</td>
+                      <td className="py-1 pr-2 text-right tabular-nums text-muted-foreground">{formatShare(l.valueCents, totalIn)}</td>
                       <td className="py-1 text-right tabular-nums">{l.count}</td>
                     </tr>
                   ))}
