@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { historyLabel, periodLabel, scheduleLabel, type HistorySummary } from "@/lib/budgets/format";
+import { historyLabel, periodLabel, projectionLabel, scheduleLabel, type HistorySummary } from "@/lib/budgets/format";
 import { targetAnchor } from "@/lib/budgets/overview";
 import { formatCents } from "@/lib/money";
 import { TargetForm } from "./forms";
@@ -26,6 +26,7 @@ export type CardTarget = {
   sinkingFund: boolean;
   effectiveFrom: string;
   paceCents: number | null;
+  projectedCents: number | null;
   setAsideMonthlyCents: number | null;
   setAsideByNowCents: number | null;
   // The version in effect, for editing.
@@ -60,6 +61,7 @@ export function TargetCard({
   windowMonths: number;
   bars: Bar[];
   viewedMonth: string;
+  // Null on a past month, whose card shows its final figure instead of a projection (#147).
   partialMonth: string | null;
   // The buffer's card only: every category it covers, with this period's spend (#110).
   covers?: { categoryId: string; name: string; spentCents: number }[];
@@ -90,6 +92,7 @@ export function TargetCard({
     return () => window.removeEventListener(OPEN_TARGET, onOpen);
   }, [anchor]);
   const over = t.remainingCents < 0;
+  const projection = partialMonth ? projectionLabel(t) : null;
   const scale = Math.max(t.availableCents, t.spentCents, 1);
   const spentWidth = (Math.max(0, t.spentCents) / scale) * 100;
   const paceAt = t.paceCents !== null && t.availableCents > 0 ? (t.paceCents / scale) * 100 : null;
@@ -150,6 +153,10 @@ export function TargetCard({
           </span>
         </span>
       </div>
+      {projection ? (
+        // Where the period ends up at its pace so far (#147).
+        <p className={`text-xs tabular-nums ${projection.over ? "text-negative" : "text-muted-foreground"}`}>{projection.text}</p>
+      ) : null}
       {open || editing ? (
         <div id={`${anchor}-detail`} className="space-y-2">
           {t.paceCents !== null ? (
