@@ -42,7 +42,7 @@ export type GridCell = {
   href: string;
   transactionsHref: string | null;
 };
-export type GridRow = { key: string; name: string; isBuffer: boolean; months: GridCell[]; total: YearTotal | null; over: number; targeted: number };
+export type GridRow = { key: string; name: string; isBuffer: boolean; months: GridCell[]; total: YearTotal | null; over: number; targeted: number; href: string };
 // Pay and saving for each month (#138), under the grid.
 export type PayMonth = { month: string; payCents: number | null; savedCents: number | null };
 export type GridColumn = { month: string; href: string; total: YearTotal | null; over: number; targets: number };
@@ -348,7 +348,10 @@ export function YearGrid({
         {rows.map((r) => (
           <tr key={r.key} id={`year-${r.key}`} className="scroll-mt-4 target:[&>th]:underline">
             <th scope="row" className="pr-1 text-left align-middle font-normal">
-              <span className="block truncate text-sm">{r.isBuffer ? "Buffer" : r.name}</span>
+              {/* The target's own page (#174). */}
+              <Link href={r.href} className="block truncate text-sm underline-offset-2 hover:underline">
+                {r.isBuffer ? "Buffer" : r.name}
+              </Link>
               <span className="block text-[10px] text-muted-foreground tabular-nums">
                 over {r.over} of {r.targeted}
               </span>

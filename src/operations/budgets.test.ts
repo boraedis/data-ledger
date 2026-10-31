@@ -246,6 +246,36 @@ describe("budgets.monthly with moved budget (#146)", () => {
   });
 });
 
+describe("budgets.daily (#149)", () => {
+  type Period = { start: string; end: string; availableCents: number; lines: { date: string; amountCents: number }[] };
+  type Daily = (Period & { past: Period[] }) | null;
+  const daily = async (input: Record<string, unknown>) => (await run("budgets.daily", { on: "2026-06-20", ...input })).output as Daily;
+
+  it("gives a target's period through `on`, its lines matching its spent figure, and the periods before", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 60_000, today: "2026-03-10" });
+    const d = (await daily({ categoryId: cat.Groceries }))!;
+    expect(d).toMatchObject({ start: "2026-06-01", end: "2026-06-30", availableCents: 60_000 });
+    expect(d.lines.every((l) => l.date <= "2026-06-20")).toBe(true);
+    expect(-d.lines.reduce((sum, l) => sum + l.amountCents, 0)).toBe(target(await status("2026-06-20"), cat.Groceries).spentCents);
+    // March, April and May, most recent first.
+    expect(d.past.map((p) => p.start)).toEqual(["2026-05-01", "2026-04-01", "2026-03-01"]);
+    expect(await daily({ categoryId: cat.Coffee })).toBeNull();
+  });
+
+  it("totals the month's monthly targets, leaving a multi-month one out, as the month's total does", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 60_000, today: "2026-06-10" });
+    await run("budgets.setTarget", { categoryId: null, amountCents: 40_000, today: "2026-06-10" });
+    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 120_000, periodMonths: 12, anchorMonth: "2026-06", today: "2026-06-10" });
+    const d = (await daily({}))!;
+    expect(d.availableCents).toBe(100_000);
+    const s = await status("2026-06-20");
+    const monthlySpent = target(s, cat.Groceries).spentCents + target(s, null).spentCents;
+    expect(-d.lines.reduce((sum, l) => sum + l.amountCents, 0)).toBe(monthlySpent);
+    // No monthly targets before June.
+    expect(d.past).toEqual([]);
+  });
+});
+
 describe("budgets.yearlyCharges (#109)", () => {
   type Yearly = { categoryId: string; amountCents: number; setAsideMonthlyCents: number; anchorMonth: string; charges: { merchant: string }[] }[];
   const yearly = async () => (await run("budgets.yearlyCharges", { on: "2026-06-30" })).output as Yearly;
