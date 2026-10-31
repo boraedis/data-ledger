@@ -201,3 +201,29 @@ it("marks each paycheck deposit with its pay stub, or as missing one, and an unp
   const after = (await listTransactions.run(db, { search: "MAPLEWOOD", limit: 50, offset: 0 })).find((t) => t.id === rent.id)!;
   expect(after).toMatchObject({ transfer: null, transferUnmatched: true });
 });
+
+it("never calls a transfer a paycheck missing its stub, even from a paycheck's payer (#209)", async () => {
+  // Invented: money in from the payroll payer's name, into the same account,
+  // as a bank's own transfer descriptor can be.
+  const [deposit] = await db
+    .insert(transactions)
+    .values({ accountId: paycheck.accountId, postedOn: "2026-07-14", amountCents: 30_000, description: "ONLINE TRANSFER", merchant: paycheck.merchant, externalId: "xfer-209" })
+    .returning();
+  const callout = async () => (await listTransactions.run(db, { search: "ONLINE TRANSFER", limit: 50, offset: 0 })).find((t) => t.id === deposit.id)!;
+  // Looks like pay until it's known to be a transfer.
+  expect((await callout()).paycheckWithoutStub).toBe(true);
+
+  // Filed under a transfer category, paired or not.
+  await run("transactions.setCategory", { transactionId: deposit.id, categoryId: cat.Transfers });
+  expect(await callout()).toMatchObject({ transferUnmatched: true, paycheckWithoutStub: false });
+
+  // Paired with its other half, whatever its category.
+  const [other] = (await db.select().from(accounts)).filter((a) => a.id !== paycheck.accountId);
+  const [out] = await db
+    .insert(transactions)
+    .values({ accountId: other.id, postedOn: "2026-07-14", amountCents: -30_000, description: "ONLINE TRANSFER OUT", externalId: "xfer-209-out" })
+    .returning();
+  await run("transactions.setCategory", { transactionId: deposit.id, categoryId: cat.Paycheck });
+  await run("transactions.pairAsTransfer", { outId: out.id, inId: deposit.id });
+  expect((await callout()).paycheckWithoutStub).toBe(false);
+});
