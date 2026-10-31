@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { scheduleLabel, periodLabel } from "@/lib/budgets/format";
 import { paceFor, paceTone } from "@/lib/budgets/pace-colour";
-import { elapsedShare } from "@/lib/pace";
+import { elapsedShare, projectAtEnd } from "@/lib/pace";
 import { gridSegments, periodBudget, type Segment, type YearTotal } from "@/lib/budgets/year";
 import { formatCents } from "@/lib/money";
 
@@ -106,16 +106,25 @@ export function YearGrid({
   const [tip, setTip] = useState<Tip | null>(null);
   // Where spending would be by asOf at an even pace; null for a span that's over.
   const paceOf = (start: string, end: string, target: number) => paceFor(target, elapsedShare(start, end, asOf));
-  const paceLine = (spent: number, target: number, pace: number | null) =>
-    pace === null ? null : (
+  // Where spending ends up if it carries on at its pace so far (#194), as
+  // on the target's card (#147). Only while the span is in progress, and
+  // once something's been spent. The colours still go by the budget's own
+  // even pace; that line isn't shown, since it read as the pace you're
+  // spending at.
+  const projectedLine = (spent: number, budget: number, start: string, end: string) => {
+    const share = elapsedShare(start, end, asOf);
+    const projected = share < 1 ? projectAtEnd(spent, share) : null;
+    if (projected === null) return null;
+    return (
       <>
-        <dt className="text-muted-foreground">Pace to date</dt>
-        <dd className={`text-right ${paceTone(spent, target, pace) === "ahead" ? "text-warning" : ""}`}>
-          {formatCents(pace)}
-          {spent > pace && spent <= target ? " (ahead)" : ""}
+        <dt className="text-muted-foreground">Projected</dt>
+        <dd className={`text-right ${projected > budget ? "text-negative" : ""}`}>
+          {formatCents(projected)}
+          {projected > budget ? " (over)" : ""}
         </dd>
       </>
     );
+  };
   const touch = useRef(false);
   const tableRef = useRef<HTMLTableElement>(null);
 
@@ -194,7 +203,7 @@ export function YearGrid({
           <dd className="text-right">{formatCents(c.spentCents)}</dd>
           <dt className="text-muted-foreground">{c.spentCents > c.targetCents ? "Over" : "Under"}</dt>
           <dd className={`text-right ${c.spentCents > c.targetCents ? "text-negative" : ""}`}>{formatCents(Math.abs(c.spentCents - c.targetCents))}</dd>
-          {paceLine(c.spentCents, c.targetCents, paceOf(c.month, monthEnd(c.month), c.targetCents))}
+          {projectedLine(c.spentCents, c.targetCents, c.month, monthEnd(c.month))}
           <dt className="text-muted-foreground">Transactions</dt>
           <dd className="text-right">{c.transactions}</dd>
           {c.period?.rollover ? (
@@ -247,7 +256,7 @@ export function YearGrid({
           <dd className="text-right">{formatCents(p.spentCents)}</dd>
           <dt className="text-muted-foreground">{p.spentCents > budget ? "Over" : "Under"}</dt>
           <dd className={`text-right ${p.spentCents > budget ? "text-negative" : ""}`}>{formatCents(Math.abs(p.spentCents - budget))}</dd>
-          {paceLine(p.spentCents, budget, paceOf(p.start, p.end, budget))}
+          {projectedLine(p.spentCents, budget, p.start, p.end)}
           {/* Counted per month, so only for the months shown. */}
           <dt className="text-muted-foreground">Transactions{seg.clippedBefore || seg.clippedAfter ? " shown" : ""}</dt>
           <dd className="text-right">{seg.cells.reduce((n, c) => n + c.transactions, 0)}</dd>
