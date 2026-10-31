@@ -39,7 +39,7 @@ async function run(operation: string, input: Record<string, unknown>, reason: st
     return { error: error instanceof Error ? error.message : "Something went wrong" };
   }
   revalidatePath("/pay");
-  revalidatePath("/budgets");
+  revalidatePath("/budgets/month");
 }
 
 export async function createStub(fields: StubFields) {

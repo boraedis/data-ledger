@@ -60,7 +60,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
   // Each target's 12 months, each month across targets, and the grid (#124).
   const totals = yearTotals(rows);
 
-  const href = (path: "/budgets" | "/budgets/year", next: { month?: string; gross?: boolean; bonus?: boolean }) => {
+  const href = (path: "/budgets/month" | "/budgets/year", next: { month?: string; gross?: boolean; bonus?: boolean }) => {
     const q = new URLSearchParams();
     const m = next.month ?? month;
     if (m !== thisMonth) q.set("month", m);
@@ -87,7 +87,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
       over: targeted.filter((m) => m.spentCents > m.targetCents).length,
       months: r.months.map((m) => ({
         ...m,
-        href: href("/budgets", { month: m.month.slice(0, 7) }),
+        href: href("/budgets/month", { month: m.month.slice(0, 7) }),
         transactionsHref: m.targetCents === null ? null : transactionsHref(r.categoryId, m.month),
       })),
     };
@@ -96,7 +96,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
     const cells = rows.map((r) => r.months[i]).filter((m) => m.targetCents !== null);
     return {
       month: c,
-      href: href("/budgets", { month: c.slice(0, 7) }),
+      href: href("/budgets/month", { month: c.slice(0, 7) }),
       total: totals.byColumn[i],
       targets: cells.length,
       over: cells.filter((m) => m.spentCents > m.targetCents!).length,

@@ -120,7 +120,7 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <Link href={budgetHref("/budgets", view)} className="text-sm text-muted-foreground hover:text-foreground">
+        <Link href={budgetHref("/budgets/month", view)} className="text-sm text-muted-foreground hover:text-foreground">
           ← Budgets
         </Link>
         <BudgetTabs current={null} view={view} />
