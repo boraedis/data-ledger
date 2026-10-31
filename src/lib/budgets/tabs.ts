@@ -30,3 +30,9 @@ export function budgetView(sp: Record<string, string | string[] | undefined>, to
   const requested = typeof sp.month === "string" && /^\d{4}-\d{2}$/.test(sp.month) ? sp.month : thisMonth;
   return { month: requested > thisMonth ? thisMonth : requested, thisMonth, gross: sp.gross === "1" };
 }
+
+/** A budget item's own page (#174): its category id, or "buffer" for everything else. */
+export const itemPath = (categoryId: string | null) => `/budgets/${categoryId ?? "buffer"}`;
+
+/** A budget item's page, keeping the view. */
+export const itemHref = (categoryId: string | null, view: BudgetView) => budgetHref(itemPath(categoryId), view);

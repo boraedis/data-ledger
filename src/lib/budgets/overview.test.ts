@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { budgetOverview, targetAnchor } from "./overview";
+import { budgetOverview } from "./overview";
 
 // Made-up targets for October 2026: two monthly, the buffer, and an annual one.
 const t = (categoryId: string | null, name: string, start: string, end: string, spentCents: number, availableCents: number) => ({
@@ -23,8 +23,7 @@ describe("budgetOverview (#122)", () => {
   it("lists every target with its card's figures, linking to its card", () => {
     const o = budgetOverview(targets);
     expect([...o.monthly, ...o.longer]).toHaveLength(targets.length);
-    expect(o.monthly[1]).toMatchObject({ name: "Dining", spentCents: 76_041, availableCents: 20_000, remainingCents: -56_041, anchor: "target-dining" });
-    expect(targetAnchor(null)).toBe("target-buffer");
+    expect(o.monthly[1]).toMatchObject({ name: "Dining", spentCents: 76_041, availableCents: 20_000, remainingCents: -56_041 });
   });
 
   it("totals the targets measured on this month, and keeps a year's figures out of it", () => {

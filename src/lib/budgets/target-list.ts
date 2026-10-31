@@ -60,3 +60,63 @@ export function targetList(versions: Version[], today: string): { active: Active
     a.categoryId === null ? -1 : b.categoryId === null ? 1 : a.name.localeCompare(b.name);
   return { active: active.sort(order), ended: ended.sort(order) };
 }
+
+export type VersionSpan = {
+  effectiveFrom: string;
+  /** The last month this version applied (first of month); null while it still does. */
+  until: string | null;
+  /** Null: the target ended from effectiveFrom. */
+  amountCents: number | null;
+  periodMonths: number;
+  anchorOn: string;
+  rollover: boolean;
+  sinkingFund: boolean;
+};
+
+/**
+ * One target's versions as a list (#174), oldest first, each with the
+ * months it covered: until the month before the next version starts.
+ */
+export function versionSpans(versions: (Omit<VersionSpan, "until"> & { categoryId: string | null })[], categoryId: string | null): VersionSpan[] {
+  const own = versions.filter((v) => v.categoryId === categoryId).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  return own.map((v, i) => {
+    const next = own[i + 1];
+    let until: string | null = null;
+    if (next) {
+      const d = new Date(`${next.effectiveFrom.slice(0, 7)}-01T00:00:00Z`);
+      d.setUTCMonth(d.getUTCMonth() - 1);
+      until = d.toISOString().slice(0, 10);
+    }
+    return {
+      effectiveFrom: v.effectiveFrom,
+      until,
+      amountCents: v.amountCents,
+      periodMonths: v.periodMonths,
+      anchorOn: v.anchorOn,
+      rollover: v.rollover,
+      sinkingFund: v.sinkingFund,
+    };
+  });
+}
+
+const monthNumber = (month: string) => Number(month.slice(0, 4)) * 12 + Number(month.slice(5, 7)) - 1;
+const monthText = (n: number) => `${Math.floor(n / 12)}-${String((n % 12) + 1).padStart(2, "0")}`;
+
+/**
+ * The month a past version is changed from (#174), YYYY-MM, or null when it
+ * can't be. Its own start, unless that's before the first month with
+ * transactions, which is as far back as budgets.backdateTarget goes; then
+ * the first of its periods starting from that month, since a multi-month
+ * target changes only from a period's start (#166). Null with no
+ * transactions, or when that month is past the version's end or this month.
+ */
+export function versionEditFrom(v: Pick<VersionSpan, "effectiveFrom" | "until" | "anchorOn" | "periodMonths">, earliestMonth: string | null, currentMonth: string): string | null {
+  if (earliestMonth === null) return null;
+  let from = v.effectiveFrom.slice(0, 7);
+  if (from < earliestMonth) {
+    const behind = (((monthNumber(earliestMonth) - monthNumber(v.anchorOn)) % v.periodMonths) + v.periodMonths) % v.periodMonths;
+    from = monthText(monthNumber(earliestMonth) + (behind === 0 ? 0 : v.periodMonths - behind));
+  }
+  if (from > currentMonth || (v.until !== null && from > v.until.slice(0, 7))) return null;
+  return from;
+}

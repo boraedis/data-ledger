@@ -1,40 +1,36 @@
-"use client";
-
+import Link from "next/link";
 import { budgetOverview, type OverviewRow, type OverviewTarget } from "@/lib/budgets/overview";
 import { periodLabel } from "@/lib/budgets/format";
 import { paceFor } from "@/lib/budgets/pace-colour";
+import { itemHref, type BudgetView } from "@/lib/budgets/tabs";
 import { formatCents } from "@/lib/money";
 import { PaceBar } from "./pace-bar";
 
-// The month at a glance (#122): every target on one screen, each row a link
-// that opens its card below and scrolls to it. The card listens for
-// OPEN_TARGET; the plain #anchor is there for opening in a new tab.
+// The Month view's list (#122, #174): every target once, each row its bar,
+// spent of available, and left or over, and a link to the target's own
+// page, where the detail and the changes are. Server-rendered.
 
-export const OPEN_TARGET = "budgets:open-target";
-
-function open(anchor: string) {
-  window.dispatchEvent(new CustomEvent(OPEN_TARGET, { detail: anchor }));
-  history.replaceState(null, "", `#${anchor}`);
-}
-
-function Row({ row, period }: { row: OverviewRow; period?: string }) {
+function Row({ row, period, view, inProgress }: { row: OverviewRow; period?: string; view: BudgetView; inProgress: boolean }) {
   const over = row.remainingCents < 0;
+  // Still under, but heading over at this pace (#147).
+  const projectedOver =
+    inProgress && !over && row.projectedCents != null && row.projectedCents > row.availableCents ? row.projectedCents - row.availableCents : null;
   return (
     <li>
-      <a
-        href={`#${row.anchor}`}
-        onClick={(e) => {
-          e.preventDefault();
-          open(row.anchor);
-        }}
-        className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 gap-y-1 px-3 py-1.5 hover:bg-muted/50"
+      <Link
+        href={itemHref(row.categoryId, view)}
+        className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 gap-y-1 px-3 py-2 hover:bg-muted/50"
       >
-        <span className="truncate">
+        <span className="truncate font-medium">
           {row.name}
-          {period ? <span className="ml-1.5 text-xs text-muted-foreground">{period}</span> : null}
+          {period ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">{period}</span> : null}
         </span>
         <span className="text-right tabular-nums">
           {formatCents(row.spentCents)} <span className="text-muted-foreground">of {formatCents(row.availableCents)}</span>
+        </span>
+        {/* The row opens the target's page. */}
+        <span aria-hidden className="row-span-2 text-muted-foreground">
+          ›
         </span>
         {/* Coloured by pace while the period is in progress (#159). */}
         <PaceBar
@@ -46,25 +42,29 @@ function Row({ row, period }: { row: OverviewRow; period?: string }) {
         />
         <span className={`text-right text-xs tabular-nums ${over ? "font-medium text-negative" : "text-muted-foreground"}`}>
           {over ? `${formatCents(-row.remainingCents)} over` : `${formatCents(row.remainingCents)} left`}
+          {projectedOver !== null ? <span className="text-negative"> · heading {formatCents(projectedOver)} over</span> : null}
         </span>
-      </a>
+      </Link>
     </li>
   );
 }
 
-export function BudgetOverview({ targets }: { targets: OverviewTarget[] }) {
+export function BudgetOverview({ targets, view, inProgress }: { targets: OverviewTarget[]; view: BudgetView; inProgress: boolean }) {
   const { monthly, longer, total } = budgetOverview(targets);
   return (
-    <section className="space-y-2" aria-label="This month at a glance">
+    <section className="space-y-2" aria-label="This month">
       <ul className="divide-y rounded-lg border text-sm">
         {monthly.map((r) => (
-          <Row key={r.anchor} row={r} />
+          <Row key={r.categoryId ?? "buffer"} row={r} view={view} inProgress={inProgress} />
         ))}
         {total ? (
-          <li className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 bg-muted/40 px-3 py-1.5 font-medium">
+          <li className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 bg-muted/40 px-3 py-2 font-medium">
             <span>Total this month</span>
             <span className="text-right tabular-nums">
               {formatCents(total.spentCents)} <span className="font-normal text-muted-foreground">of {formatCents(total.availableCents)}</span>
+            </span>
+            <span aria-hidden className="invisible row-span-2">
+              ›
             </span>
             <span />
             <span className={`text-right text-xs tabular-nums ${total.remainingCents < 0 ? "text-negative" : "font-normal text-muted-foreground"}`}>
@@ -73,7 +73,7 @@ export function BudgetOverview({ targets }: { targets: OverviewTarget[] }) {
           </li>
         ) : null}
         {longer.map((r) => (
-          <Row key={r.anchor} row={r} period={periodLabel(r.start, r.end)} />
+          <Row key={r.categoryId ?? "buffer"} row={r} period={periodLabel(r.start, r.end)} view={view} inProgress={inProgress} />
         ))}
       </ul>
       {longer.length && total ? (

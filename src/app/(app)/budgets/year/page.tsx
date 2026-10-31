@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
-import { budgetView } from "@/lib/budgets/tabs";
+import { budgetView, itemHref } from "@/lib/budgets/tabs";
 import { gridSegments, segmentFigures, yearTotals } from "@/lib/budgets/year";
 import { budgetMonthly, budgetPayYear } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
@@ -72,12 +72,8 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
   const later = shiftMonth(month, MONTHS) > thisMonth ? thisMonth : shiftMonth(month, MONTHS);
 
   // What the grid and its tooltips (#139) need, links worked out here.
-  const transactionsHref = (categoryId: string | null, m: string) => {
-    const q = new URLSearchParams({ target: categoryId ?? "buffer" });
-    if (m.slice(0, 7) !== thisMonth) q.set("month", m.slice(0, 7));
-    if (gross) q.set("gross", "1");
-    return `/budgets/transactions?${q}`;
-  };
+  // A month's transactions are on the target's own page (#174).
+  const transactionsHref = (categoryId: string | null, m: string) => `${itemHref(categoryId, { ...view, month: m.slice(0, 7) })}#transactions`;
   const gridRows: GridRow[] = rows.map((r, ri) => {
     // A quarterly or annual target counts once per period, not per month (#157).
     const targeted = gridSegments(r.months).flatMap((s) => segmentFigures(s) ?? []);

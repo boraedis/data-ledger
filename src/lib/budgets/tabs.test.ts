@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BUDGET_TABS, budgetHref, budgetView } from "@/lib/budgets/tabs";
+import { BUDGET_TABS, budgetHref, budgetView, itemHref } from "@/lib/budgets/tabs";
 
 const TODAY = "2026-10-15";
 const yearTab = BUDGET_TABS.find((t) => t.id === "year")!;
@@ -19,5 +19,11 @@ describe("budget tabs (#145)", () => {
     expect(budgetView({ month: "2027-01" }, TODAY).month).toBe("2026-10");
     expect(budgetView({ month: "March" }, TODAY).month).toBe("2026-10");
     expect(budgetView({ gross: "yes" }, TODAY).gross).toBe(false);
+  });
+
+  it("links a budget item's page, the buffer by name, keeping the view (#174)", () => {
+    const view = budgetView({ month: "2026-03", gross: "1" }, TODAY);
+    expect(itemHref("3f1c", view)).toBe("/budgets/3f1c?month=2026-03&gross=1");
+    expect(itemHref(null, budgetView({}, TODAY))).toBe("/budgets/buffer");
   });
 });

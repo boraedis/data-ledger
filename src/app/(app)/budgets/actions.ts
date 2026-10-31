@@ -17,7 +17,8 @@ async function run(operation: string, input: Record<string, unknown>, reason: st
     }
     return { error: error instanceof Error ? error.message : "Something went wrong" };
   }
-  revalidatePath("/budgets");
+  // Every budgets page, item pages (#174) included.
+  revalidatePath("/budgets", "layout");
 }
 
 export type TargetInput = {

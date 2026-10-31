@@ -109,9 +109,10 @@ export function MonthBars({
         })}
       </ol>
       <ol aria-hidden className="flex text-[10px] text-muted-foreground">
-        {bars.map((b) => (
+        {bars.map((b, i) => (
           <li key={b.month} className={`flex-1 text-center ${b.month === viewedMonth ? "font-medium text-foreground" : ""}`}>
-            {monthName(b.month, "short")}
+            {/* Past a year, every other month (counting back from the last), so labels don't collide on a phone. */}
+            {bars.length <= 12 || (bars.length - 1 - i) % 2 === 0 || b.month === viewedMonth ? monthName(b.month, "short") : ""}
           </li>
         ))}
       </ol>

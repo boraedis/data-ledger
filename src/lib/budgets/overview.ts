@@ -21,19 +21,17 @@ export type OverviewTarget = {
   remainingCents: number;
   // Share of the period elapsed (#159), for the pace colours.
   elapsedShare: number;
+  // Month-end projection (#147); null with nothing spent.
+  projectedCents?: number | null;
 };
 
-export type OverviewRow = OverviewTarget & { anchor: string };
-
-/** The id of a target's card on the page, which overview rows link to. */
-export const targetAnchor = (categoryId: string | null) => `target-${categoryId ?? "buffer"}`;
+export type OverviewRow = OverviewTarget;
 
 const isOneMonth = (t: OverviewTarget) => monthIndex(t.end) === monthIndex(t.start);
 
 export function budgetOverview(targets: OverviewTarget[]) {
-  const row = (t: OverviewTarget): OverviewRow => ({ ...t, anchor: targetAnchor(t.categoryId) });
-  const monthly = targets.filter(isOneMonth).map(row);
-  const longer = targets.filter((t) => !isOneMonth(t)).map(row);
+  const monthly = targets.filter(isOneMonth);
+  const longer = targets.filter((t) => !isOneMonth(t));
   const sum = (pick: (r: OverviewRow) => number) => monthly.reduce((s, r) => s + pick(r), 0);
   return {
     monthly,
