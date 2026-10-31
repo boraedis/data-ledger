@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createManualAccount, deleteManualAccount, listAccounts, setManualValue, updateAccount } from "@/operations/accounts";
-import { backdatePreview, backdateRange, backdateTarget, budgetDaily, budgetHistory, budgetPay, budgetPayYear, targetTransactions, budgetMonthly, budgetYear, budgetStatus, listTargets, yearlyCharges, rebalance, removeTarget, setTarget } from "@/operations/budgets";
+import { backdatePreview, backdateRange, backdateTarget, budgetDaily, budgetHistory, budgetPay, budgetPayYear, targetTransactions, budgetMonthly, budgetYear, budgetStatus, deleteVersion, deleteVersionPreview, listTargets, yearlyCharges, rebalance, removeTarget, setTarget } from "@/operations/budgets";
 import { cashFlowSeries } from "@/operations/cashflow";
 import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goals";
 import { applySnapshot } from "@/operations/import";
@@ -90,6 +90,8 @@ export const operations: Operation[] = [
   backdateRange,
   backdateTarget,
   backdatePreview,
+  deleteVersion,
+  deleteVersionPreview,
   yearlyCharges,
   listTargets,
   setTarget,

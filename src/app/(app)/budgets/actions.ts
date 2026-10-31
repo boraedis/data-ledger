@@ -57,6 +57,25 @@ export async function backdateTarget(input: TargetInput & { fromMonth: string },
   );
 }
 
+// What deleting one version would change, month by month (#181). A read.
+export async function previewDeleteVersion(
+  categoryId: string | null,
+  fromMonth: string,
+): Promise<{ error: string } | { months: BackdateMonth[]; until: string | null }> {
+  try {
+    const result = await executeAsOwner({ operation: "budgets.deleteVersionPreview", input: { categoryId, fromMonth }, reason: "Preview" });
+    if (result.status !== "read") return { error: "Something went wrong" };
+    return result.output as { months: BackdateMonth[]; until: string | null };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Something went wrong" };
+  }
+}
+
+// Deletes one version of a target (#181): its months fall back to the target before it.
+export async function deleteVersion(categoryId: string | null, fromMonth: string, name: string) {
+  return run("budgets.deleteVersion", { categoryId, fromMonth }, `Deleted the ${name} target starting ${fromMonth}`);
+}
+
 export async function removeTarget(categoryId: string | null, name: string) {
   return run("budgets.removeTarget", { categoryId }, `Removed the ${name} target`);
 }
