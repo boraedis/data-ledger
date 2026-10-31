@@ -511,6 +511,34 @@ describe("budgets.deleteVersion (#181)", () => {
   });
 });
 
+describe("one run of the same terms is one item (#same-terms)", () => {
+  const versionsOf = async (categoryId: string) => db.select().from(budgetTargets).where(eq(budgetTargets.categoryId, categoryId));
+
+  it("a backdated run that meets the current month with the same terms is one version", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-10-10" });
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    const rows = await versionsOf(cat.Dining);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].effectiveFrom).toBe("2026-01-01");
+    expect(target(await status("2026-03-31"), cat.Dining).targetCents).toBe(40_000);
+    expect(target(await status("2026-10-31"), cat.Dining).targetCents).toBe(40_000);
+  });
+
+  it("setting the same terms again adds no version", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-06-10" });
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-10-10" });
+    expect(await versionsOf(cat.Dining)).toHaveLength(1);
+  });
+
+  it("a change in terms still starts a new version", async () => {
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 50_000, today: "2026-10-10" });
+    expect(await versionsOf(cat.Dining)).toHaveLength(2);
+    expect(target(await status("2026-09-30"), cat.Dining).targetCents).toBe(40_000);
+    expect(target(await status("2026-10-31"), cat.Dining).targetCents).toBe(50_000);
+  });
+});
+
 describe("budgets.pay (#128)", () => {
   type Pay = {
     pay: { recordedCents: number; recordedCount: number; netPayCents: number | null };
