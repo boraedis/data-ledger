@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { cashFlowInputs } from "@/lib/cashflow/data";
 import { investmentChange } from "@/lib/cashflow/investments";
-import { rollUp } from "@/lib/cashflow/series";
+import { rollUp, runningTotals } from "@/lib/cashflow/series";
 import { formatShare } from "@/lib/cashflow/format";
 import { buildFlowGraph, type FlowGraph } from "@/lib/cashflow/graph";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
-import { parseView, step, switchTo, viewQuery, VIEWS, type CashFlowView, type ViewPeriod } from "@/lib/cashflow/view";
+import { comparedWith, parseView, step, switchTo, viewQuery, VIEWS, type CashFlowView, type ViewPeriod } from "@/lib/cashflow/view";
 import { cashFlowSeries } from "@/operations/cashflow";
 import { read } from "@/operations/runtime";
 import { misfiledTransfers } from "@/operations/transactions";
@@ -55,12 +55,15 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const percent = one(sp.show) === "percent";
 
   const db = getDb();
-  const [{ paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut, unmatched }, misfiled, flow, invested] = await Promise.all([
+  // Monthly compares with the month before, or its same days for the month in progress (#172).
+  const before = period.view === "monthly" ? comparedWith(period, today) : null;
+  const [{ paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut, unmatched }, misfiled, flow, invested, prev] = await Promise.all([
     cashFlowInputs(db, { from: period.from, to: period.to, gross }),
     read(db, misfiledTransfers, { from: period.from, to: period.to }),
     read(db, cashFlowSeries, { from: period.from, to: period.to, gross }),
     // Beside the year, never in it (#171): growth and contributions alike.
     period.view === "annual" ? investmentChange(db, { from: period.from, to: period.to < today ? period.to : today }) : null,
+    before ? read(db, cashFlowSeries, { from: before.from, to: before.to, gross }) : null,
   ]);
   const graph = buildFlowGraph({ paychecks, lines, uncategorized, transfers, accounts, by, lookup });
   const t = totals(graph);
@@ -96,6 +99,24 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   });
   // This year's current month is still in progress.
   const partialMonth = soFar ? Number(today.slice(5, 7)) - 1 : null;
+  // A month by day (#172): running totals, so the gap builds over the month; days still to come undrawn.
+  const running = runningTotals(flow.days);
+  const daySlots: FlowSlot[] = running.map((d) => {
+    const label = String(Number(d.date.slice(8, 10)));
+    const title = new Date(`${d.date}T00:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+    return d.date > today ? { label, title, inCents: null, outCents: null } : { label, title, inCents: d.inCents, outCents: d.outCents };
+  });
+  const partialDay = soFar ? flow.days.findIndex((d) => d.date === today) : null;
+  // Each tile's change from the period it's compared with.
+  const change = (now: number, then: number | undefined, upIsGood: boolean) => {
+    if (then === undefined) return null;
+    const diff = now - then;
+    if (diff === 0) return { text: `same as ${before!.label}`, tone: "text-muted-foreground" };
+    return {
+      text: `${diff > 0 ? "+" : "−"}${formatCents(Math.abs(diff))} vs ${before!.label}`,
+      tone: diff > 0 === upIsGood ? "text-positive" : "text-negative",
+    };
+  };
   // The same uncategorized money the Sankey shows, so the two can be reconciled.
   const uncategorizedIn = uncategorized.filter((u) => u.amountCents > 0).reduce((sum, u) => sum + u.amountCents, 0);
 
@@ -140,16 +161,22 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
         ) : (
         <dl className="grid grid-cols-3 gap-2 text-sm">
           {[
-            { name: `Cash in${soFar ? " so far" : ""}`, cents: totalsFlow.inCents, tone: "" },
-            { name: `Cash out${soFar ? " so far" : ""}`, cents: totalsFlow.outCents, tone: "" },
-            { name: "Net", cents: totalsFlow.netCents, tone: totalsFlow.netCents < 0 ? "text-negative" : totalsFlow.netCents > 0 ? "text-positive" : "" },
+            { name: `Cash in${soFar ? " so far" : ""}`, cents: totalsFlow.inCents, tone: "", delta: change(totalsFlow.inCents, prev?.totals.inCents, true) },
+            { name: `Cash out${soFar ? " so far" : ""}`, cents: totalsFlow.outCents, tone: "", delta: change(totalsFlow.outCents, prev?.totals.outCents, false) },
+            {
+              name: `Net${soFar ? " so far" : ""}`,
+              cents: totalsFlow.netCents,
+              tone: totalsFlow.netCents < 0 ? "text-negative" : totalsFlow.netCents > 0 ? "text-positive" : "",
+              delta: change(totalsFlow.netCents, prev?.totals.netCents, true),
+            },
           ].map((f) => (
             <div key={f.name} className="rounded-lg border p-3">
               <dt className="text-xs text-muted-foreground">{f.name}</dt>
               <dd className={`text-base font-semibold tabular-nums sm:text-lg ${f.tone}`}>
-                {f.name === "Net" && f.cents > 0 ? "+" : f.cents < 0 ? "−" : ""}
+                {f.name.startsWith("Net") && f.cents > 0 ? "+" : f.cents < 0 ? "−" : ""}
                 {formatCents(Math.abs(f.cents))}
               </dd>
+              {f.delta ? <dd className={`text-xs tabular-nums ${f.delta.tone}`}>{f.delta.text}</dd> : null}
             </div>
           ))}
         </dl>
@@ -166,6 +193,15 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
           </p>
         ) : null}
         {period.view === "annual" && !empty ? <FlowChart slots={monthSlots} title={`Cash in and out by month, ${period.label}`} partialIndex={partialMonth} /> : null}
+        {period.view === "monthly" && !empty ? (
+          <FlowChart
+            slots={daySlots}
+            title={`Cash in and out by day, ${period.label}`}
+            partialIndex={partialDay}
+            legend={{ in: "Cash in to date", out: "Cash out to date" }}
+            steps={flow.days}
+          />
+        ) : null}
         <p className="text-xs text-muted-foreground">
           Cash in is paychecks (what landed) and income; cash out is spending, net of refunds{gross ? "" : " and friends' shares"}. Moving money between
           your own accounts, card payments included, is neither.

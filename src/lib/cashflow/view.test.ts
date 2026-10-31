@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseView, step, switchTo, viewQuery } from "./view";
+import { comparedWith, parseView, step, switchTo, viewQuery } from "./view";
 
 const TODAY = "2026-10-14"; // a Wednesday
 
@@ -45,5 +45,16 @@ describe("cash flow tabs (#170)", () => {
 
   it("labels a week across a year end with both years", () => {
     expect(parseView({ view: "weekly", week: "2025-12-31" }, TODAY).label).toBe("Dec 29, 2025 – Jan 4, 2026");
+  });
+});
+
+describe("the month before (#172)", () => {
+  it("compares a whole month with the whole month before", () => {
+    expect(comparedWith(parseView({ view: "monthly", month: "2026-03" }, TODAY), TODAY)).toEqual({ from: "2026-02-01", to: "2026-02-28", label: "February" });
+  });
+
+  it("compares the month in progress with the same days of the month before, clipped to its length", () => {
+    expect(comparedWith(parseView({ view: "monthly" }, TODAY), TODAY)).toEqual({ from: "2026-09-01", to: "2026-09-14", label: "September 1–14" });
+    expect(comparedWith(parseView({ view: "monthly" }, "2026-03-31"), "2026-03-31")).toEqual({ from: "2026-02-01", to: "2026-02-28", label: "February" });
   });
 });
