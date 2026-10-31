@@ -391,6 +391,25 @@ Each pay stub is recorded as structured income (#60, `payStubs.*`), so a paychec
 
 Each event has a dedupe key, so it's raised once, and a dismissed alert never comes back. **Home is the digest:** open alerts plus the inbox, budgets over target and what's owed. `alerts.notifiedAt` is there for push or email delivery (#29) to mark what it has sent.
 
+### Suspicious charges
+
+**Checks** (#33; `src/lib/suspicious/checks.ts`) are rules, each explainable in one line, that flag a single charge that looks wrong. They run as `alerts.checkSuspicious` (actor `matcher`) after each nightly sync, right after the subscription alerts, over the last 7 days of synced charges. They also run on each Apple Pay purchase as it arrives. At most one flag per charge, the most specific first:
+- **Foreign fee:** the issuer's foreign transaction fee line, the only sign of a foreign charge that bank data has.
+- **Possible duplicate:** the same merchant, account and amount within a day, $10 or more. The later of the two is flagged.
+- **Unusually large:** at least 3× the merchant's usual (median over the past year, 3+ charges), more than it has ever charged, and $25 or more over usual. A merchant with too little history is compared with its category instead (10+ charges).
+- **First-time merchant:** nothing from it before, and $200 or more.
+
+**Not repeated:** a subscription's price rise or double charge is already a recurring alert, and a charge any alert is about isn't flagged again. Card-not-present isn't checked, because no source says how a card was used.
+
+**Only charges that arrive:** a manual entry, a CSV import or a pending charge is never a subject. Each still counts as history.
+
+**Flags are alerts**, with kinds of their own, so push, Tally's digest and the handover from a purchase alert to the bank's copy (#30) carry them as they are. They're answered in the Inbox under **Check these**, not dismissed like other alerts. `alerts.review` records a verdict (`alerts.verdict`) and takes the flag off the list. A charge marked suspicious stays in view for 30 days, as a reminder to dispute it with the issuer.
+
+**Your answers tune the next check**, read from past verdicts, with no settings to keep:
+- **Fine on an unusual or first-time charge:** that amount becomes the merchant's ceiling. Only a charge more than a quarter above it is unusual there again.
+- **Fine on a possible duplicate:** repeat purchases are normal there, so that merchant isn't checked for duplicates again.
+- **Three first-time charges in a row marked fine:** the first-time bar rises to their median. One marked suspicious puts it back to $200.
+
 ### Provisional transactions
 
 Near-real-time purchase alerts (#28: bank emails #31, Apple Pay #32) can't wait for the daily sync, so each one creates a **provisional transaction** (`transactions.provisional_source`, #30) that you can categorize, split, tag or share on the spot. The sync stays the source of truth.
@@ -444,15 +463,15 @@ The app notifies the owner's devices itself, with Web Push (#29); no notificatio
 - **Installable:** a web app manifest and icons (`src/app/manifest.ts`, `public/icons/`, from `scripts/generate-icons.mjs`). On an iPhone, add it from Safari's Share menu (Add to Home Screen); iOS allows push only for a home-screen app (iOS 16.4+).
 - **Devices:** each device opts in from Settings → Notifications and gets a row in `push_subscriptions`. Settings lists them with when they were last notified, and Remove revokes one. A device the push service reports as gone is removed automatically.
 - **Private on the way:** every payload is encrypted to the device's own keys, so the push service (Apple's, for an iPhone) delivers it without being able to read it. VAPID keys sign each push, so only this app can send to these devices.
-- **Minimal on the lock screen:** a merchant and an amount, never balances or account numbers. `sendPush` (`src/lib/push/send.ts`) is the one way to notify; the purchase-alert and suspicious-charge flows (#31–#33) will use it.
-- **What notifies today:** alerts raised by the nightly sync, once each (`alerts.notifiedAt`). Several at once become one summary. Only alerts from the last two days are sent, so turning notifications on doesn't replay old ones.
+- **Minimal on the lock screen:** a merchant and an amount, never balances or account numbers. `sendPush` (`src/lib/push/send.ts`) is the one way to notify.
+- **What notifies today:** alerts raised by the nightly sync, once each (`alerts.notifiedAt`), and each Apple Pay purchase as it happens. A purchase that a suspicious-charge check flags (#33) sends one notification, saying why, that opens the Inbox. Several at once become one summary. Only alerts from the last two days are sent, so turning notifications on doesn't replay old ones.
 - **The service worker** (`public/sw.js`) only shows notifications and opens the app where one points. It caches nothing, so no ledger page is stored on the device.
 
 ### Nightly pipeline
 
 Sync → match provisional transactions → categorize → detect recurring → match reimbursements → anomaly
-checks → digest. (Today: the sync cron categorizes and raises
-recurring-charge alerts, then hands the rest to the model's classify chain,
+checks → digest. (Today: the sync cron categorizes, raises
+recurring-charge alerts and runs the suspicious-charge checks, then hands the rest to the model's classify chain,
 whose last link has Tally write the digest; reimbursement matches are
 proposed on read.) Runs as a durable workflow so a failed step retries rather
 than half-completing.

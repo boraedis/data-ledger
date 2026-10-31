@@ -10,8 +10,9 @@ import type { Db } from "@/db/types";
 // it. VAPID keys sign every request, so only this app can push to these
 // subscriptions.
 //
-// Every flow that notifies goes through sendPush: nightly alerts today,
-// purchase alerts (#31, #32) and suspicious-charge flags (#33) next.
+// Every flow that notifies goes through sendPush: nightly alerts, Apple
+// Pay purchases (#32) and suspicious-charge flags (#33); email alerts (#31)
+// next.
 
 export type PushNotification = {
   // Shown on the lock screen, so keep it minimal: a merchant and an
