@@ -91,7 +91,8 @@ export default async function GoalsPage() {
                 {g.monthlyNeededCents !== null ? ` · ${formatCents(g.monthlyNeededCents)}/month to make it` : ""}
                 {g.averagePerMonthCents !== null
                   ? ` · averaging ${formatCents(g.averagePerMonthCents)}/month so far`
-                  : " · not enough history yet for a monthly average"}
+                  : " · not enough history yet to project"}
+                {g.projectedAtTargetCents !== null ? ` · on this pace, ${formatCents(g.projectedAtTargetCents)} by ${g.targetDate}` : ""}
               </span>
             </div>
             {g.series.length > 1 ? (

@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { accounts, balanceSnapshots, goalAccounts, goals, tags, transactionTags, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { daysInclusive, elapsedShare, evenPace, monthlyNeeded } from "@/lib/pace";
+import { daysInclusive, elapsedShare, evenPace, monthlyNeeded, monthsLeft } from "@/lib/pace";
 
 // Savings-goal progress (#10). Progress is
 //   the linked accounts' balances (today: their current balance; earlier
@@ -56,6 +56,9 @@ export type GoalProgress = {
   // What's been gained each month since the start, so far: null until a
   // month's worth of days has passed, since a few days' average is noise.
   averagePerMonthCents: number | null;
+  // Where the balance lands on the target date if it keeps saving at the
+  // average: null without a date, an average, or a target still to reach.
+  projectedAtTargetCents: number | null;
   series: { on: string; cents: number }[];
 };
 
@@ -122,6 +125,7 @@ export function goalProgress(goal: GoalInput, today: string): GoalProgress {
   const paceAt = (on: string) => (goal.targetDate ? evenPace(startCents, goal.targetCents, elapsedShare(goal.startOn, goal.targetDate, on)) : null);
   const days = daysInclusive(goal.startOn, end);
   const months = days / (365.25 / 12);
+  const averagePerMonthCents = days >= MIN_DAYS_FOR_AVERAGE ? Math.round((currentCents - startCents) / months) : null;
 
   return {
     id: goal.id,
@@ -138,7 +142,11 @@ export function goalProgress(goal: GoalInput, today: string): GoalProgress {
     monthlyNeededCents: goal.targetDate && remaining > 0 ? monthlyNeeded(remaining, today, goal.targetDate) : null,
     paceNowCents: paceAt(end),
     pace: goal.targetDate ? series.map((d) => ({ on: d.on, cents: paceAt(d.on)! })) : null,
-    averagePerMonthCents: days >= MIN_DAYS_FOR_AVERAGE ? Math.round((currentCents - startCents) / months) : null,
+    averagePerMonthCents,
+    projectedAtTargetCents:
+      goal.targetDate && remaining > 0 && averagePerMonthCents !== null && today <= goal.targetDate
+        ? Math.round(currentCents + averagePerMonthCents * monthsLeft(today, goal.targetDate))
+        : null,
     series,
   };
 }
