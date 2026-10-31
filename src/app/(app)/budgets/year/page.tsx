@@ -184,7 +184,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
           Over
         </span>
         <span className="flex items-center gap-1">
-          <span className="size-3 rounded-sm bg-warning/35" aria-hidden />
+          <span className="size-3 rounded-sm bg-warning/50" aria-hidden />
           Ahead of pace, still under
         </span>
         <span className="flex items-center gap-1">

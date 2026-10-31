@@ -70,7 +70,7 @@ const compactDiff = (cents: number) => `${cents > 0 ? "+" : cents < 0 ? "−" : 
 // progress that's ahead of its pace but within its target is yellow (#159):
 // a square is one colour, too small for the cards' green-and-yellow split.
 function shade(spent: number, target: number, pace: number | null = null): string {
-  if (paceTone(spent, target, pace) === "ahead") return "bg-warning/35";
+  if (paceTone(spent, target, pace) === "ahead") return "bg-warning/50";
   const ratio = target > 0 ? spent / target : spent > 0 ? Infinity : 0;
   if (ratio > 1) return ratio > 1.25 ? "bg-negative/60" : ratio > 1.1 ? "bg-negative/40" : "bg-negative/20";
   return ratio < 0.5 ? "bg-positive/45" : ratio < 0.9 ? "bg-positive/30" : "bg-positive/15";
