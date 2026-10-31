@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { scheduleLabel, periodLabel } from "@/lib/budgets/format";
-import type { YearTotal } from "@/lib/budgets/year";
+import { gridSegments, type Segment, type YearTotal } from "@/lib/budgets/year";
 import { formatCents } from "@/lib/money";
 
 // The Year view's grid (#108, #124) with a tooltip on every square (#139):
@@ -14,6 +14,11 @@ import { formatCents } from "@/lib/money";
 //
 // On a phone a tap opens the tooltip rather than following the link (there's
 // no hover to preview with), and the tooltip carries the links instead.
+//
+// A quarterly or annual target's period is one box spanning its months
+// (#157), with the period's own target and spend; a period running past
+// either edge is clipped there, marked with ‹ or ›, and its tooltip gives
+// the whole period.
 
 export type Period = {
   start: string;
@@ -195,6 +200,54 @@ export function YearGrid({
     </div>
   );
 
+  const periodBody = (r: GridRow, seg: Segment<GridCell>) => {
+    const p = seg.cells[0].period!;
+    const last = seg.cells.at(-1)!;
+    const soFar = seg.cells.some((c) => c.month === partial) || seg.clippedAfter;
+    return (
+      <div className="space-y-1">
+        <div className="font-medium">
+          {r.name} · {periodLabel(p.start, p.end)}
+          {soFar ? " so far" : ""}
+        </div>
+        {seg.clippedBefore || seg.clippedAfter ? (
+          <div className="text-muted-foreground">Runs {periodLabel(p.start, p.end)}; only part of it is in these 12 months.</div>
+        ) : null}
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 tabular-nums">
+          <dt className="text-muted-foreground">Target</dt>
+          <dd className="text-right">
+            {formatCents(p.targetCents)} ({scheduleLabel(p.periodMonths)})
+          </dd>
+          <dt className="text-muted-foreground">Spent</dt>
+          <dd className="text-right">{formatCents(p.spentCents)}</dd>
+          <dt className="text-muted-foreground">{p.spentCents > p.targetCents ? "Over" : "Under"}</dt>
+          <dd className={`text-right ${p.spentCents > p.targetCents ? "text-negative" : ""}`}>{formatCents(Math.abs(p.spentCents - p.targetCents))}</dd>
+          {/* Counted per month, so only for the months shown. */}
+          <dt className="text-muted-foreground">Transactions{seg.clippedBefore || seg.clippedAfter ? " shown" : ""}</dt>
+          <dd className="text-right">{seg.cells.reduce((n, c) => n + c.transactions, 0)}</dd>
+          {p.rollover ? (
+            <>
+              <dt className="text-muted-foreground">Rolled in</dt>
+              <dd className="text-right">{formatCents(p.carryInCents)}</dd>
+              <dt className="text-muted-foreground">Available</dt>
+              <dd className="text-right">{formatCents(p.availableCents)}</dd>
+            </>
+          ) : null}
+        </dl>
+        <div className="flex gap-3 pt-0.5">
+          <Link href={last.href} className="underline">
+            Open {monthName(last.month, "short")}
+          </Link>
+          {last.transactionsHref ? (
+            <Link href={last.transactionsHref} className="underline">
+              Transactions
+            </Link>
+          ) : null}
+        </div>
+      </div>
+    );
+  };
+
   const totalBody = (label: string, t: YearTotal, overLine: string) => (
     <div className="space-y-1">
       <div className="font-medium">{label}</div>
@@ -276,7 +329,41 @@ export function YearGrid({
                 over {r.over} of {r.targeted}
               </span>
             </th>
-            {r.months.map((c, ci) => {
+            {gridSegments(r.months).map((seg) => {
+              const ci = seg.first;
+              if (seg.period) {
+                const p = seg.period;
+                const id = `${r.key}:${p.start}`;
+                const body = periodBody(r, seg);
+                const soFar = seg.cells.some((c) => c.month === partial) || seg.clippedAfter;
+                const last = seg.cells.at(-1)!;
+                return (
+                  <td key={p.start} colSpan={seg.cells.length} className="relative h-9 p-0" {...cellProps(id, ci, body)}>
+                    <Link
+                      href={last.href}
+                      aria-label={`${r.name}, ${periodLabel(p.start, p.end)}${soFar ? " so far" : ""}: ${formatCents(p.spentCents)} of ${formatCents(p.targetCents)}, ${underOver(p.spentCents, p.targetCents)}`}
+                      {...triggerProps(id, ci, body)}
+                      className={`flex h-full items-center justify-center gap-1 rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 focus-visible:outline-2 focus-visible:outline-ring ${shade(p.spentCents, p.targetCents)} ${
+                        seg.clippedBefore ? "rounded-l-none" : ""
+                      } ${seg.clippedAfter ? "rounded-r-none" : ""} ${soFar ? "outline-1 -outline-offset-2 outline-dashed outline-foreground/40" : ""}`}
+                    >
+                      {seg.clippedBefore ? <span aria-hidden className="absolute left-0.5 text-[10px] text-muted-foreground">‹</span> : null}
+                      <span aria-hidden className="hidden text-[10px] md:inline">
+                        {compactDiff(p.spentCents - p.targetCents)}
+                      </span>
+                      {/* Where there's room, the period's figures. */}
+                      {seg.cells.length >= 3 ? (
+                        <span aria-hidden className="hidden text-[9px] text-muted-foreground md:inline">
+                          {compact(p.spentCents)} of {compact(p.targetCents)}
+                        </span>
+                      ) : null}
+                      {seg.clippedAfter ? <span aria-hidden className="absolute right-0.5 text-[10px] text-muted-foreground">›</span> : null}
+                    </Link>
+                    {bubble(id)}
+                  </td>
+                );
+              }
+              const c = seg.cells[0];
               const id = `${r.key}:${c.month}`;
               const label =
                 c.targetCents === null
@@ -300,7 +387,12 @@ export function YearGrid({
                 </td>
               );
             })}
-            {totalCell(`${r.key}:total`, `${r.name}, ${r.total?.months ?? 0} months with a target`, r.total, `Over target in ${r.over} of ${r.targeted} months.`)}
+            {totalCell(
+              `${r.key}:total`,
+              `${r.name}, ${r.total?.months ?? 0} months with a target`,
+              r.total,
+              `Over target in ${r.over} of ${r.targeted} ${r.months.some((c) => c.period && c.period.periodMonths > 1) ? "periods" : "months"}.`,
+            )}
           </tr>
         ))}
       </tbody>

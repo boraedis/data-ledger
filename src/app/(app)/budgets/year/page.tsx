@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { budgetView } from "@/lib/budgets/tabs";
-import { yearTotals } from "@/lib/budgets/year";
+import { gridSegments, segmentFigures, yearTotals } from "@/lib/budgets/year";
 import { budgetMonthly, budgetPayYear } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
 import { YearGrid, type GridColumn, type GridRow } from "./grid";
@@ -79,14 +79,15 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
     return `/budgets/transactions?${q}`;
   };
   const gridRows: GridRow[] = rows.map((r, ri) => {
-    const targeted = r.months.filter((m) => m.targetCents !== null);
+    // A quarterly or annual target counts once per period, not per month (#157).
+    const targeted = gridSegments(r.months).flatMap((s) => segmentFigures(s) ?? []);
     return {
       key: r.categoryId ?? "buffer",
       name: r.name,
       isBuffer: r.categoryId === null,
       total: totals.byRow[ri],
       targeted: targeted.length,
-      over: targeted.filter((m) => m.spentCents > m.targetCents!).length,
+      over: targeted.filter((m) => m.spentCents > m.targetCents).length,
       months: r.months.map((m) => ({
         ...m,
         href: href("/budgets", { month: m.month.slice(0, 7) }),
@@ -128,7 +129,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
       </div>
       <p className="text-sm text-muted-foreground">
         Each target&apos;s spending against the target it had that month: green under, red over, deeper the further off, with the amount over (+) or under (−) where there&apos;s room.
-        A multi-month target is measured against its even monthly share. Totals add up only the months that had a target. Tap a month to open it.{" "}
+        A quarterly or annual target is one box per period, spanning its months, against the period&apos;s target; in the totals it counts at its even monthly share, so months add up. Totals add up only the months that had a target. Tap a month to open it.{" "}
         {gross ? (
           <>
             Showing gross spending.{" "}
