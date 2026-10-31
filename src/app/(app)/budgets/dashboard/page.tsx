@@ -184,7 +184,7 @@ export default async function BudgetDashboardPage(props: PageProps<"/budgets/das
           {d.month ? (
             <Overspends title="Biggest overspends this month" items={d.monthOver} href={cardHref} none="Nothing over target." />
           ) : null}
-          <Link href={budgetHref("/budgets", view)} className="block text-sm underline">
+          <Link href={budgetHref("/budgets/month", view)} className="block text-sm underline">
             Open {monthName(month, false)} →
           </Link>
         </div>
