@@ -61,7 +61,9 @@ function formatDay(on: string, withYear = true): string {
   });
 }
 
-export function ValueChart({ series, label, height = 220 }: { series: ValuePoint[]; label: string; height?: number }) {
+// A guide is a second line drawn dashed over the same days (a goal's pace,
+// say), aligned to the series by position: guide[i] is for series[i].
+export function ValueChart({ series, label, height = 220, guide }: { series: ValuePoint[]; label: string; height?: number; guide?: ValuePoint[] }) {
   const HEIGHT = height;
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -82,9 +84,12 @@ export function ValueChart({ series, label, height = 220 }: { series: ValuePoint
     return Number.isFinite(days) ? series.slice(-days) : series;
   }, [series, range]);
 
+  // The guide covers the same days, so the last ones of it line up with the visible range.
+  const guideVisible = useMemo(() => (guide && visible.length ? guide.slice(-visible.length) : null), [guide, visible]);
+
   const geometry = useMemo(() => {
     if (width === 0 || visible.length === 0) return null;
-    const values = visible.map((p) => p.cents);
+    const values = [...visible.map((p) => p.cents), ...(guideVisible ?? []).map((p) => p.cents)];
     let min = Math.min(...values);
     let max = Math.max(...values);
     if (min === max) {
@@ -104,8 +109,9 @@ export function ValueChart({ series, label, height = 220 }: { series: ValuePoint
     const x = (i: number) => PAD.left + (visible.length === 1 ? plotW / 2 : (i / (visible.length - 1)) * plotW);
     const y = (v: number) => PAD.top + (1 - (v - lo) / (hi - lo)) * plotH;
     const path = visible.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.cents).toFixed(1)}`).join("");
-    return { ticks, x, y, path, lo, hi, plotW };
-  }, [visible, width, HEIGHT]);
+    const guidePath = guideVisible?.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.cents).toFixed(1)}`).join("") ?? null;
+    return { ticks, x, y, path, guidePath, lo, hi, plotW };
+  }, [visible, guideVisible, width, HEIGHT]);
 
   const shown = visible[hover ?? visible.length - 1];
   const first = visible[0];
@@ -187,6 +193,9 @@ export function ValueChart({ series, label, height = 220 }: { series: ValuePoint
               />
             ))}
             <path d={geometry.path} fill="none" className="stroke-primary" strokeWidth={1.75} strokeLinejoin="round" />
+            {geometry.guidePath ? (
+              <path d={geometry.guidePath} fill="none" className="stroke-foreground/60" strokeWidth={1.25} strokeDasharray="4 3" />
+            ) : null}
             {/* Labels after the line, with a background-colored halo, so a
                 label stays legible where the line runs through it. */}
             {geometry.ticks.map((t) => (
