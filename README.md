@@ -305,6 +305,17 @@ the owner's own (see below).
   - **Reads:** `budgets.status`, `budgets.history` and `budgets.targets`. Budget figures come from transactions, not balances, so Tally may read them.
   - **Writes:** `budgets.setTarget`, `removeTarget` and `rebalance`. All are logged and undoable, and Tally's are proposals.
 
+### Cash flow
+
+The Cash flow page (#62) shows a month or a year as a Sankey: where money came from, what came off the paycheck first, and where it went. The cash flow epic (#168) adds Annual, Monthly and Weekly tabs on top.
+
+- **Cash in and cash out** (#169, `cashflow.series`, `lib/cashflow/series.ts`): one read for any span, day by day, with week and month rollups built from the same days, so a month always equals its days and weeks.
+  - **Cash in:** paychecks (a pay stub's linked net deposits, on its pay date; never its gross or deductions again) and income categories, in budget accounts.
+  - **Cash out:** spending in expense categories, in budget accounts, from the same lines Budgets and Spending use (net of shared expenses and refunds unless gross).
+  - **In neither:** transfers between your own accounts, card payments matched as transfers (#102), and transfer categories.
+  - **Reported apart:** money out not categorized yet (`uncategorizedOut`), and the change in investment value (`lib/cashflow/investments.ts`), which isn't cash in or out. It comes from balance snapshots, so it stays in the library with net worth rather than going through an operation.
+  - Pay is in it, so it's the owner's read only, like `budgets.pay`.
+
 ### Savings goals
 
 **Goals** (#10) are something to save toward: a target, and optionally a date.
