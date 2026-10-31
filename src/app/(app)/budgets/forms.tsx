@@ -50,6 +50,9 @@ export function TargetForm({
   windowMonths,
   yearly = [],
   backdate,
+  initialFromMonth = "",
+  allowRemove = true,
+  submitLabel,
   onDone,
 }: {
   // Categories to pick from when adding; omitted when editing one target.
@@ -67,6 +70,11 @@ export function TargetForm({
   // How far back a target can start (#130): the first month with
   // transactions, and this month. Without it there's no "applies from".
   backdate?: { earliestMonth: string | null; currentMonth: string };
+  // Editing one of a target's past versions (#174): it applies from that
+  // version's first month, through the backdate review.
+  initialFromMonth?: string;
+  allowRemove?: boolean;
+  submitLabel?: string;
   onDone?: () => void;
 }) {
   const [choice, setChoice] = useState<string>(initial ? (initial.categoryId ?? "") : (choices?.[0]?.categoryId ?? ""));
@@ -78,7 +86,7 @@ export function TargetForm({
   const [rollover, setRollover] = useState(initial?.rollover ?? false);
   const [sinkingFund, setSinkingFund] = useState(initial?.sinkingFund ?? false);
   // Blank: the current period, as before. An earlier month backdates.
-  const [fromMonth, setFromMonth] = useState("");
+  const [fromMonth, setFromMonth] = useState(initialFromMonth);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -272,14 +280,14 @@ export function TargetForm({
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       <div className="flex flex-wrap gap-2">
         <Button type="submit" size="sm" disabled={pending}>
-          {preview ? `Confirm: change ${preview.months.length} month${preview.months.length === 1 ? "" : "s"}` : backdating ? "Review the months" : initial ? "Save" : "Add target"}
+          {preview ? `Confirm: change ${preview.months.length} month${preview.months.length === 1 ? "" : "s"}` : backdating ? "Review the months" : (submitLabel ?? (initial ? "Save" : "Add target"))}
         </Button>
         {preview ? (
           <Button type="button" size="sm" variant="ghost" disabled={pending} onClick={() => setConfirming(null)}>
             Back to editing
           </Button>
         ) : null}
-        {initial ? (
+        {initial && allowRemove ? (
           <Button
             type="button"
             size="sm"
@@ -307,9 +315,18 @@ export function TargetForm({
   );
 }
 
-export function RebalanceForm({ targets }: { targets: TargetChoice[] }) {
-  const [from, setFrom] = useState(targets[0]?.categoryId ?? "");
-  const [to, setTo] = useState(targets[1]?.categoryId ?? "");
+export function RebalanceForm({
+  targets,
+  initialFrom,
+  initialTo,
+}: {
+  targets: TargetChoice[];
+  // A budget item's page (#174) starts with that target on one side.
+  initialFrom?: string | null;
+  initialTo?: string | null;
+}) {
+  const [from, setFrom] = useState(initialFrom !== undefined ? (initialFrom ?? "") : (targets[0]?.categoryId ?? ""));
+  const [to, setTo] = useState(initialTo !== undefined ? (initialTo ?? "") : (targets[1]?.categoryId ?? ""));
   const [amount, setAmount] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();

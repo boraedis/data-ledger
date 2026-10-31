@@ -2,8 +2,7 @@ import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { budgetDashboard, type Overspend } from "@/lib/budgets/dashboard";
-import { targetAnchor } from "@/lib/budgets/overview";
-import { budgetHref, budgetView } from "@/lib/budgets/tabs";
+import { budgetHref, budgetView, itemHref } from "@/lib/budgets/tabs";
 import type { YearTotal } from "@/lib/budgets/year";
 import { budgetMonthly, budgetPay, budgetPayYear } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
@@ -142,9 +141,9 @@ export default async function BudgetDashboardPage(props: PageProps<"/budgets/das
   const d = budgetDashboard(rows);
 
   const targetsHref = budgetHref("/budgets/targets", view);
-  // A month's overspend opens its card; a year's, its row on the Year view
+  // A month's overspend opens its target's page (#174); a year's, its row on the Year view
   // ending in that month.
-  const cardHref = (categoryId: string | null) => `${budgetHref("/budgets", view)}#${targetAnchor(categoryId)}`;
+  const cardHref = (categoryId: string | null) => itemHref(categoryId, view);
   const rowHref = (categoryId: string | null) => `${budgetHref("/budgets/year", view)}#year-${categoryId ?? "buffer"}`;
 
   return (

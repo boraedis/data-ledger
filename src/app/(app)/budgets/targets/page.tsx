@@ -4,8 +4,7 @@ import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { HISTORY_MONTHS } from "@/lib/budgets/engine";
 import { scheduleLabel } from "@/lib/budgets/format";
-import { targetAnchor } from "@/lib/budgets/overview";
-import { budgetHref, budgetView } from "@/lib/budgets/tabs";
+import { budgetView, itemHref } from "@/lib/budgets/tabs";
 import { targetList } from "@/lib/budgets/target-list";
 import { backdateRange, budgetHistory, listTargets, yearlyCharges } from "@/operations/budgets";
 import { listCategories } from "@/operations/categories";
@@ -50,8 +49,8 @@ export default async function BudgetTargetsPage(props: PageProps<"/budgets/targe
       .filter((o) => o.kind === "expense" && !targeted.has(o.id))
       .map((o) => ({ categoryId: o.id, name: o.label })),
   ];
-  // A card is editable on this month only, so Edit opens this month's.
-  const cardHref = (categoryId: string | null) => `${budgetHref("/budgets", { ...view, month: view.thisMonth })}#${targetAnchor(categoryId)}`;
+  // Each target's own page (#174), where it's changed and its versions edited.
+  const cardHref = (categoryId: string | null) => itemHref(categoryId, view);
 
   return (
     <div className="space-y-6">
@@ -86,7 +85,7 @@ export default async function BudgetTargetsPage(props: PageProps<"/budgets/targe
                   {formatCents(t.amountCents)} <span className="text-muted-foreground">{scheduleLabel(t.periodMonths)}</span>
                 </span>
                 <Link href={cardHref(t.categoryId)} className="text-muted-foreground underline hover:text-foreground">
-                  Edit
+                  Open
                 </Link>
               </span>
             </li>
