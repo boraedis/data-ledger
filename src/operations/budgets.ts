@@ -271,6 +271,73 @@ export const budgetMonthly = defineRead({
   },
 });
 
+// A period day by day (#149): one target's current period and its last
+// `past` complete periods, or (categoryId omitted) the month's monthly
+// targets together and the months before, as the Month view totals them.
+// Multi-month targets stay out of the month-wide figures, as they do from
+// "Total this month". Only each line's date and amount: the page draws
+// the burndown and the calendar from them (lib/budgets/burndown.ts).
+export const budgetDaily = defineRead({
+  name: "budgets.daily",
+  description:
+    "Day-by-day spending for a burndown: one target's period as of `on` (categoryId null = the buffer) and its last " +
+    "`past` (default 3) complete periods, or with categoryId omitted, the month's monthly targets together (multi-month " +
+    "targets left out, as in the month's total) and the `past` months before. Each period: start, end, availableCents " +
+    "(target with rollover and rebalancing) and its lines (date, signed amountCents), through `on` for the current one. " +
+    "Null when the target isn't in effect on `on`. Net unless gross is true.",
+  input: z.object({
+    categoryId: targetCategory.optional(),
+    on: isoDate.optional(),
+    gross: z.boolean().default(false),
+    past: z.number().int().min(0).max(6).default(3),
+  }),
+  run: async (db, { categoryId, on = today(), gross, past }) => {
+    const versions = await loadVersions(db);
+    if (!versions.length) return null;
+    // Rollover carries from a target's first period, so the lines go back that far.
+    const from = versions.reduce((min, v) => (v.effectiveFrom < min ? v.effectiveFrom : min), firstOfMonth(monthIndex(on) - 12 * 3));
+    const [lines, { rows }, adjustments] = await Promise.all([
+      spendingLines.run(db, { from, to: on, budgetOnly: true, gross }),
+      labels(db),
+      db.select({ categoryId: budgetAdjustments.categoryId, on: budgetAdjustments.on, amountCents: budgetAdjustments.amountCents }).from(budgetAdjustments),
+    ]);
+    const categories = rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind }));
+    const spend = lines.map((l) => ({ date: l.date, amountCents: l.amountCents, categoryId: l.categoryId }));
+    const periods = periodsByKey({ on, versions, lines: spend, categories, adjustments });
+    const linesOf = (key: string, start: string, end: string) =>
+      linesForTarget({ key: key as typeof BUFFER, start, end: end < on ? end : on, versions, lines: spend, categories }).map((l) => ({ date: l.date, amountCents: l.amountCents }));
+
+    if (categoryId !== undefined) {
+      const key = keyOf(categoryId);
+      const list = periods.get(key) ?? [];
+      const current = list.find((p) => p.start <= on && on <= p.end);
+      if (!current) return null;
+      const period = (p: (typeof list)[number]) => ({ start: p.start, end: p.end, availableCents: p.availableCents, lines: linesOf(key, p.start, p.end) });
+      return { ...period(current), past: list.filter((p) => p.end < current.start).slice(-past).reverse().map(period) };
+    }
+
+    // The month's monthly targets together, and the same for each month before.
+    const month = (index: number) => {
+      const start = firstOfMonth(index);
+      let availableCents = 0;
+      let targets = 0;
+      const out: { date: string; amountCents: number }[] = [];
+      for (const [key, list] of periods) {
+        const p = list.find((x) => x.start === start && monthIndex(x.end) === index);
+        if (!p) continue;
+        targets++;
+        availableCents += p.availableCents;
+        out.push(...linesOf(key, p.start, p.end));
+      }
+      return targets ? { start, end: lastOfMonth(index), availableCents, lines: out } : null;
+    };
+    const current = month(monthIndex(on));
+    if (!current) return null;
+    const before = Array.from({ length: past }, (_, i) => month(monthIndex(on) - 1 - i)).filter((m): m is NonNullable<typeof m> => m !== null);
+    return { ...current, past: before };
+  },
+});
+
 export const budgetYear = defineRead({
   name: "budgets.year",
   description:

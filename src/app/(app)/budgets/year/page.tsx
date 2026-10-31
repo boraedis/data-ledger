@@ -80,6 +80,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
     return {
       key: r.categoryId ?? "buffer",
       name: r.name,
+      href: itemHref(r.categoryId, view),
       isBuffer: r.categoryId === null,
       total: totals.byRow[ri],
       targeted: targeted.length,

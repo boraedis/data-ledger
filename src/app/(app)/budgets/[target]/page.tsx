@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { periodBreakdown, type Share } from "@/lib/budgets/breakdown";
+import { burndown, spendCalendar } from "@/lib/budgets/burndown";
 import { HISTORY_MONTHS } from "@/lib/budgets/engine";
 import { historyLabel, suggestedTargetCents } from "@/lib/budgets/format";
 import { budgetHref, budgetView, itemHref } from "@/lib/budgets/tabs";
@@ -8,10 +9,11 @@ import { versionSpans } from "@/lib/budgets/target-list";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
-import { backdateRange, budgetHistory, budgetMonthly, budgetStatus, listTargets, targetTransactions, yearlyCharges } from "@/operations/budgets";
+import { backdateRange, budgetDaily, budgetHistory, budgetMonthly, budgetStatus, listTargets, targetTransactions, yearlyCharges } from "@/operations/budgets";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { RebalanceForm } from "../forms";
+import { Burndown, SpendCalendar } from "../daily";
 import { MonthBars } from "../month-bars";
 import { BudgetTabs } from "../tabs";
 import { TargetSettings } from "./settings";
@@ -80,7 +82,7 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
   if (categoryId !== null && (!option || option.kind !== "expense")) notFound();
   const name = categoryId === null ? "Everything else (buffer)" : option!.label;
 
-  const [status, versions, monthly, history, netHistory, yearly, range, txns] = await Promise.all([
+  const [status, versions, monthly, history, netHistory, yearly, range, txns, daily] = await Promise.all([
     read(db, budgetStatus, { on, gross }),
     read(db, listTargets, {}),
     read(db, budgetMonthly, { on, gross, months, includeEnded: true }),
@@ -90,6 +92,8 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
     read(db, yearlyCharges, { on: today }),
     read(db, backdateRange, {}),
     read(db, targetTransactions, { categoryId, on, gross }),
+    // The period day by day, and the last three before it (#149).
+    read(db, budgetDaily, { categoryId, on, gross }),
   ]);
   const t = status.targets.find((x) => x.categoryId === categoryId) ?? null;
   const spans = versionSpans(versions, categoryId);
@@ -104,6 +108,9 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
   const bars = (series?.months ?? []).map((m) => ({ ...m, href: itemHref(categoryId, { ...view, month: m.month.slice(0, 7) }) }));
   const targeted = bars.filter((b) => b.targetCents !== null);
   const breakdown = txns ? periodBreakdown(txns.lines) : null;
+  const through = daily ? (on < daily.end ? on : daily.end) : on;
+  const burn = daily ? burndown(daily, through, daily.past) : null;
+  const calendar = daily ? spendCalendar(daily, through) : null;
   const href = (next: { month?: string; months?: number }) => {
     const base = itemHref(categoryId, { ...view, month: next.month ?? month });
     const m = next.months ?? months;
@@ -184,6 +191,24 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
           ) : null}
         </div>
       </section>
+
+      {daily && burn && calendar ? (
+        <section className="space-y-3" aria-label="Day by day">
+          <h2 className="text-lg font-medium">Day by day</h2>
+          <Burndown
+            days={burn.days}
+            availableCents={daily.availableCents}
+            pastPeriods={burn.pastPeriods}
+            title={`What's left of ${name}'s ${formatCents(daily.availableCents)} through ${monthLabel(daily.start.slice(0, 7))}${daily.start.slice(0, 7) === daily.end.slice(0, 7) ? "" : ` – ${monthLabel(daily.end.slice(0, 7))}`}`}
+          />
+          <p className="text-xs text-muted-foreground">
+            {burn.pastPeriods
+              ? `Typical: the same days of the last ${burn.pastPeriods === 1 ? "period" : `${burn.pastPeriods} periods`}, as a share of each one's target, so a changed target still compares.`
+              : "No complete period before this one to compare with yet."}
+          </p>
+          <SpendCalendar days={calendar.days} share={calendar.share} today={isCurrent ? today : null} />
+        </section>
+      ) : null}
 
       <TargetSettings
         categoryId={categoryId}

@@ -1,14 +1,16 @@
 import Link from "next/link";
+import { burndown } from "@/lib/budgets/burndown";
 import { HISTORY_MONTHS } from "@/lib/budgets/engine";
 import { budgetHref, budgetView, itemHref } from "@/lib/budgets/tabs";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
-import { backdateRange, budgetHistory, budgetPay, budgetStatus, yearlyCharges } from "@/operations/budgets";
+import { backdateRange, budgetDaily, budgetHistory, budgetPay, budgetStatus, yearlyCharges } from "@/operations/budgets";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { AddTarget } from "./add-target";
 import type { TargetChoice } from "./forms";
+import { Burndown } from "./daily";
 import { BudgetOverview } from "./overview";
 import { PayStrip } from "./pay-strip";
 import { BudgetTabs } from "./tabs";
@@ -39,10 +41,12 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
   const on = isCurrent ? today : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
 
   const db = getDb();
-  const [status, payVsBudget, adding] = await Promise.all([
+  const [status, payVsBudget, daily, adding] = await Promise.all([
     read(db, budgetStatus, { on, gross }),
     // Pay against the month's budget (#128).
     read(db, budgetPay, { on, gross }),
+    // The month's monthly targets day by day (#149), matching "Total this month".
+    read(db, budgetDaily, { on, gross }),
     // Adding a target only on this month: what the form needs.
     isCurrent
       ? Promise.all([
@@ -72,6 +76,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
     return { choices, histories, yearly: yearly.filter((y) => choices.some((c) => c.categoryId === y.categoryId)), range };
   })();
   const buffer = status.targets.find((t) => t.categoryId === null);
+  const burn = daily ? burndown(daily, on, daily.past) : null;
   const monthLabel = new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 
   return (
@@ -133,6 +138,18 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
               projectedCents: t.projectedCents,
             }))}
           />
+          {burn && daily ? (
+            <section className="space-y-1" aria-label="The month day by day">
+              <h2 className="text-sm font-medium">The month so far</h2>
+              <Burndown
+                days={burn.days}
+                availableCents={daily.availableCents}
+                pastPeriods={burn.pastPeriods}
+                height={110}
+                title={`What's left of the month's ${formatCents(daily.availableCents)} across its monthly targets`}
+              />
+            </section>
+          ) : null}
           <PayStrip
             summary={payVsBudget.summary}
             pay={payVsBudget.pay}
