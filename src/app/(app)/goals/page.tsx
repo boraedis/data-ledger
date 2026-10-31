@@ -89,9 +89,7 @@ export default async function GoalsPage() {
               <span className="text-muted-foreground tabular-nums">
                 {Math.round(g.share * 100)}%
                 {g.monthlyNeededCents !== null ? ` · ${formatCents(g.monthlyNeededCents)}/month to make it` : ""}
-                {g.averagePerMonthCents !== null
-                  ? ` · averaging ${formatCents(g.averagePerMonthCents)}/month so far`
-                  : " · not enough history yet to project"}
+                {` · averaging ${formatCents(g.averagePerMonthCents)}/month so far`}
                 {g.projectedAtTargetCents !== null ? ` · on this pace, ${formatCents(g.projectedAtTargetCents)} by ${g.targetDate}` : ""}
               </span>
             </div>

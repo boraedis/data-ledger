@@ -99,20 +99,27 @@ describe("goalProgress", () => {
     expect(p.pace!.find((d) => d.on === "2026-05-01")!.cents).toBe(paceNow);
     // The start day counts as one day in (the pace counts the day itself), so it's a day's worth above the start.
     expect(p.pace!.find((d) => d.on === "2026-01-01")!.cents).toBe(Math.round(100_000 + 500_000 * (1 / 365)));
-    // $1,000 gained over 121 days, about four months.
-    expect(p.averagePerMonthCents).toBe(Math.round(100_000 / (121 / (365.25 / 12))));
-    // On that average, May to December is eight more months: where it lands on the target date.
-    expect(p.projectedAtTargetCents).toBe(Math.round(200_000 + p.averagePerMonthCents! * 8));
+    // $1,000 gained over 121 days, as a monthly pace.
+    expect(p.averagePerMonthCents).toBe(Math.round((100_000 / 121) * (365.25 / 12)));
+    // The same pace carried on from 1 May to the target date, 244 days later.
+    expect(p.projectedAtTargetCents).toBe(Math.round(200_000 + (100_000 / 121) * 244));
   });
 
-  it("has no pace line without a target date, and no average before a month has passed", () => {
-    const p = goalProgress(
+  it("paces from the first day, with no target date there's no pace line or projection", () => {
+    // Ten days in: the whole trajectory so far, not a month's worth.
+    const young = goalProgress(
+      goal({ linked: [{ id: "sav", name: "Savings", currentCents: 20_000, snapshots: [{ on: "2026-01-01", cents: 10_000 }] }] }),
+      "2026-01-10",
+    );
+    expect(young.averagePerMonthCents).toBe(Math.round((10_000 / 10) * (365.25 / 12)));
+    expect(young.projectedAtTargetCents).toBe(Math.round(20_000 + (10_000 / 10) * 355));
+
+    const undated = goalProgress(
       goal({ targetDate: null, linked: [{ id: "sav", name: "Savings", currentCents: 20_000, snapshots: [{ on: "2026-01-01", cents: 10_000 }] }] }),
       "2026-01-10",
     );
-    expect(p.paceNowCents).toBeNull();
-    expect(p.pace).toBeNull();
-    expect(p.averagePerMonthCents).toBeNull();
-    expect(p.projectedAtTargetCents).toBeNull();
+    expect(undated.paceNowCents).toBeNull();
+    expect(undated.pace).toBeNull();
+    expect(undated.projectedAtTargetCents).toBeNull();
   });
 });
