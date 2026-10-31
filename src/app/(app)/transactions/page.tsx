@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { ACTIVITY_LABELS } from "@/lib/investments/activity";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
@@ -9,6 +8,7 @@ import { read } from "@/operations/runtime";
 import { listTags } from "@/operations/tags";
 import { manualMatches } from "@/operations/manual";
 import { listTransactions } from "@/operations/transactions";
+import { categoryBadge } from "./category-badge";
 
 const PAGE_SIZE = 100;
 const select = "h-9 rounded-md border bg-background px-2 text-sm";
@@ -175,28 +175,23 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
         <ul className="min-w-0 divide-y rounded-lg border">
           {visible.map((t) => (
             <li key={t.id}>
-              <Link href={`/transactions/${t.id}`} className="flex min-w-0 items-start justify-between gap-3 px-3 py-2 text-sm hover:bg-accent">
+              {/* A pending row is greyed (#212): it can still change or vanish
+                  before it posts, when its posted version replaces it. */}
+              <Link
+                href={`/transactions/${t.id}`}
+                className={`flex min-w-0 items-start justify-between gap-3 px-3 py-2 text-sm hover:bg-accent ${t.pending ? "text-muted-foreground" : ""}`}
+              >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{t.merchant ?? t.description}</span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {t.postedOn}
                     {t.experiencedOn ? ` (for ${t.experiencedOn})` : ""} · {accountName.get(t.accountId)}
-                    {t.pending ? " · pending" : ""}
                     {t.provisionalSource ? " · from an alert, not yet from the bank" : ""}
                     {t.manual ? " · added by hand" : ""}
                   </span>
                   <span className="mt-0.5 flex flex-wrap gap-1 text-xs">
-                    {t.isSplit ? (
-                      <span className="rounded bg-secondary px-1.5">Split</span>
-                    ) : t.categoryId ? (
-                      <span className="rounded bg-secondary px-1.5">{labelOf.get(t.categoryId)}</span>
-                    ) : t.reimbursedCents >= t.amountCents && t.amountCents > 0 ? null : t.transfer ? null : t.investmentActivity ? (
-                      // Investment accounts are out of budgets: an
-                      // uncategorized trade isn't waiting on anything.
-                      <span className="rounded bg-secondary px-1.5">{ACTIVITY_LABELS[t.investmentActivity]}</span>
-                    ) : (
-                      <span className="rounded bg-warning/15 px-1.5 text-warning">Uncategorized</span>
-                    )}
+                    {t.pending ? <span className="rounded border border-dashed px-1.5">Pending</span> : null}
+                    <Badge badge={categoryBadge(t, (id) => labelOf.get(id))} />
                     {/* What it's connected to, so nothing reads as counted twice:
                         the other side of a transfer, a paycheck's pay stub. */}
                     {t.transfer ? (
@@ -230,7 +225,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     ))}
                   </span>
                 </span>
-                <span className={`shrink-0 tabular-nums ${t.amountCents > 0 ? "text-positive" : ""}`}>
+                <span className={`shrink-0 tabular-nums ${t.amountCents > 0 && !t.pending ? "text-positive" : ""}`}>
                   {formatCents(t.amountCents)}
                 </span>
               </Link>
@@ -245,4 +240,23 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
       </div>
     </div>
   );
+}
+
+function Badge({ badge }: { badge: ReturnType<typeof categoryBadge> }) {
+  if (!badge) return null;
+  switch (badge.kind) {
+    case "split":
+      return <span className="rounded bg-secondary px-1.5">Split</span>;
+    case "category":
+    case "activity":
+      return <span className="rounded bg-secondary px-1.5">{badge.label}</span>;
+    case "uncategorized":
+      // Investment accounts are out of budgets: an uncategorized trade
+      // isn't waiting on anything, so it isn't a warning.
+      return badge.waiting ? (
+        <span className="rounded bg-warning/15 px-1.5 text-warning">Uncategorized</span>
+      ) : (
+        <span className="rounded bg-secondary px-1.5">Uncategorized</span>
+      );
+  }
 }
