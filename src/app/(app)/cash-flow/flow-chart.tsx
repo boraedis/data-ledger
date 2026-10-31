@@ -6,7 +6,9 @@ import { formatCents } from "@/lib/money";
 
 // Cash in against cash out over a period (#171, and #172 by day): one axis,
 // two lines in the Sankey's own colours for money in and spending, and the
-// gap between them shaded by which is ahead, so net reads as an area. Slots
+// gap between them shaded by which is ahead, so net reads as an area: green
+// where money came in faster, red (the app's negative, not the amber of the
+// spending line) where it went out faster (#192). Slots
 // still to come keep their place on the axis with nothing drawn. Hovering
 // or tapping a slot reads out its figures; a table carries the same for
 // screen readers and anyone who wants the numbers.
@@ -68,7 +70,7 @@ export function FlowChart({
           </span>
           <span className="flex items-center gap-1">
             <span className="inline-block size-3 rounded-sm" style={{ background: "color-mix(in oklab, var(--flow-income) 20%, transparent)" }} />
-            <span className="inline-block size-3 rounded-sm" style={{ background: "color-mix(in oklab, var(--flow-spend) 25%, transparent)" }} /> Net, whichever is ahead
+            <span className="inline-block size-3 rounded-sm" style={{ background: "color-mix(in oklab, var(--negative) 25%, transparent)" }} /> Net, whichever is ahead
           </span>
         </span>
         {slot && slot.inCents !== null ? (
@@ -112,7 +114,7 @@ export function FlowChart({
                     .reverse()
                     .map((p) => `L${x(p.x).toFixed(2)},${y(p.outCents).toFixed(2)}`)
                     .join("")}Z`}
-                  style={{ fill: b.ahead === "in" ? "color-mix(in oklab, var(--flow-income) 20%, transparent)" : "color-mix(in oklab, var(--flow-spend) 25%, transparent)" }}
+                  style={{ fill: b.ahead === "in" ? "color-mix(in oklab, var(--flow-income) 20%, transparent)" : "color-mix(in oklab, var(--negative) 25%, transparent)" }}
                 />
               ))}
               <path d={line((s) => s.outCents)} fill="none" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" style={{ stroke: "var(--flow-spend)" }} />
