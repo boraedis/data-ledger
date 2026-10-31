@@ -15,6 +15,7 @@ import {
   linesForTarget,
   monthIndex,
   monthlySeries,
+  naturalPeriod,
   periodsByKey,
   recentHistory,
   SERIES_MONTHS,
@@ -529,7 +530,8 @@ export const setTarget = defineWrite({
     "Set or change a budget target: amountCents per period for an expense category (categoryId null = the " +
     "buffer). periodMonths 1 = monthly, 12 = annual, other = custom; anchorMonth (YYYY-MM) is when periods " +
     "start counting (default January for annual, else this month). A change applies from the start of the " +
-    "current period; earlier periods keep their old target.",
+    "current period; earlier periods keep their old target. A target that runs over several months changes only " +
+    "from its period's start, so a change that would start in a past month is refused: use backdating for that.",
   input: z.object({
     categoryId: targetCategory,
     amountCents: z.number().int().min(1).max(100_000_000_00),
@@ -549,9 +551,11 @@ export const setTarget = defineWrite({
       : input.periodMonths === 12
         ? `${on.slice(0, 4)}-01-01`
         : `${on.slice(0, 7)}-01`;
-    const current = currentVersion(await loadVersions(ctx.db), input.categoryId, on);
+    const versions = await loadVersions(ctx.db);
+    const current = currentVersion(versions, input.categoryId, on);
     const effectiveFrom = changeEffectiveFrom(current, { periodMonths: input.periodMonths, anchorOn }, on);
-    const row = await writeVersion(ctx, {
+    assertNotPast(effectiveFrom, on, "This target runs over several months, so a change starts at its period's start, which is a past month. Use backdating, which lists every month it changes first.");
+    const version = {
       categoryId: input.categoryId,
       effectiveFrom,
       amountCents: input.amountCents,
@@ -560,7 +564,9 @@ export const setTarget = defineWrite({
       rollover: input.rollover,
       // A one-month period has nothing to set aside for.
       sinkingFund: input.sinkingFund && input.periodMonths > 1,
-    });
+    };
+    assertWholePeriod(versions, version);
+    const row = await writeVersion(ctx, version);
     return { id: row.id, effectiveFrom };
   },
 });
@@ -605,6 +611,37 @@ const backdateInput = z.object({
   today: isoDate.optional(),
 });
 
+// --- Whole periods (#166) ----------------------------------------------------
+//
+// A target that runs over several months is one budget for its whole period.
+// A version that starts inside such a period cuts it short, and nothing
+// restores the rest, so a change to a multi-month target starts at the start
+// of a period: the one in force there, and the new version's own. Any start
+// in a past month is a backdate, which lists every month it changes first.
+
+const monthName = (index: number) =>
+  new Date(Date.UTC(Math.floor(index / 12), index % 12, 1)).toLocaleDateString("en-US", { month: "long", timeZone: "UTC" });
+
+/** A change made now starts in this month or later; past starts go through backdating. */
+function assertNotPast(effectiveFrom: string, on: string, message: string) {
+  if (effectiveFrom < `${on.slice(0, 7)}-01`) throw new Error(message);
+}
+
+/** Refuses a version that would start inside a multi-month period, of the version in force then or of its own. */
+function assertWholePeriod(versions: TargetVersion[], version: TargetVersion) {
+  const start = monthIndex(version.effectiveFrom);
+  const inForce = currentVersion(versions, version.categoryId, version.effectiveFrom);
+  for (const v of [inForce, version]) {
+    if (!v || v.amountCents === null || v.periodMonths === 1) continue;
+    const period = naturalPeriod(start, v.periodMonths, v.anchorOn);
+    if (period.start === start) continue;
+    throw new Error(
+      `This target runs ${monthName(period.start)} to ${monthName(period.end)} as one budget, so a change starts at ${monthName(period.start)}. ` +
+        "Use backdating for that, which lists every month it changes first.",
+    );
+  }
+}
+
 /**
  * The version a backdate would write, after the same checks the write
  * makes, shared by its preview (#137) so the warning can never list a
@@ -630,6 +667,7 @@ async function plannedBackdate(db: Db, input: z.infer<typeof backdateInput>) {
     // A one-month period has nothing to set aside for.
     sinkingFund: input.sinkingFund && input.periodMonths > 1,
   };
+  assertWholePeriod(versions, version);
   return { on, version, versions, until: next ? next.effectiveFrom : null };
 }
 
@@ -683,13 +721,15 @@ export const removeTarget = defineWrite({
   name: "budgets.removeTarget",
   description:
     "End a budget target from the start of its current period (categoryId null = the buffer). Its history " +
-    "stays; its category's spending falls to the buffer from then on.",
+    "stays; its category's spending falls to the buffer from then on. A target that runs over several months " +
+    "can't be ended from a past month yet.",
   input: z.object({ categoryId: targetCategory, today: isoDate.optional() }),
   apply: async (ctx, { categoryId, today: day }) => {
     const on = day ?? today();
     const current = currentVersion(await loadVersions(ctx.db), categoryId, on);
     if (!current) throw new Error("There's no target to remove");
     const effectiveFrom = changeEffectiveFrom(current, current, on);
+    assertNotPast(effectiveFrom, on, "Ending this target would change a past month, since it runs over several months. Ending it from a past month isn't supported yet.");
     await writeVersion(ctx, { ...current, categoryId, effectiveFrom, amountCents: null });
     return { effectiveFrom };
   },
