@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { HISTORY_MONTHS } from "@/lib/budgets/engine";
 import { budgetHref, budgetView } from "@/lib/budgets/tabs";
+import { elapsedShare } from "@/lib/pace";
 import { backdateRange, budgetHistory, budgetMonthly, budgetPay, budgetStatus, budgetYear } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
 import { BudgetOverview } from "./overview";
@@ -28,7 +29,8 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
   const { month, thisMonth } = view;
   const isCurrent = month === thisMonth;
   // A past month is shown as of its last day.
-  const on = isCurrent ? today : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const lastDay = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
+  const on = isCurrent ? today : lastDay;
 
   const db = getDb();
   // Net by default (your share of shared expenses); ?gross=1 shows spending
@@ -140,6 +142,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
               spentCents: t.spentCents,
               availableCents: t.availableCents,
               remainingCents: t.remainingCents,
+              elapsedShare: t.elapsedShare,
             }))}
           />
           <PayStrip
@@ -156,6 +159,7 @@ export default async function BudgetsPage(props: PageProps<"/budgets">) {
                 bars={series.get(t.categoryId ?? "") ?? []}
                 viewedMonth={`${month}-01`}
                 partialMonth={isCurrent ? `${month}-01` : null}
+                partialShare={isCurrent ? elapsedShare(`${month}-01`, lastDay, today) : null}
                 covers={t.categoryId === null ? status.unbudgeted.covers : undefined}
                   backdate={range}
                   transactionsHref={(() => {

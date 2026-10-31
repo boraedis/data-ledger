@@ -2,7 +2,9 @@
 
 import { budgetOverview, type OverviewRow, type OverviewTarget } from "@/lib/budgets/overview";
 import { periodLabel } from "@/lib/budgets/format";
+import { paceFor } from "@/lib/budgets/pace-colour";
 import { formatCents } from "@/lib/money";
+import { PaceBar } from "./pace-bar";
 
 // The month at a glance (#122): every target on one screen, each row a link
 // that opens its card below and scrolls to it. The card listens for
@@ -17,7 +19,6 @@ function open(anchor: string) {
 
 function Row({ row, period }: { row: OverviewRow; period?: string }) {
   const over = row.remainingCents < 0;
-  const scale = Math.max(row.availableCents, row.spentCents, 1);
   return (
     <li>
       <a
@@ -35,12 +36,14 @@ function Row({ row, period }: { row: OverviewRow; period?: string }) {
         <span className="text-right tabular-nums">
           {formatCents(row.spentCents)} <span className="text-muted-foreground">of {formatCents(row.availableCents)}</span>
         </span>
-        <span className="h-1.5 rounded-full bg-muted" aria-hidden>
-          <span
-            className={`block h-full rounded-full ${over ? "bg-negative/80" : "bg-primary"}`}
-            style={{ width: `${(Math.max(0, row.spentCents) / scale) * 100}%` }}
-          />
-        </span>
+        {/* Coloured by pace while the period is in progress (#159). */}
+        <PaceBar
+          spentCents={row.spentCents}
+          budgetCents={row.availableCents}
+          paceCents={row.availableCents > 0 ? paceFor(row.availableCents, row.elapsedShare) : null}
+          className="h-1.5"
+          rounded="rounded-full"
+        />
         <span className={`text-right text-xs tabular-nums ${over ? "font-medium text-negative" : "text-muted-foreground"}`}>
           {over ? `${formatCents(-row.remainingCents)} over` : `${formatCents(row.remainingCents)} left`}
         </span>

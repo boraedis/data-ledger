@@ -1,5 +1,7 @@
 import Link from "next/link";
+import { paceFor, paceSegments } from "@/lib/budgets/pace-colour";
 import { formatCents } from "@/lib/money";
+import { COLOUR_CLASS } from "./pace-bar";
 
 // A target's last few months as bars against its target (#107), so creep
 // and seasonal spikes show where a single month's card can't.
@@ -8,9 +10,10 @@ import { formatCents } from "@/lib/money";
 // view, sized by percentage, so it stays crisp at any card width without
 // measuring, and works without JavaScript.
 //
-// - Bars in the accent; over that month's target in the card's own
-//   over-budget color. The dashed target line says the same thing, so
-//   it isn't color alone.
+// - Bars coloured by pace (#159): green within the target, yellow then red
+//   above it when over, so the part still within the target shows; the
+//   month in progress turns yellow past its pace. The dashed target line
+//   says the same thing, so it isn't color alone.
 // - Months before the target existed are faded and have no line: they show
 //   what it would have covered, not what it was held to.
 // - A month with nothing spent keeps its column with a hairline at the
@@ -46,7 +49,18 @@ function summary(bars: Bar[], partialMonth: string | null): string {
   return parts.filter(Boolean).join(" ");
 }
 
-export function MonthBars({ bars, viewedMonth, partialMonth }: { bars: Bar[]; viewedMonth: string; partialMonth: string | null }) {
+export function MonthBars({
+  bars,
+  viewedMonth,
+  partialMonth,
+  partialShare = null,
+}: {
+  bars: Bar[];
+  viewedMonth: string;
+  partialMonth: string | null;
+  /** How far through the month in progress is, 0–1, for its pace. */
+  partialShare?: number | null;
+}) {
   if (bars.length === 0) return null;
   const scale = Math.max(1, ...bars.map((b) => Math.max(b.spentCents, b.targetCents ?? 0)));
   const pct = (cents: number) => `${(Math.max(0, cents) / scale) * 100}%`;
@@ -56,7 +70,8 @@ export function MonthBars({ bars, viewedMonth, partialMonth }: { bars: Bar[]; vi
       <figcaption className="sr-only">{summary(bars, partialMonth)}</figcaption>
       <ol className="flex h-14 items-stretch border-b border-border">
         {bars.map((b) => {
-          const over = b.targetCents !== null && b.spentCents > b.targetCents;
+          const pace = b.month === partialMonth && b.targetCents !== null && partialShare !== null ? paceFor(b.targetCents, partialShare) : null;
+          const segments = b.targetCents === null ? [] : paceSegments(b.spentCents, b.targetCents, pace);
           const label = describe(b) + (b.month === partialMonth ? " so far" : "");
           return (
             <li key={b.month} className="relative flex-1">
@@ -69,12 +84,17 @@ export function MonthBars({ bars, viewedMonth, partialMonth }: { bars: Bar[]; vi
                 // month is still easy to tap.
                 className="group flex h-full items-end justify-center rounded-sm px-[3px] hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
               >
+                {/* Stacked from the baseline: green, then yellow, then red. */}
                 <span
-                  className={`w-full max-w-8 rounded-t-[4px] ${
-                    b.spentCents <= 0 ? "" : over ? "bg-negative/80" : b.targetCents === null ? "bg-primary/35" : "bg-primary"
-                  } ${b.month === partialMonth ? "opacity-70" : ""}`}
+                  className={`flex w-full max-w-8 flex-col-reverse overflow-hidden rounded-t-[4px] ${b.targetCents === null && b.spentCents > 0 ? "bg-primary/35" : ""} ${
+                    b.month === partialMonth ? "opacity-70" : ""
+                  }`}
                   style={{ height: b.spentCents <= 0 ? 0 : `max(2px, ${pct(b.spentCents)})` }}
-                />
+                >
+                  {segments.map((s, i) => (
+                    <span key={i} className={COLOUR_CLASS[s.colour]} style={{ flexGrow: s.cents, flexBasis: 0 }} />
+                  ))}
+                </span>
               </Link>
               {b.targetCents !== null ? (
                 // Each month's own target, so a change shows as a step.

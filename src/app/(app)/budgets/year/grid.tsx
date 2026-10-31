@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { scheduleLabel, periodLabel } from "@/lib/budgets/format";
+import { paceFor, paceTone } from "@/lib/budgets/pace-colour";
+import { elapsedShare } from "@/lib/pace";
 import { gridSegments, type Segment, type YearTotal } from "@/lib/budgets/year";
 import { formatCents } from "@/lib/money";
 
@@ -64,12 +66,17 @@ const compactDiff = (cents: number) => `${cents > 0 ? "+" : cents < 0 ? "−" : 
 
 // Diverging around the target: under in the on-track color, over in the
 // over-budget color, three steps each by how far off. Capped well short of
-// solid so the amount on top stays legible in both themes.
-function shade(spent: number, target: number): string {
+// solid so the amount on top stays legible in both themes. A square still in
+// progress that's ahead of its pace but within its target is yellow (#159):
+// a square is one colour, too small for the cards' green-and-yellow split.
+function shade(spent: number, target: number, pace: number | null = null): string {
+  if (paceTone(spent, target, pace) === "ahead") return "bg-warning/35";
   const ratio = target > 0 ? spent / target : spent > 0 ? Infinity : 0;
   if (ratio > 1) return ratio > 1.25 ? "bg-negative/60" : ratio > 1.1 ? "bg-negative/40" : "bg-negative/20";
   return ratio < 0.5 ? "bg-positive/45" : ratio < 0.9 ? "bg-positive/30" : "bg-positive/15";
 }
+
+const monthEnd = (month: string) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
 
 const underOver = (spent: number, target: number) =>
   spent > target ? `${formatCents(spent - target)} over` : `${formatCents(target - spent)} under`;
@@ -82,6 +89,7 @@ export function YearGrid({
   grand,
   viewedMonth,
   partial,
+  asOf,
   pay,
   payTotals,
 }: {
@@ -90,10 +98,24 @@ export function YearGrid({
   grand: YearTotal | null;
   viewedMonth: string;
   partial: string | null;
+  /** The date the figures are as of: a square whose span runs past it is in progress (#159). */
+  asOf: string;
   pay?: PayMonth[];
   payTotals?: { netPayCents: number; savedCents: number } | null;
 }) {
   const [tip, setTip] = useState<Tip | null>(null);
+  // Where spending would be by asOf at an even pace; null for a span that's over.
+  const paceOf = (start: string, end: string, target: number) => paceFor(target, elapsedShare(start, end, asOf));
+  const paceLine = (spent: number, target: number, pace: number | null) =>
+    pace === null ? null : (
+      <>
+        <dt className="text-muted-foreground">Pace to date</dt>
+        <dd className={`text-right ${paceTone(spent, target, pace) === "ahead" ? "text-warning" : ""}`}>
+          {formatCents(pace)}
+          {spent > pace && spent <= target ? " (ahead)" : ""}
+        </dd>
+      </>
+    );
   const touch = useRef(false);
   const tableRef = useRef<HTMLTableElement>(null);
 
@@ -172,6 +194,7 @@ export function YearGrid({
           <dd className="text-right">{formatCents(c.spentCents)}</dd>
           <dt className="text-muted-foreground">{c.spentCents > c.targetCents ? "Over" : "Under"}</dt>
           <dd className={`text-right ${c.spentCents > c.targetCents ? "text-negative" : ""}`}>{formatCents(Math.abs(c.spentCents - c.targetCents))}</dd>
+          {paceLine(c.spentCents, c.targetCents, paceOf(c.month, monthEnd(c.month), c.targetCents))}
           <dt className="text-muted-foreground">Transactions</dt>
           <dd className="text-right">{c.transactions}</dd>
           {c.period?.rollover ? (
@@ -222,6 +245,7 @@ export function YearGrid({
           <dd className="text-right">{formatCents(p.spentCents)}</dd>
           <dt className="text-muted-foreground">{p.spentCents > p.targetCents ? "Over" : "Under"}</dt>
           <dd className={`text-right ${p.spentCents > p.targetCents ? "text-negative" : ""}`}>{formatCents(Math.abs(p.spentCents - p.targetCents))}</dd>
+          {paceLine(p.spentCents, p.targetCents, paceOf(p.start, p.end, p.targetCents))}
           {/* Counted per month, so only for the months shown. */}
           <dt className="text-muted-foreground">Transactions{seg.clippedBefore || seg.clippedAfter ? " shown" : ""}</dt>
           <dd className="text-right">{seg.cells.reduce((n, c) => n + c.transactions, 0)}</dd>
@@ -343,7 +367,7 @@ export function YearGrid({
                       href={last.href}
                       aria-label={`${r.name}, ${periodLabel(p.start, p.end)}${soFar ? " so far" : ""}: ${formatCents(p.spentCents)} of ${formatCents(p.targetCents)}, ${underOver(p.spentCents, p.targetCents)}`}
                       {...triggerProps(id, ci, body)}
-                      className={`flex h-full items-center justify-center gap-1 rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 focus-visible:outline-2 focus-visible:outline-ring ${shade(p.spentCents, p.targetCents)} ${
+                      className={`flex h-full items-center justify-center gap-1 rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 focus-visible:outline-2 focus-visible:outline-ring ${shade(p.spentCents, p.targetCents, paceOf(p.start, p.end, p.targetCents))} ${
                         seg.clippedBefore ? "rounded-l-none" : ""
                       } ${seg.clippedAfter ? "rounded-r-none" : ""} ${soFar ? "outline-1 -outline-offset-2 outline-dashed outline-foreground/40" : ""}`}
                     >
@@ -376,7 +400,7 @@ export function YearGrid({
                     aria-label={label}
                     {...triggerProps(id, ci, cellBody(r, c))}
                     className={`flex h-full items-center justify-center rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 focus-visible:outline-2 focus-visible:outline-ring ${
-                      c.targetCents === null ? "bg-muted/50 text-muted-foreground" : shade(c.spentCents, c.targetCents)
+                      c.targetCents === null ? "bg-muted/50 text-muted-foreground" : shade(c.spentCents, c.targetCents, paceOf(c.month, monthEnd(c.month), c.targetCents))
                     } ${c.month === partial ? "outline-1 -outline-offset-2 outline-dashed outline-foreground/40" : ""}`}
                   >
                     <span aria-hidden className="hidden text-[10px] md:inline">
@@ -417,7 +441,7 @@ export function YearGrid({
                       href={c.href}
                       aria-label={`All targets, ${monthName(c.month, "long")}: ${formatCents(c.total.spentCents)} of ${formatCents(c.total.targetCents)}, ${underOver(c.total.spentCents, c.total.targetCents)}. ${overLine}`}
                       {...triggerProps(id, ci, totalBody(`All targets · ${monthName(c.month, "long")}`, c.total, overLine))}
-                      className={`flex h-full items-center justify-center rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 focus-visible:outline-2 focus-visible:outline-ring ${shade(c.total.spentCents, c.total.targetCents)}`}
+                      className={`flex h-full items-center justify-center rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 focus-visible:outline-2 focus-visible:outline-ring ${shade(c.total.spentCents, c.total.targetCents, paceOf(c.month, monthEnd(c.month), c.total.targetCents))}`}
                     >
                       <span aria-hidden className="hidden text-[10px] md:inline">
                         {compactDiff(c.total.spentCents - c.total.targetCents)}

@@ -19,6 +19,8 @@ export type OverviewTarget = {
   spentCents: number;
   availableCents: number;
   remainingCents: number;
+  // Share of the period elapsed (#159), for the pace colours.
+  elapsedShare: number;
 };
 
 export type OverviewRow = OverviewTarget & { anchor: string };
