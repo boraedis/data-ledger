@@ -25,3 +25,13 @@ export async function testDb(): Promise<Db> {
   const copy = (await (await template).clone()) as PGlite;
   return drizzle(copy, { schema }) as unknown as Db;
 }
+
+/**
+ * A fresh copy of a database that already holds data, such as a seed applied
+ * once in beforeAll. Seeding per test costs far more than cloning, so a file
+ * that needs the same data in every test seeds once and clones here.
+ */
+export async function cloneDb(from: Db): Promise<Db> {
+  const copy = (await (from as unknown as { $client: PGlite }).$client.clone()) as PGlite;
+  return drizzle(copy, { schema }) as unknown as Db;
+}

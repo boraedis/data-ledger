@@ -1,17 +1,18 @@
 import { and, eq, gte, like, lte } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { accounts, budgetTargets, categories, commandLog, payStubLines, payStubs, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { lastOfMonth, monthIndex } from "@/lib/budgets/engine";
 import { suggestedTargetCents } from "@/lib/budgets/format";
 import { applySeed } from "@/lib/seed/apply";
-import { testDb } from "@/lib/test-utils/db";
+import { cloneDb, testDb } from "@/lib/test-utils/db";
 import { execute, undoCommand } from "@/operations/runtime";
 
 // On the synthetic seed. Groceries (QUILLFIELD MARKET) and coffee (CORNER
 // BEAN CAFE) are categorized directly as test setup.
 
 let db: Db;
+let seeded: Db;
 let cat: Record<string, string>;
 
 type Target = { categoryId: string | null; name: string; start: string; end: string; targetCents: number; spentCents: number; availableCents: number; carryInCents: number };
@@ -30,13 +31,19 @@ async function spentOn(pattern: string, from: string, to: string) {
   return -rows.reduce((s, r) => s + r.amountCents, 0);
 }
 
+// The seed is applied once for the file, then each test gets its own copy of
+// it, so every test still starts from the same data without reseeding.
+beforeAll(async () => {
+  seeded = await testDb();
+  await applySeed(seeded, { endDate: new Date("2026-06-30") });
+  cat = Object.fromEntries((await seeded.select().from(categories)).map((c) => [c.name, c.id]));
+  await seeded.update(transactions).set({ categoryId: cat.Groceries }).where(like(transactions.description, "QUILLFIELD%"));
+  await seeded.update(transactions).set({ categoryId: cat.Coffee }).where(like(transactions.description, "CORNER BEAN%"));
+  await seeded.update(transactions).set({ categoryId: cat.Paycheck }).where(like(transactions.description, "ACME WIDGETS%"));
+});
+
 beforeEach(async () => {
-  db = await testDb();
-  await applySeed(db, { endDate: new Date("2026-06-30") });
-  cat = Object.fromEntries((await db.select().from(categories)).map((c) => [c.name, c.id]));
-  await db.update(transactions).set({ categoryId: cat.Groceries }).where(like(transactions.description, "QUILLFIELD%"));
-  await db.update(transactions).set({ categoryId: cat.Coffee }).where(like(transactions.description, "CORNER BEAN%"));
-  await db.update(transactions).set({ categoryId: cat.Paycheck }).where(like(transactions.description, "ACME WIDGETS%"));
+  db = await cloneDb(seeded);
 });
 
 describe("budgets", () => {
@@ -508,6 +515,34 @@ describe("budgets.deleteVersion (#181)", () => {
     await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
     await del({ categoryId: cat.Dining, fromMonth: "2026-01" });
     expect(target(await status("2026-10-31"), cat.Dining)).toBeUndefined();
+  });
+});
+
+describe("one run of the same terms is one item (#same-terms)", () => {
+  const versionsOf = async (categoryId: string) => db.select().from(budgetTargets).where(eq(budgetTargets.categoryId, categoryId));
+
+  it("a backdated run that meets the current month with the same terms is one version", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-10-10" });
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    const rows = await versionsOf(cat.Dining);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].effectiveFrom).toBe("2026-01-01");
+    expect(target(await status("2026-03-31"), cat.Dining).targetCents).toBe(40_000);
+    expect(target(await status("2026-10-31"), cat.Dining).targetCents).toBe(40_000);
+  });
+
+  it("setting the same terms again adds no version", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-06-10" });
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-10-10" });
+    expect(await versionsOf(cat.Dining)).toHaveLength(1);
+  });
+
+  it("a change in terms still starts a new version", async () => {
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 50_000, today: "2026-10-10" });
+    expect(await versionsOf(cat.Dining)).toHaveLength(2);
+    expect(target(await status("2026-09-30"), cat.Dining).targetCents).toBe(40_000);
+    expect(target(await status("2026-10-31"), cat.Dining).targetCents).toBe(50_000);
   });
 });
 
