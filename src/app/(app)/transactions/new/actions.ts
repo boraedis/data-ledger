@@ -27,7 +27,7 @@ export async function addTransaction(input: {
       if (!input.categoryId) await runCategorization(db);
       return (result.output as { transactionId: string }).transactionId;
     });
-    for (const path of ["/transactions", "/inbox", "/spending", "/budgets", "/cash-flow"]) revalidatePath(path);
+    for (const path of ["/transactions", "/inbox", "/spending", "/budgets/month", "/cash-flow"]) revalidatePath(path);
     return { transactionId };
   } catch (error) {
     if (error && typeof error === "object" && "issues" in error) {
