@@ -23,9 +23,9 @@ function statusLine(g: GoalProgress): { text: string; tone: string } {
     case "reached":
       return { text: "Reached", tone: "text-positive" };
     case "on_track":
-      return { text: `On track (pace: ${formatCents(s.expectedCents)} by today)`, tone: "text-positive" };
+      return { text: `On track · should hold ${formatCents(s.expectedCents)} by now`, tone: "text-positive" };
     case "behind":
-      return { text: `Behind by ${formatCents(s.shortCents)} (pace: ${formatCents(s.expectedCents)} by today)`, tone: "text-negative" };
+      return { text: `Behind by ${formatCents(s.shortCents)} · should hold ${formatCents(s.expectedCents)} by now`, tone: "text-negative" };
     case "overdue":
       return { text: `Past its date, ${formatCents(g.targetCents - g.currentCents)} short`, tone: "text-negative" };
     case "no_date":
@@ -74,19 +74,35 @@ export default async function GoalsPage() {
                 {g.targetDate ? <span className="text-muted-foreground"> by {g.targetDate}</span> : null}
               </p>
             </div>
-            <div className="h-2.5 rounded-sm bg-muted" aria-hidden>
+            <div className="relative h-2.5 rounded-sm bg-muted" aria-hidden>
               <div className="h-full rounded-sm bg-primary" style={{ width: `${pct * 100}%` }} />
+              {g.paceNowCents !== null && g.targetCents > 0 ? (
+                <div
+                  className="absolute -top-1 -bottom-1 border-l-2 border-dashed border-foreground/60"
+                  style={{ left: `${Math.min(1, g.paceNowCents / g.targetCents) * 100}%` }}
+                  title={`Should hold ${formatCents(g.paceNowCents)} by now`}
+                />
+              ) : null}
             </div>
             <div className="flex flex-wrap justify-between gap-x-3 text-xs">
               <span className={status.tone}>{status.text}</span>
               <span className="text-muted-foreground tabular-nums">
                 {Math.round(g.share * 100)}%
                 {g.monthlyNeededCents !== null ? ` · ${formatCents(g.monthlyNeededCents)}/month to make it` : ""}
+                {g.averagePerMonthCents !== null
+                  ? ` · averaging ${formatCents(g.averagePerMonthCents)}/month so far`
+                  : " · not enough history yet for a monthly average"}
               </span>
             </div>
             {g.series.length > 1 ? (
-              <ValueChart label={`${g.name} progress`} height={140} series={g.series.map((p) => ({ on: p.on, cents: p.cents }))} />
+              <ValueChart
+                label={`${g.name} progress`}
+                height={140}
+                series={g.series.map((p) => ({ on: p.on, cents: p.cents }))}
+                guide={g.pace?.map((p) => ({ on: p.on, cents: p.cents })) ?? undefined}
+              />
             ) : null}
+            {g.pace ? <p className="text-xs text-muted-foreground">Dashed: where an even pace puts the goal each day.</p> : null}
             <p className="text-xs text-muted-foreground">
               Counting {[...g.accounts.map((a) => a.name), ...(g.tagName ? [`transfers tagged #${g.tagName}`] : [])].join(" + ")}
               {" · "}since {g.startOn}

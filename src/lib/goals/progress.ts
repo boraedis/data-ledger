@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { accounts, balanceSnapshots, goalAccounts, goals, tags, transactionTags, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { elapsedShare, evenPace, monthlyNeeded } from "@/lib/pace";
+import { daysInclusive, elapsedShare, evenPace, monthlyNeeded } from "@/lib/pace";
 
 // Savings-goal progress (#10). Progress is
 //   the linked accounts' balances (today: their current balance; earlier
@@ -49,8 +49,18 @@ export type GoalProgress = {
   status: GoalStatus;
   // To reach the target by its date from here, per month.
   monthlyNeededCents: number | null;
+  // Where an even pace from the start to the target by its date stands today
+  // (what the goal should hold by now), and on each day of the series.
+  paceNowCents: number | null;
+  pace: { on: string; cents: number }[] | null;
+  // What's been gained each month since the start, so far: null until a
+  // month's worth of days has passed, since a few days' average is noise.
+  averagePerMonthCents: number | null;
   series: { on: string; cents: number }[];
 };
+
+// Fewer days than this and the monthly average is noise, not a pace.
+const MIN_DAYS_FOR_AVERAGE = 30;
 
 /** Progress on each day from `from` through today. */
 function seriesFor(goal: GoalInput, today: string, from: string): { on: string; cents: number }[] {
@@ -109,6 +119,10 @@ export function goalProgress(goal: GoalInput, today: string): GoalProgress {
         : { kind: "behind", expectedCents, shortCents: expectedCents - currentCents };
   }
 
+  const paceAt = (on: string) => (goal.targetDate ? evenPace(startCents, goal.targetCents, elapsedShare(goal.startOn, goal.targetDate, on)) : null);
+  const days = daysInclusive(goal.startOn, end);
+  const months = days / (365.25 / 12);
+
   return {
     id: goal.id,
     name: goal.name,
@@ -122,6 +136,9 @@ export function goalProgress(goal: GoalInput, today: string): GoalProgress {
     share: goal.targetCents > 0 ? currentCents / goal.targetCents : 0,
     status,
     monthlyNeededCents: goal.targetDate && remaining > 0 ? monthlyNeeded(remaining, today, goal.targetDate) : null,
+    paceNowCents: paceAt(end),
+    pace: goal.targetDate ? series.map((d) => ({ on: d.on, cents: paceAt(d.on)! })) : null,
+    averagePerMonthCents: days >= MIN_DAYS_FOR_AVERAGE ? Math.round((currentCents - startCents) / months) : null,
     series,
   };
 }

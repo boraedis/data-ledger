@@ -87,4 +87,29 @@ describe("goalProgress", () => {
     expect(fresh.status).toMatchObject({ kind: "no_date", projectedOn: expect.any(String) });
     expect(steady.status).toMatchObject({ projectedOn: expect.stringMatching(/^2028-/) });
   });
+
+  it("gives the pace now and along the way, and an average per month once a month has passed", () => {
+    const p = goalProgress(
+      goal({ targetCents: 600_000, linked: [{ id: "sav", name: "Savings", currentCents: 200_000, snapshots: [{ on: "2026-01-01", cents: 100_000 }] }] }),
+      "2026-05-01",
+    );
+    // A straight line from $1,000 to $6,000 across the year: 121 of 365 days in.
+    const paceNow = Math.round(100_000 + 500_000 * (121 / 365));
+    expect(p.paceNowCents).toBe(paceNow);
+    expect(p.pace!.find((d) => d.on === "2026-05-01")!.cents).toBe(paceNow);
+    // The start day counts as one day in (the pace counts the day itself), so it's a day's worth above the start.
+    expect(p.pace!.find((d) => d.on === "2026-01-01")!.cents).toBe(Math.round(100_000 + 500_000 * (1 / 365)));
+    // $1,000 gained over 121 days, about four months.
+    expect(p.averagePerMonthCents).toBe(Math.round(100_000 / (121 / (365.25 / 12))));
+  });
+
+  it("has no pace line without a target date, and no average before a month has passed", () => {
+    const p = goalProgress(
+      goal({ targetDate: null, linked: [{ id: "sav", name: "Savings", currentCents: 20_000, snapshots: [{ on: "2026-01-01", cents: 10_000 }] }] }),
+      "2026-01-10",
+    );
+    expect(p.paceNowCents).toBeNull();
+    expect(p.pace).toBeNull();
+    expect(p.averagePerMonthCents).toBeNull();
+  });
 });
