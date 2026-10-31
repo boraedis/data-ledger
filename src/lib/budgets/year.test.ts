@@ -96,4 +96,22 @@ describe("a period's budget", () => {
     expect(paceTone(10_150, periodBudget(period), paceFor(periodBudget(period), share))).toBe("within");
     expect(paceTone(10_150, period.targetCents, paceFor(period.targetCents, share))).toBe("ahead");
   });
+
+  // Same for every period longer than a month: 3, 6 and 12 months. Synthetic values.
+  it.each([
+    { name: "6-month", start: "2026-07-01", end: "2026-12-31", periodMonths: 6, target: 60_000, available: 60_600, days: 31, total: 184, months: ["2026-07-01", "2026-08-01", "2026-09-01", "2026-10-01"] },
+    { name: "annual", start: "2026-01-01", end: "2026-12-31", periodMonths: 12, target: 120_000, available: 121_200, days: 304, total: 365, months: ["2026-09-01", "2026-10-01"] },
+  ])("holds a $name period to what's available", ({ start, end, periodMonths, target, available, days, total, months }) => {
+    // Spent just above the pace on the target, below the pace on the available amount.
+    const share = days / total;
+    const spent = Math.round(target * share) + 1;
+    expect(paceFor(available, share)!).toBeGreaterThan(spent);
+    const period = { start, end, periodMonths, targetCents: target, availableCents: available, spentCents: spent };
+    const segments = gridSegments(months.map((month) => ({ month, targetCents: target / periodMonths, spentCents: 0, period })));
+    // One box for the whole period, held to the available amount.
+    expect(segments).toHaveLength(1);
+    expect(segmentFigures(segments[0])).toEqual({ spentCents: spent, targetCents: available });
+    expect(paceTone(spent, periodBudget(period), paceFor(periodBudget(period), share))).toBe("within");
+    expect(paceTone(spent, target, paceFor(target, share))).toBe("ahead");
+  });
 });
