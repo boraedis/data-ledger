@@ -66,7 +66,8 @@ describe("budgets", () => {
   });
 
   it("gives a new annual target year-to-date progress", async () => {
-    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 150_000, periodMonths: 12, sinkingFund: true, today: "2026-06-15" });
+    // A yearly target runs from January, a past month, so it's backdated with its review (#166).
+    await run("budgets.backdateTarget", { categoryId: cat.Coffee, fromMonth: "2026-01", amountCents: 150_000, periodMonths: 12, sinkingFund: true, today: "2026-06-15" });
     const t = target(await status("2026-06-15"), cat.Coffee) as Target & { setAsideMonthlyCents: number; paceCents: number };
     expect(t).toMatchObject({ start: "2026-01-01", end: "2026-12-31", setAsideMonthlyCents: 12_500 });
     expect(t.spentCents).toBe(await spentOn("CORNER BEAN%", "2026-01-01", "2026-06-15"));
@@ -185,7 +186,7 @@ describe("budgets.monthly (#107)", () => {
   });
 
   it("gives a multi-month target its monthly share, with its months adding up to the period's spend", async () => {
-    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 120_000, periodMonths: 12, today: "2026-03-10" });
+    await run("budgets.backdateTarget", { categoryId: cat.Coffee, fromMonth: "2026-01", amountCents: 120_000, periodMonths: 12, today: "2026-03-10" });
     const coffee = (await monthly("2026-06-15")).find((s) => s.categoryId === cat.Coffee)!.months;
     expect(coffee.every((m) => m.targetCents === 10_000)).toBe(true);
     const sum = coffee.reduce((s, m) => s + m.spentCents, 0);
@@ -265,9 +266,10 @@ describe("budgets.yearlyCharges (#109)", () => {
     expect(await db.select().from(budgetTargets)).toHaveLength(0);
 
     // Accepting is the ordinary target save, as the owner.
-    await run("budgets.setTarget", { categoryId: cat.Car, amountCents: suggestion.amountCents, periodMonths: 12, anchorMonth: suggestion.anchorMonth, sinkingFund: true, today: "2026-06-30" });
+    // Its year started in April, a past month, so accepting it is a backdate with its review (#166).
+    await run("budgets.backdateTarget", { categoryId: cat.Car, fromMonth: suggestion.anchorMonth, amountCents: suggestion.amountCents, periodMonths: 12, anchorMonth: suggestion.anchorMonth, sinkingFund: true, today: "2026-06-30" });
     expect(target(await status("2026-06-30"), cat.Car)).toMatchObject({ start: "2026-04-01", end: "2027-03-31", targetCents: 60_000, setAsideMonthlyCents: 5_000 });
-    expect(await db.select().from(commandLog).where(eq(commandLog.operation, "budgets.setTarget"))).toMatchObject([{ actor: "user" }]);
+    expect(await db.select().from(commandLog).where(eq(commandLog.operation, "budgets.backdateTarget"))).toMatchObject([{ actor: "user" }]);
   });
 
   it("leaves out a yearly charge the owner dismissed on Subscriptions", async () => {
@@ -335,7 +337,7 @@ describe("budgets.year (#123)", () => {
   });
 
   it("splits a period across two years by its months in each", async () => {
-    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 120_000, periodMonths: 12, anchorMonth: "2026-04", today: "2026-05-10" });
+    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 120_000, periodMonths: 12, anchorMonth: "2026-04", today: "2026-04-10" });
     const coffee = (await year(2026)).targets.find((t) => t.categoryId === cat.Coffee)!;
     // April 2026 to March 2027: nine of its months are 2026's.
     expect(coffee).toMatchObject({ periods: 1, targetCents: 90_000 });
@@ -413,6 +415,30 @@ describe("budgets.backdateTarget (#130)", () => {
     expect(target(await status("2026-02-28"), null).targetCents).toBe(100_000);
     expect(target(await status("2026-06-15"), null).targetCents).toBe(100_000);
   });
+
+  // The repro for #166: an annual from January, then one month changed. Changes to a
+  // multi-month target start at its period's start, so a month in the middle is refused.
+  it("refuses a one-month change to an annual target, so the rest of its year isn't cut or rewritten", async () => {
+    await backdate({ categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 120_000, periodMonths: 12, today: "2026-10-10" });
+    await expect(run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 50_000, today: "2026-10-10" })).rejects.toThrow(/past month/);
+    await expect(backdate({ categoryId: cat.Dining, fromMonth: "2026-10", amountCents: 50_000, today: "2026-10-10" })).rejects.toThrow(/January to December as one budget/);
+
+    // The annual is untouched: $1,200 across the year.
+    for (const on of ["2026-01-31", "2026-06-30", "2026-10-31", "2026-12-31"]) expect(target(await status(on), cat.Dining)).toMatchObject({ start: "2026-01-01", end: "2026-12-31", targetCents: 120_000 });
+  });
+
+  it("can't end a multi-month target from a past month", async () => {
+    await backdate({ categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 120_000, periodMonths: 12, today: "2026-10-10" });
+    await expect(run("budgets.removeTarget", { categoryId: cat.Dining, today: "2026-10-10" })).rejects.toThrow(/past month/);
+    expect(target(await status("2026-10-31"), cat.Dining)).toMatchObject({ targetCents: 120_000 });
+  });
+
+  it("still changes a monthly target for one month, from this month", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-06-10" });
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 50_000, today: "2026-10-10" });
+    expect(target(await status("2026-09-30"), cat.Dining).targetCents).toBe(40_000);
+    expect(target(await status("2026-10-31"), cat.Dining).targetCents).toBe(50_000);
+  });
 });
 
 describe("budgets.pay (#128)", () => {
@@ -428,7 +454,7 @@ describe("budgets.pay (#128)", () => {
 
   it("sets the month's pay stubs against targets at their monthly share and spending so far", async () => {
     await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-06-01" });
-    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 120_000, periodMonths: 12, today: "2026-06-01" });
+    await run("budgets.backdateTarget", { categoryId: cat.Coffee, fromMonth: "2026-01", amountCents: 120_000, periodMonths: 12, today: "2026-06-01" });
     const p = await pay("2026-06-30");
     const stubs = (await db.select().from(payStubs)).filter((s) => s.payDate.startsWith("2026-06"));
     expect(stubs.length).toBeGreaterThan(0);
