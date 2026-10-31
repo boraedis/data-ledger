@@ -142,6 +142,18 @@ describe("budgetStatus", () => {
     expect(target(status("2026-04-15", [v({})], []), "food").paceCents).toBeNull();
   });
 
+  it("projects the period's end from its pace so far (#147)", () => {
+    const versions = [v({ amountCents: 30_000 })];
+    // $300 target, $150 by day 10 of September: $450, $150 over.
+    const t = target(status("2026-09-10", versions, [spend("2026-09-03", "dining", 100), spend("2026-09-09", "groceries", 50)]), "food");
+    expect(t.projectedCents).toBe(45_000);
+    expect(t.projectedCents! - t.availableCents).toBe(15_000);
+    // On the last day, the spend itself.
+    expect(target(status("2026-09-30", versions, [spend("2026-09-03", "dining", 150)]), "food").projectedCents).toBe(15_000);
+    // Nothing spent yet: no projection.
+    expect(target(status("2026-09-10", versions, []), "food").projectedCents).toBeNull();
+  });
+
   it("applies rebalancing adjustments to the period they fall in only", () => {
     const versions = [v({}), v({ categoryId: "car", amountCents: 20_000 })];
     const adjustments = [
