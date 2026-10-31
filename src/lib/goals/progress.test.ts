@@ -101,6 +101,8 @@ describe("goalProgress", () => {
     expect(p.pace!.find((d) => d.on === "2026-01-01")!.cents).toBe(Math.round(100_000 + 500_000 * (1 / 365)));
     // $1,000 gained over 121 days, about four months.
     expect(p.averagePerMonthCents).toBe(Math.round(100_000 / (121 / (365.25 / 12))));
+    // On that average, May to December is eight more months: where it lands on the target date.
+    expect(p.projectedAtTargetCents).toBe(Math.round(200_000 + p.averagePerMonthCents! * 8));
   });
 
   it("has no pace line without a target date, and no average before a month has passed", () => {
@@ -111,5 +113,6 @@ describe("goalProgress", () => {
     expect(p.paceNowCents).toBeNull();
     expect(p.pace).toBeNull();
     expect(p.averagePerMonthCents).toBeNull();
+    expect(p.projectedAtTargetCents).toBeNull();
   });
 });
