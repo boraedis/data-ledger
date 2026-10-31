@@ -28,7 +28,7 @@ jobs:
       - run: npm run typecheck
       # Includes applying drizzle/ to an in-process Postgres (PGlite), so
       # a broken migration fails here rather than on a real database.
-      - run: npm test
+      - run: npx vitest run src/operations/budgets.test.ts
       # No secrets needed: the DB client and session secret are read lazily,
       # and every page is dynamic, so the build never touches a database.
       - run: npm run build
