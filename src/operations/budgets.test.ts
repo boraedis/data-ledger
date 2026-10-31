@@ -471,6 +471,46 @@ describe("budgets.backdateTarget (#130)", () => {
   });
 });
 
+describe("budgets.deleteVersion (#181)", () => {
+  const del = (input: Record<string, unknown>) => run("budgets.deleteVersion", { today: "2026-10-10", ...input });
+  const preview = async (input: Record<string, unknown>) =>
+    (await run("budgets.deleteVersionPreview", { today: "2026-10-10", ...input })).output as {
+      months: { month: string; before: { targetCents: number } | null; after: { targetCents: number } | null }[];
+      until: string | null;
+    };
+
+  it("deletes one term: its months fall back to the target before it, and later versions keep theirs", async () => {
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-06", amountCents: 35_000, today: "2026-10-10" });
+
+    // June onwards is $350; deleting June's version reviews the months it covered, from $350 back to $400.
+    const review = await preview({ categoryId: cat.Dining, fromMonth: "2026-06" });
+    expect(review.months.map((m) => [m.month, m.before?.targetCents, m.after?.targetCents])).toEqual([
+      ["2026-06", 35_000, 40_000],
+      ["2026-07", 35_000, 40_000],
+      ["2026-08", 35_000, 40_000],
+      ["2026-09", 35_000, 40_000],
+      ["2026-10", 35_000, 40_000],
+    ]);
+
+    await del({ categoryId: cat.Dining, fromMonth: "2026-06" });
+    expect(target(await status("2026-05-31"), cat.Dining).targetCents).toBe(40_000);
+    expect(target(await status("2026-10-31"), cat.Dining).targetCents).toBe(40_000);
+    expect(await db.select().from(budgetTargets).where(eq(budgetTargets.categoryId, cat.Dining))).toHaveLength(1);
+  });
+
+  it("refuses a month with no version starting it", async () => {
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    await expect(del({ categoryId: cat.Dining, fromMonth: "2026-03" })).rejects.toThrow(/no target starting that month/);
+  });
+
+  it("removes the target entirely once its last version is deleted", async () => {
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    await del({ categoryId: cat.Dining, fromMonth: "2026-01" });
+    expect(target(await status("2026-10-31"), cat.Dining)).toBeUndefined();
+  });
+});
+
 describe("budgets.pay (#128)", () => {
   type Pay = {
     pay: { recordedCents: number; recordedCount: number; netPayCents: number | null };

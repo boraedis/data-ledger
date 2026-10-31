@@ -784,6 +784,91 @@ export const backdatePreview = defineRead({
   },
 });
 
+// --- Deleting one term or month (#181) ------------------------------------------
+//
+// A target is a list of versions, and each one covers the months from its
+// start until the next one. Deleting a version gives its months back to the
+// version before it, and leaves every later version as it was. A whole
+// target is only ended once no versions are left.
+
+const deleteInput = z.object({
+  categoryId: targetCategory,
+  fromMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  today: isoDate.optional(),
+});
+
+/** The version starting `fromMonth`, the versions without it, and where it stops; refuses what the delete would cut short. */
+async function plannedDelete(db: Db, input: z.infer<typeof deleteInput>) {
+  const on = input.today ?? today();
+  const effectiveFrom = `${input.fromMonth}-01`;
+  const versions = await loadVersions(db);
+  const own = versions.filter((v) => v.categoryId === input.categoryId).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  const version = own.find((v) => v.effectiveFrom === effectiveFrom);
+  if (!version) throw new Error("There's no target starting that month");
+  const previous = own.filter((v) => v.effectiveFrom < effectiveFrom).at(-1) ?? null;
+  const next = own.find((v) => v.effectiveFrom > effectiveFrom) ?? null;
+  // The version before is still in force up to the next one, so the next
+  // one can't start inside one of its multi-month periods.
+  if (previous && next && previous.amountCents !== null && previous.periodMonths > 1) {
+    const start = monthIndex(next.effectiveFrom);
+    const period = naturalPeriod(start, previous.periodMonths, previous.anchorOn);
+    if (period.start !== start) {
+      throw new Error(
+        `Deleting this would cut the target before it short: it runs ${monthName(period.start)} to ${monthName(period.end)} as one budget.`,
+      );
+    }
+  }
+  return { on, version, versions, without: versions.filter((v) => v !== version), until: next ? next.effectiveFrom : null };
+}
+
+export const deleteVersionPreview = defineRead({
+  name: "budgets.deleteVersionPreview",
+  description:
+    "What budgets.deleteVersion would change, without changing anything (#181): each month the version covered, from its " +
+    "start until the next version (or this month), with the target that month had before and the one it falls back to " +
+    "(null: none). Refuses what deleteVersion would refuse.",
+  input: deleteInput,
+  run: async (db, input) => {
+    const { on, version, versions, without, until } = await plannedDelete(db, input);
+    const key = input.categoryId;
+    const targetIn = (all: TargetVersion[], month: number) => {
+      const s = computeStatus({ on: lastOfMonth(month), versions: all, lines: [], categories: [], adjustments: [] });
+      const t = s.targets.find((x) => x.key === (key ?? BUFFER));
+      return t ? { targetCents: t.targetCents, periodMonths: t.periodMonths, start: t.start, end: t.end } : null;
+    };
+    const last = until ? monthIndex(until) - 1 : monthIndex(on);
+    const months = [];
+    for (let m = monthIndex(version.effectiveFrom); m <= last; m++) {
+      months.push({ month: firstOfMonth(m).slice(0, 7), before: targetIn(versions, m), after: targetIn(without, m) });
+    }
+    return { months, until };
+  },
+});
+
+export const deleteVersion = defineWrite({
+  name: "budgets.deleteVersion",
+  description:
+    "Delete one version of a target (categoryId null = the buffer), starting fromMonth (YYYY-MM): its months fall back to " +
+    "the target in force before it, and later versions keep their amounts. budgets.deleteVersionPreview lists the months " +
+    "it changes first. Refused when there's no version starting that month, or when the version before would be cut short.",
+  input: deleteInput,
+  apply: async (ctx, input) => {
+    await assertExpenseCategory(ctx, input.categoryId);
+    const { version } = await plannedDelete(ctx.db, input);
+    const [row] = await ctx.db
+      .select({ id: budgetTargets.id })
+      .from(budgetTargets)
+      .where(
+        and(
+          input.categoryId ? eq(budgetTargets.categoryId, input.categoryId) : isNull(budgetTargets.categoryId),
+          eq(budgetTargets.effectiveFrom, version.effectiveFrom),
+        ),
+      );
+    await ctx.remove(budgetTargets, row.id);
+    return { effectiveFrom: version.effectiveFrom };
+  },
+});
+
 export const removeTarget = defineWrite({
   name: "budgets.removeTarget",
   description:
