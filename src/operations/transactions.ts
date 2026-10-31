@@ -60,6 +60,7 @@ export type TransactionFilter = {
   search?: string;
   uncategorized?: boolean;
   budgetOnly?: boolean;
+  unmatchedTransfers?: boolean;
 };
 
 /**
@@ -72,6 +73,14 @@ export function transactionFilters(db: Db, input: TransactionFilter): SQL[] {
   if (input.to) filters.push(lte(transactions.postedOn, input.to));
   if (input.accountId) filters.push(eq(transactions.accountId, input.accountId));
   if (input.uncategorized) filters.push(isNull(transactions.categoryId), eq(transactions.isSplit, false));
+  // The same rows as the "other half not found" badge (transferUnmatched): filed
+  // under a transfer category, with no pair. Cash flow's list also matches by
+  // amount within days, so it can differ on a pair not yet stored (#184).
+  if (input.unmatchedTransfers)
+    filters.push(
+      isNull(transactions.transferPairId),
+      inArray(transactions.categoryId, db.select({ id: categories.id }).from(categories).where(eq(categories.kind, "transfer"))),
+    );
   if (input.budgetOnly) filters.push(inArray(transactions.accountId, budgetAccountIds(db)));
   if (input.categoryId) {
     const viaSplit = db
@@ -101,7 +110,8 @@ export const listTransactions = defineRead({
   description:
     "List transactions, newest first. Amounts are integer cents; negative means money left the account. " +
     "Filter by date range (inclusive, YYYY-MM-DD, on posted date), account, category (matches split parts " +
-    "too), tag, text search on merchant/description, or uncategorized only. budgetOnly limits to accounts " +
+    "too), tag, text search on merchant/description, uncategorized only, or unmatchedTransfers (transfers with no " +
+    "other half). budgetOnly limits to accounts " +
     "that count toward budgets (excludes investment, retirement, loan and asset accounts) — use it for " +
     "anything about spending. Page with offset. `transfer` is set when the transaction is one side of a " +
     "transfer between the owner's accounts (never spending or income); `investmentActivity` classifies " +
@@ -120,6 +130,7 @@ export const listTransactions = defineRead({
     search: z.string().trim().min(1).max(100).optional(),
     uncategorized: z.boolean().optional(),
     budgetOnly: z.boolean().optional(),
+    unmatchedTransfers: z.boolean().optional(),
     limit: z.number().int().min(1).max(500).default(100),
     offset: z.number().int().min(0).default(0),
   }),
