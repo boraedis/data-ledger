@@ -56,3 +56,10 @@ export function rollUp(days: FlowDay[], by: "month" | "week"): FlowBucket[] {
   }
   return [...buckets.values()].map((list) => ({ start: list[0].date, end: list.at(-1)!.date, days: list.length, ...total(list) }));
 }
+
+/** Running totals: what's come in and gone out by the end of each day (#172), the last equal to the period's total. */
+export function runningTotals(days: FlowDay[]): FlowDay[] {
+  let inCents = 0;
+  let outCents = 0;
+  return days.map((d) => ({ date: d.date, inCents: (inCents += d.inCents), outCents: (outCents += d.outCents) }));
+}

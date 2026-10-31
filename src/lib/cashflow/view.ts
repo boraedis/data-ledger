@@ -93,3 +93,20 @@ export function viewQuery(p: ViewPeriod): Record<string, string> {
   if (p.view === "annual") return { year: p.key };
   return { view: p.view, [p.view === "monthly" ? "month" : "week"]: p.key };
 }
+
+/**
+ * What a Monthly period is compared with (#172): the month before, or, for
+ * the month in progress, the same days of it (the 1st to today's date,
+ * clipped to its length), so a half month isn't held against a whole one.
+ */
+export function comparedWith(p: ViewPeriod, today: string): { from: string; to: string; label: string } {
+  const month = shiftMonth(p.key, -1);
+  const from = `${month}-01`;
+  const end = lastOfMonth(month);
+  const name = fmt(from, { month: "long" });
+  if (!(p.from <= today && today <= p.to)) return { from, to: end, label: name };
+  const day = `${month}-${today.slice(8, 10)}`;
+  const to = day < end ? day : end;
+  // Late in a long month, the same days can be all of a shorter one.
+  return { from, to, label: to === end ? name : `${name} 1–${Number(to.slice(8, 10))}` };
+}

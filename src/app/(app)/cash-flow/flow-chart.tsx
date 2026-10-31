@@ -19,7 +19,20 @@ const compact = (cents: number) => {
   return cents < 0 ? `−${s}` : s;
 };
 
-export function FlowChart({ slots, title, partialIndex = null }: { slots: FlowSlot[]; title: string; partialIndex?: number | null }) {
+export function FlowChart({
+  slots,
+  title,
+  partialIndex = null,
+  legend = { in: "Cash in", out: "Cash out" },
+  steps,
+}: {
+  slots: FlowSlot[];
+  title: string;
+  partialIndex?: number | null;
+  legend?: { in: string; out: string };
+  // With running totals (a month by day, #172): each slot's own amounts, which the table lists.
+  steps?: { inCents: number; outCents: number }[];
+}) {
   const [hover, setHover] = useState<number | null>(null);
   // The plot stretches to the width at a fixed height (in % of it), so on
   // a phone it stays tall enough to read; the labels and markers are plain
@@ -48,10 +61,10 @@ export function FlowChart({ slots, title, partialIndex = null }: { slots: FlowSl
       <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs text-muted-foreground" aria-hidden>
         <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="flex items-center gap-1">
-            <span className="inline-block h-0.5 w-4 rounded-full" style={{ background: "var(--flow-income)" }} /> Cash in
+            <span className="inline-block h-0.5 w-4 rounded-full" style={{ background: "var(--flow-income)" }} /> {legend.in}
           </span>
           <span className="flex items-center gap-1">
-            <span className="inline-block h-0.5 w-4 rounded-full" style={{ background: "var(--flow-spend)" }} /> Cash out
+            <span className="inline-block h-0.5 w-4 rounded-full" style={{ background: "var(--flow-spend)" }} /> {legend.out}
           </span>
           <span className="flex items-center gap-1">
             <span className="inline-block size-3 rounded-sm" style={{ background: "color-mix(in oklab, var(--flow-income) 20%, transparent)" }} />
@@ -146,7 +159,7 @@ export function FlowChart({ slots, title, partialIndex = null }: { slots: FlowSl
                 Out
               </th>
               <th scope="col" className="pb-1 text-right font-normal">
-                Net
+                {steps ? "Net so far" : "Net"}
               </th>
             </tr>
           </thead>
@@ -158,8 +171,9 @@ export function FlowChart({ slots, title, partialIndex = null }: { slots: FlowSl
                     {s.title}
                     {i === partialIndex ? " (so far)" : ""}
                   </th>
-                  <td className="py-1 text-right">{formatCents(s.inCents)}</td>
-                  <td className="py-1 text-right">{formatCents(s.outCents)}</td>
+                  <td className="py-1 text-right">{formatCents(steps ? steps[i].inCents : s.inCents)}</td>
+                  <td className="py-1 text-right">{formatCents(steps ? steps[i].outCents : s.outCents)}</td>
+                  {/* Net to date with running totals; the slot's own net otherwise. */}
                   <td className={`py-1 text-right ${s.inCents - s.outCents < 0 ? "text-negative" : ""}`}>{formatCents(s.inCents - s.outCents)}</td>
                 </tr>
               ),

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { flowDays, rollUp, total, weekStart } from "./series";
+import { flowDays, rollUp, runningTotals, total, weekStart } from "./series";
 
 describe("cash flow series (#169)", () => {
   it("puts a $3,000 paycheck and $200 of groceries in a week as $3,000 in, $200 out, $2,800 net", () => {
@@ -54,5 +54,16 @@ describe("cash flow series (#169)", () => {
   it("starts weeks on Monday", () => {
     expect(weekStart("2026-09-13")).toBe("2026-09-07"); // Sunday
     expect(weekStart("2026-09-07")).toBe("2026-09-07"); // Monday
+  });
+
+  it("gives a $3,000 paycheck on the 1st and $1,200 out across the month as $1,800 net, the running totals ending there (#172)", () => {
+    const outs = Array.from({ length: 12 }, (_, i) => ({ date: `2026-09-${String(2 * i + 2).padStart(2, "0")}`, cents: 10_000 }));
+    const days = flowDays("2026-09-01", "2026-09-30", [{ date: "2026-09-01", cents: 300_000 }], outs);
+    expect(total(days)).toEqual({ inCents: 300_000, outCents: 120_000, netCents: 180_000 });
+    const running = runningTotals(days);
+    expect(running.at(-1)).toMatchObject({ inCents: 300_000, outCents: 120_000 });
+    expect(running[1]).toMatchObject({ inCents: 300_000, outCents: 10_000 });
+    // Each day's own amounts are the steps between running totals.
+    expect(days.reduce((s, d) => s + d.outCents, 0)).toBe(running.at(-1)!.outCents);
   });
 });
