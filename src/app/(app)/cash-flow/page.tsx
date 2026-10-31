@@ -1,17 +1,21 @@
 import Link from "next/link";
 import { cashFlowInputs } from "@/lib/cashflow/data";
 import { investmentChange } from "@/lib/cashflow/investments";
+import { payPeriodRanges, payPeriods } from "@/lib/cashflow/pay-periods";
 import { rollUp, runningTotals } from "@/lib/cashflow/series";
 import { formatShare } from "@/lib/cashflow/format";
 import { buildFlowGraph, type FlowGraph } from "@/lib/cashflow/graph";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { comparedWith, parseView, step, switchTo, viewQuery, VIEWS, type CashFlowView, type ViewPeriod } from "@/lib/cashflow/view";
+import { budgetPayYear } from "@/operations/budgets";
 import { cashFlowSeries } from "@/operations/cashflow";
+import { listPayStubs } from "@/operations/pay";
 import { read } from "@/operations/runtime";
 import { misfiledTransfers } from "@/operations/transactions";
 import { FlowChart, type FlowSlot } from "./flow-chart";
 import { MisfiledTransfers } from "./misfiled-transfers";
+import { PayPeriods } from "./pay-periods";
 import { Sankey } from "./sankey";
 
 // Cash flow (#62, #168): Annual (the default), Monthly and Weekly tabs, each
@@ -89,6 +93,31 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const later = step(period, 1, today);
   const soFar = period.from <= today && today <= period.to;
   const totalsFlow = flow.totals;
+  // Pay periods (#175): each regular paycheck to the day before the next. The
+  // last period of a year runs into the next, so its days are read on their own.
+  const pay =
+    period.view === "pay"
+      ? await (async () => {
+          const stubs = (await read(db, listPayStubs, {})).map((s) => ({
+            payDate: s.payDate,
+            employer: s.employer,
+            netCents: s.netCents,
+            grossCents: s.grossCents,
+            oneTime: s.oneTime,
+            lines: s.lines,
+          }));
+          const range = payPeriodRanges(stubs, period.from, period.to, today);
+          if (!range.from || !range.to) return payPeriods({ stubs, from: period.from, to: period.to, today, days: [], monthTargets: new Map() });
+          const months = (Number(range.to.slice(0, 4)) - Number(range.from.slice(0, 4))) * 12 + Number(range.to.slice(5, 7)) - Number(range.from.slice(5, 7)) + 1;
+          const [days, budget] = await Promise.all([
+            read(db, cashFlowSeries, { from: range.from, to: range.to, gross }),
+            // Each month's targets, as the pay strip counts them.
+            read(db, budgetPayYear, { on: range.to, gross, months: Math.min(24, months) }),
+          ]);
+          const monthTargets = new Map(budget.months.map((m) => [m.month.slice(0, 7), m.targetsCents]));
+          return payPeriods({ stubs, from: period.from, to: period.to, today, days: days.days, monthTargets });
+        })()
+      : null;
   // Nothing recorded in the period at all: an empty state, not zeros (#171).
   const empty = flow.days.every((d) => d.inCents === 0 && d.outCents === 0);
   // The year month by month (#171); months still to come keep their place, undrawn.
@@ -193,6 +222,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
           </p>
         ) : null}
         {period.view === "annual" && !empty ? <FlowChart slots={monthSlots} title={`Cash in and out by month, ${period.label}`} partialIndex={partialMonth} /> : null}
+        {pay ? <PayPeriods periods={pay.periods} oneTime={pay.oneTime} needsGross={pay.needsGross} year={period.label} /> : null}
         {period.view === "monthly" && !empty ? (
           <FlowChart
             slots={daySlots}
