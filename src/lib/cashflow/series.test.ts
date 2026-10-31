@@ -36,6 +36,21 @@ describe("cash flow series (#169)", () => {
     expect(months[3].inCents).toBe(200);
   });
 
+  it("gives a year of $36,000 in and $30,000 out as $6,000 net, its months adding up to it (#171)", () => {
+    const month = (i: number) => `2026-${String(i + 1).padStart(2, "0")}-15`;
+    const days = flowDays(
+      "2026-01-01",
+      "2026-12-31",
+      Array.from({ length: 12 }, (_, i) => ({ date: month(i), cents: 300_000 })),
+      Array.from({ length: 12 }, (_, i) => ({ date: month(i), cents: 250_000 })),
+    );
+    const year = total(days);
+    expect(year).toEqual({ inCents: 3_600_000, outCents: 3_000_000, netCents: 600_000 });
+    const months = rollUp(days, "month");
+    expect(months.reduce((s, m) => s + m.inCents, 0)).toBe(year.inCents);
+    expect(months.reduce((s, m) => s + m.outCents, 0)).toBe(year.outCents);
+  });
+
   it("starts weeks on Monday", () => {
     expect(weekStart("2026-09-13")).toBe("2026-09-07"); // Sunday
     expect(weekStart("2026-09-07")).toBe("2026-09-07"); // Monday

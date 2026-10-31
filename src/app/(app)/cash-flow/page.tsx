@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { cashFlowInputs } from "@/lib/cashflow/data";
+import { investmentChange } from "@/lib/cashflow/investments";
+import { rollUp } from "@/lib/cashflow/series";
 import { formatShare } from "@/lib/cashflow/format";
 import { buildFlowGraph, type FlowGraph } from "@/lib/cashflow/graph";
 import { getDb } from "@/lib/db";
@@ -8,6 +10,7 @@ import { parseView, step, switchTo, viewQuery, VIEWS, type CashFlowView, type Vi
 import { cashFlowSeries } from "@/operations/cashflow";
 import { read } from "@/operations/runtime";
 import { misfiledTransfers } from "@/operations/transactions";
+import { FlowChart, type FlowSlot } from "./flow-chart";
 import { MisfiledTransfers } from "./misfiled-transfers";
 import { Sankey } from "./sankey";
 
@@ -52,10 +55,12 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const percent = one(sp.show) === "percent";
 
   const db = getDb();
-  const [{ paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut, unmatched }, misfiled, flow] = await Promise.all([
+  const [{ paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut, unmatched }, misfiled, flow, invested] = await Promise.all([
     cashFlowInputs(db, { from: period.from, to: period.to, gross }),
     read(db, misfiledTransfers, { from: period.from, to: period.to }),
     read(db, cashFlowSeries, { from: period.from, to: period.to, gross }),
+    // Beside the year, never in it (#171): growth and contributions alike.
+    period.view === "annual" ? investmentChange(db, { from: period.from, to: period.to < today ? period.to : today }) : null,
   ]);
   const graph = buildFlowGraph({ paychecks, lines, uncategorized, transfers, accounts, by, lookup });
   const t = totals(graph);
@@ -81,6 +86,16 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const later = step(period, 1, today);
   const soFar = period.from <= today && today <= period.to;
   const totalsFlow = flow.totals;
+  // Nothing recorded in the period at all: an empty state, not zeros (#171).
+  const empty = flow.days.every((d) => d.inCents === 0 && d.outCents === 0);
+  // The year month by month (#171); months still to come keep their place, undrawn.
+  const monthSlots: FlowSlot[] = rollUp(flow.days, "month").map((m) => {
+    const label = new Date(`${m.start}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
+    const title = new Date(`${m.start}T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+    return m.start > today ? { label, title, inCents: null, outCents: null } : { label, title, inCents: m.inCents, outCents: m.outCents };
+  });
+  // This year's current month is still in progress.
+  const partialMonth = soFar ? Number(today.slice(5, 7)) - 1 : null;
   // The same uncategorized money the Sankey shows, so the two can be reconciled.
   const uncategorizedIn = uncategorized.filter((u) => u.amountCents > 0).reduce((sum, u) => sum + u.amountCents, 0);
 
@@ -120,6 +135,9 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
 
       {/* Is money coming in faster than it goes out? (#169) */}
       <section aria-label="In and out" className="space-y-2">
+        {empty ? (
+          <p className="rounded-lg border p-3 text-sm text-muted-foreground">No cash in or out recorded in {period.label}.</p>
+        ) : (
         <dl className="grid grid-cols-3 gap-2 text-sm">
           {[
             { name: `Cash in${soFar ? " so far" : ""}`, cents: totalsFlow.inCents, tone: "" },
@@ -128,13 +146,26 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
           ].map((f) => (
             <div key={f.name} className="rounded-lg border p-3">
               <dt className="text-xs text-muted-foreground">{f.name}</dt>
-              <dd className={`text-lg font-semibold tabular-nums ${f.tone}`}>
+              <dd className={`text-base font-semibold tabular-nums sm:text-lg ${f.tone}`}>
                 {f.name === "Net" && f.cents > 0 ? "+" : f.cents < 0 ? "−" : ""}
                 {formatCents(Math.abs(f.cents))}
               </dd>
             </div>
           ))}
         </dl>
+        )}
+        {invested !== null && invested !== 0 ? (
+          // A side note, not a tile: it isn't cash in or out (#171's open question: the change in value, as is).
+          <p className="text-xs text-muted-foreground tabular-nums">
+            Investment accounts changed in value by{" "}
+            <span className={invested < 0 ? "text-negative" : "text-foreground"}>
+              {invested > 0 ? "+" : "−"}
+              {formatCents(Math.abs(invested))}
+            </span>{" "}
+            {soFar ? "so far " : ""}this year: growth and contributions together, not part of cash flow.
+          </p>
+        ) : null}
+        {period.view === "annual" && !empty ? <FlowChart slots={monthSlots} title={`Cash in and out by month, ${period.label}`} partialIndex={partialMonth} /> : null}
         <p className="text-xs text-muted-foreground">
           Cash in is paychecks (what landed) and income; cash out is spending, net of refunds{gross ? "" : " and friends' shares"}. Moving money between
           your own accounts, card payments included, is neither.
