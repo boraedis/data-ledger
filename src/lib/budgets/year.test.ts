@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { gridSegments, segmentFigures, sumCells, yearTotals } from "./year";
+import { paceFor, paceTone } from "./pace-colour";
+import { gridSegments, periodBudget, segmentFigures, sumCells, yearTotals } from "./year";
 
 // Made-up rows over four months: a target that started in month 2, and one
 // that ran all four.
@@ -73,5 +74,26 @@ describe("Year view periods (#157)", () => {
     expect(s.map((x) => [x.cells.length, x.period])).toEqual([[1, null], [1, null]]);
     expect(segmentFigures(s[0])).toEqual({ spentCents: 10_000, targetCents: 30_000 });
     expect(segmentFigures(s[1])).toBeNull();
+  });
+});
+
+// A quarterly period is held to what's available (target plus rollover and
+// moved budget), as on the target's card (#194). Synthetic values.
+describe("a period's budget", () => {
+  it("is the available amount, falling back to the target", () => {
+    expect(periodBudget({ targetCents: 30_000, availableCents: 30_300 })).toBe(30_300);
+    expect(periodBudget({ targetCents: 30_000 })).toBe(30_000);
+  });
+
+  it("gives a box the same over/under and pace as the card", () => {
+    const period = { start: "2026-10-01", end: "2026-12-31", periodMonths: 3, targetCents: 30_000, availableCents: 30_300, spentCents: 10_150 };
+    const cells = [{ month: "2026-10-01", targetCents: 10_000, spentCents: 10_150, period }];
+    const [seg] = gridSegments(cells);
+    // Held to $303, not $300.
+    expect(segmentFigures(seg)).toEqual({ spentCents: 10_150, targetCents: 30_300 });
+    // 31 of 92 days in: the pace on $303 is $102, so $101.50 is on pace (green); on the bare $300 it was $101, ahead (yellow).
+    const share = 31 / 92;
+    expect(paceTone(10_150, periodBudget(period), paceFor(periodBudget(period), share))).toBe("within");
+    expect(paceTone(10_150, period.targetCents, paceFor(period.targetCents, share))).toBe("ahead");
   });
 });
