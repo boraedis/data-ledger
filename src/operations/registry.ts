@@ -6,6 +6,7 @@ import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goa
 import { applySnapshot } from "@/operations/import";
 import { createPayStub, deletePayStub, linkPayDeposit, listPayStubs, payDepositCandidates, updatePayStub } from "@/operations/pay";
 import { categoryChoices } from "@/operations/choices";
+import { checkSuspicious, listFlags, reviewFlag } from "@/operations/suspicious";
 import { setTaxAssumptions, taxEstimate } from "@/operations/taxes";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
 import { getImportMapping, importHistory, saveImportMapping } from "@/operations/history";
@@ -119,6 +120,9 @@ export const operations: Operation[] = [
   markAlertsNotified,
   listAlerts,
   dismissAlert,
+  checkSuspicious,
+  reviewFlag,
+  listFlags,
   listPeople,
   createPerson,
   updatePerson,

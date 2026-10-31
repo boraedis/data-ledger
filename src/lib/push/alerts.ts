@@ -3,6 +3,7 @@ import { alerts, pushSubscriptions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { pushIsConfigured, sendPush, type SendDeps } from "@/lib/push/send";
 import { billHref } from "@/lib/recurring/links";
+import { isFlagKind } from "@/lib/suspicious/checks";
 import { execute } from "@/operations/runtime";
 
 // Nightly alerts (#9) as push notifications (#29): after the sync raises
@@ -33,8 +34,14 @@ export async function notifyNewAlerts(db: Db, deps: SendDeps = {}, now = new Dat
   let delivered = false;
   if (fresh.length <= MAX_SEPARATE) {
     for (const alert of fresh) {
-      // A renewal heads-up (#84) opens the bill, where it can be cancelled.
-      const url = alert.kind === "upcoming_renewal" && alert.accountId ? billHref(alert.merchant, alert.accountId) : "/";
+      // A renewal heads-up (#84) opens the bill, where it can be cancelled;
+      // a suspicious charge (#33), the Inbox, where it's marked fine or not.
+      const url =
+        alert.kind === "upcoming_renewal" && alert.accountId
+          ? billHref(alert.merchant, alert.accountId)
+          : isFlagKind(alert.kind)
+            ? "/inbox"
+            : "/";
       const result = await sendPush(db, { title: alert.title, body: alert.detail, url, tag: `alert-${alert.id}` }, deps);
       delivered ||= result.sent > 0;
     }

@@ -71,7 +71,7 @@ async function cancellations(db: Db) {
   return rows.map((r) => ({ merchant: r.merchant, accountId: r.accountId, cancelledOn: r.cancelledOn!, graceDays: r.cancelGraceDays ?? 7 }));
 }
 
-async function accountNames(db: Db) {
+export async function accountNames(db: Db) {
   const rows = await db.select({ id: accounts.id, name: sql<string>`coalesce(${accounts.displayName}, ${accounts.name})` }).from(accounts);
   return new Map(rows.map((r) => [r.id, r.name]));
 }

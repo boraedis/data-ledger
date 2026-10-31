@@ -2,6 +2,7 @@ import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { billAnchor } from "@/lib/recurring/links";
 import { listAlerts, listCancelled, listRecurring } from "@/operations/recurring";
+import { isFlagKind } from "@/lib/suspicious/checks";
 import { read } from "@/operations/runtime";
 import { AlertList } from "./alert-list";
 import { CancelButton, CheckNow, StatusButtons, StillActiveButton } from "./controls";
@@ -13,7 +14,10 @@ import { CancelButton, CheckNow, StatusButtons, StillActiveButton } from "./cont
 export default async function SubscriptionsPage() {
   const db = getDb();
   const today = new Date().toISOString().slice(0, 10);
-  const [series, open, cancelled] = await Promise.all([read(db, listRecurring, {}), read(db, listAlerts, {}), read(db, listCancelled, {})]);
+  const [series, alerts, cancelled] = await Promise.all([read(db, listRecurring, {}), read(db, listAlerts, {}), read(db, listCancelled, {})]);
+  // Suspicious-charge flags (#33) are alerts too, but they're answered in
+  // the Inbox, not here.
+  const open = alerts.filter((a) => !isFlagKind(a.kind));
   const tracked = series.filter((s) => s.status === "confirmed");
   // Ended (#83): went quiet, waiting for the owner to say cancelled or
   // still active. Everything else tracked is current, including a quiet

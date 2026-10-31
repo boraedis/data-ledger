@@ -1,7 +1,7 @@
 import { createHash } from "crypto";
-import { sql } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, unmappedWalletCards } from "@/db/schema";
+import { accounts, alerts, unmappedWalletCards } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { formatCents } from "@/lib/money";
 import { execute } from "@/operations/runtime";
@@ -93,6 +93,38 @@ export async function recordPurchase(db: Db, body: PurchaseBody, now = new Date(
   const output = (result.status === "applied" ? result.output : null) as { status: "created" | "duplicate" | "already_synced"; transactionId: string } | null;
   if (!output) throw new Error(`Recording the purchase was ${result.status}`);
   return { ...output, accountId: account.id, amountCents };
+}
+
+export type PurchaseFlag = { alertId: string; title: string; detail: string };
+
+/**
+ * The suspicious-charge checks (#33) on just this purchase, as it happens.
+ * The flag is the same alert the nightly pass would raise; it follows the
+ * purchase to the bank's copy when that arrives (#30), so it isn't raised
+ * twice.
+ */
+export async function checkPurchase(db: Db, transactionId: string): Promise<PurchaseFlag | null> {
+  const result = await execute(db, {
+    operation: "alerts.checkSuspicious",
+    actor: "matcher",
+    reason: "Checked an Apple Pay purchase as it happened",
+    input: { transactionIds: [transactionId] },
+  });
+  const alertIds = result.status === "applied" ? (result.output as { alertIds: string[] }).alertIds : [];
+  if (alertIds.length === 0) return null;
+  const [flag] = await db.select({ alertId: alerts.id, title: alerts.title, detail: alerts.detail }).from(alerts).where(inArray(alerts.id, alertIds));
+  return flag ?? null;
+}
+
+/** A flagged purchase: one notification that says why, opening the review list. */
+export function flaggedNotification(outcome: Extract<PurchaseOutcome, { transactionId: string }>, flag: PurchaseFlag) {
+  return {
+    title: flag.title,
+    body: flag.detail,
+    url: "/inbox",
+    // The purchase's own tag, so it's the one notification for this purchase.
+    tag: `purchase-${outcome.transactionId}`,
+  };
 }
 
 /** The lock-screen text: merchant and amount, the card's name, nothing else. */

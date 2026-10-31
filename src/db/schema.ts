@@ -573,7 +573,18 @@ export const alertKind = pgEnum("alert_kind", [
   "missing_charge",
   "charged_after_cancel",
   "upcoming_renewal",
+  // Suspicious-transaction checks (#33): one charge that looks wrong on
+  // its own, not a pattern in a subscription (src/lib/suspicious/checks.ts).
+  "unusual_amount",
+  "new_merchant",
+  "possible_duplicate",
+  "foreign_fee",
 ]);
+
+// The owner's answer to a suspicious-charge flag (#33). "fine" also tunes
+// the next check (a higher bar for that merchant, or for first-time
+// merchants); "suspicious" is the owner's to take to the card issuer.
+export const alertVerdict = pgEnum("alert_verdict", ["fine", "suspicious"]);
 
 // Things worth the owner's attention, written by the nightly pipeline
 // (alerts.refresh) and read by the digest: Home in the app today, push or
@@ -595,6 +606,12 @@ export const alerts = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     dismissedAt: timestamp("dismissed_at", { withTimezone: true }),
     notifiedAt: timestamp("notified_at", { withTimezone: true }),
+    // Suspicious-charge flags only (#33). The verdict is set together with
+    // dismissedAt, which is when it was given. The amount is the charge's,
+    // kept here because tuning reads past verdicts and their amounts even
+    // after the transaction itself is gone (a CSV re-import, say).
+    verdict: alertVerdict("verdict"),
+    amountCents: integer("amount_cents"),
   },
   (t) => [uniqueIndex("alerts_dedupe_idx").on(t.dedupeKey), index("alerts_created_idx").on(t.createdAt)],
 );

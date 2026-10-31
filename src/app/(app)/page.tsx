@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Sparkline } from "@/components/charts/sparkline";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
+import { isFlagKind } from "@/lib/suspicious/checks";
 import { netWorthSummary } from "@/lib/net-worth";
 import { latestDigest } from "@/lib/tally/digest";
 import { budgetStatus } from "@/operations/budgets";
@@ -47,7 +48,7 @@ export default async function HomePage() {
   const db = getDb();
   const today = new Date();
   const on = isoDay(today);
-  const [digest, alerts, inbox, budgets, owed, alerted, recurring, worth] = await Promise.all([
+  const [digest, allAlerts, inbox, budgets, owed, alerted, recurring, worth] = await Promise.all([
     latestDigest(db),
     read(db, listAlerts, {}),
     inboxCount(db),
@@ -59,6 +60,10 @@ export default async function HomePage() {
   ]);
 
   const stale = alerted.filter((r) => r.stale).length;
+  // Suspicious-charge flags (#33) wait in the Inbox, so they're counted on
+  // its card; the Alerts card is the subscription alerts it links to.
+  const flagged = allAlerts.filter((a) => isFlagKind(a.kind)).length;
+  const alerts = allAlerts.filter((a) => !isFlagKind(a.kind));
 
   // This month's budgets: the targets on a monthly period, together.
   const monthly = budgets.targets.filter((t) => t.periodMonths === 1);
@@ -97,11 +102,12 @@ export default async function HomePage() {
         </Card>
 
         <Card title="Inbox" href="/inbox" cta="Open">
-          {inbox || stale ? (
+          {inbox || stale || flagged ? (
             <>
               <Figure>{inbox}</Figure>
               <Note>
                 {inbox === 1 ? "transaction" : "transactions"} to categorize
+                {flagged ? ` · ${flagged} charge${flagged === 1 ? "" : "s"} to check` : ""}
                 {stale ? ` · ${stale} purchase alert${stale === 1 ? "" : "s"} the bank never reported` : ""}
               </Note>
             </>

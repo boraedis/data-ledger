@@ -36,6 +36,17 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error("Alert refresh failed", error);
   }
+  // Then the suspicious-charge checks (#33), after the subscription alerts
+  // so a charge those already flagged isn't flagged twice. Same rule again.
+  let flagsRaised: number | null = null;
+  try {
+    const result = await withTransactionalDb((db) =>
+      execute(db, { operation: "alerts.checkSuspicious", input: {}, actor: "matcher", reason: "Nightly check for suspicious charges" }),
+    );
+    if (result.status === "applied") flagsRaised = (result.output as { raised: number }).raised;
+  } catch (error) {
+    console.error("Suspicious-charge check failed", error);
+  }
   // New alerts to the owner's phone (#29). Same rule: a push problem never
   // fails the sync, and Home still shows every alert.
   let alertsPushed = 0;
@@ -52,6 +63,7 @@ export async function GET(request: Request) {
   return Response.json({
     results: Object.fromEntries(Object.entries(results).map(([id, r]) => [id, r.status])),
     alertsRaised,
+    flagsRaised,
     alertsPushed,
   });
 }
