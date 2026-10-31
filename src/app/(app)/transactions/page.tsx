@@ -9,6 +9,7 @@ import { read } from "@/operations/runtime";
 import { listTags } from "@/operations/tags";
 import { manualMatches } from "@/operations/manual";
 import { listTransactions } from "@/operations/transactions";
+import { SubmitOnChange } from "./submit-on-change";
 
 const PAGE_SIZE = 100;
 const select = "h-9 rounded-md border bg-background px-2 text-sm";
@@ -141,6 +142,9 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
         {/* The Cash flow link carries its period; the form would drop it without these. */}
         {filters.from ? <input type="hidden" name="from" value={filters.from} /> : null}
         {filters.to ? <input type="hidden" name="to" value={filters.to} /> : null}
+        {/* Applies a dropdown as soon as it changes (#207); the button is for
+            the search box, and for when scripts are off. */}
+        <SubmitOnChange />
         <button type="submit" className="h-9 rounded-md border px-3 text-sm hover:bg-accent">
           Filter
         </button>
