@@ -10,6 +10,7 @@ const t = (categoryId: string | null, name: string, start: string, end: string, 
   spentCents,
   availableCents,
   remainingCents: availableCents - spentCents,
+  elapsedShare: 0.5,
 });
 const targets = [
   t(null, "Everything else (buffer)", "2026-10-01", "2026-10-31", 212_908, 100_000),

@@ -1,24 +1,27 @@
 import Link from "next/link";
 import { formatCents } from "@/lib/money";
+import { PaceBar } from "./pace-bar";
 
 // The calendar year across every target (#123): each target's year (its
 // periods' targets at the version each had, and spending so far) and the
 // total. Each row opens that target's row in the Year view. Server-rendered.
+//
+// Bars split yellow then red when over (#159), but carry no pace: a row is
+// several periods (an annual target, a monthly one twelve times, one that
+// started in October), so a straight line across the calendar year would
+// call a new target "within pace" when it isn't. Each card has the pace.
 
 type Row = { categoryId: string | null; name: string; targetCents: number; spentCents: number; remainingCents: number };
 
 function Line({ name, spentCents, targetCents, remainingCents, href, strong = false }: Omit<Row, "categoryId"> & { href?: string; strong?: boolean }) {
   const over = remainingCents < 0;
-  const scale = Math.max(targetCents, spentCents, 1);
   const body = (
     <>
       <span className="truncate">{name}</span>
       <span className="text-right tabular-nums">
         {formatCents(spentCents)} <span className="font-normal text-muted-foreground">of {formatCents(targetCents)}</span>
       </span>
-      <span className="h-1.5 rounded-full bg-muted" aria-hidden>
-        <span className={`block h-full rounded-full ${over ? "bg-negative/80" : "bg-primary"}`} style={{ width: `${(Math.max(0, spentCents) / scale) * 100}%` }} />
-      </span>
+      <PaceBar spentCents={spentCents} budgetCents={targetCents} paceCents={null} className="h-1.5" rounded="rounded-full" />
       <span className={`text-right text-xs tabular-nums ${over ? "font-medium text-negative" : "font-normal text-muted-foreground"}`}>
         {over ? `${formatCents(-remainingCents)} over` : `${formatCents(remainingCents)} left`}
       </span>

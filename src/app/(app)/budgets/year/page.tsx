@@ -128,7 +128,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
         </nav>
       </div>
       <p className="text-sm text-muted-foreground">
-        Each target&apos;s spending against the target it had that month: green under, red over, deeper the further off, with the amount over (+) or under (−) where there&apos;s room.
+        Each target&apos;s spending against the target it had that month: green under, red over, deeper the further off (yellow while still in progress: ahead of pace but under), with the amount over (+) or under (−) where there&apos;s room.
         A quarterly or annual target is one box per period, spanning its months, against the period&apos;s target; in the totals it counts at its even monthly share, so months add up. Totals add up only the months that had a target. Tap a month to open it.{" "}
         {gross ? (
           <>
@@ -165,6 +165,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
             grand={totals.total}
             viewedMonth={month}
             partial={partial}
+            asOf={on}
             pay={payYear.months.map((m) => ({ month: m.month, payCents: m.payCents, savedCents: m.savedCents }))}
             payTotals={payYear.summary ? { netPayCents: payYear.totals.netPayCents, savedCents: payYear.summary.actualSaving.cents } : null}
           />
@@ -181,6 +182,10 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
           <span className="size-3 rounded-sm bg-negative/40" aria-hidden />
           <span className="size-3 rounded-sm bg-negative/60" aria-hidden />
           Over
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="size-3 rounded-sm bg-warning/35" aria-hidden />
+          Ahead of pace, still under
         </span>
         <span className="flex items-center gap-1">
           <span className="size-3 rounded-sm bg-muted/50" aria-hidden />

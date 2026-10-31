@@ -5,10 +5,12 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { historyLabel, periodLabel, projectionLabel, scheduleLabel, type HistorySummary } from "@/lib/budgets/format";
 import { targetAnchor } from "@/lib/budgets/overview";
+import { paceFor } from "@/lib/budgets/pace-colour";
 import { formatCents } from "@/lib/money";
 import { TargetForm } from "./forms";
 import { MonthBars, type Bar } from "./month-bars";
 import { OPEN_TARGET } from "./overview";
+import { PaceBar } from "./pace-bar";
 
 export type CardTarget = {
   categoryId: string | null;
@@ -26,6 +28,8 @@ export type CardTarget = {
   sinkingFund: boolean;
   effectiveFrom: string;
   paceCents: number | null;
+  // Share of the period elapsed, 0–1 (1 once it's over).
+  elapsedShare: number;
   projectedCents: number | null;
   setAsideMonthlyCents: number | null;
   setAsideByNowCents: number | null;
@@ -34,8 +38,8 @@ export type CardTarget = {
   anchorOn: string;
 };
 
-// One target's period: a bar of spent against available, an even-pace
-// marker for multi-month periods, and the arithmetic spelled out so
+// One target's period: a bar of spent against available, coloured by pace
+// with a pace line while the period is in progress (#159), and the arithmetic spelled out so
 // rollover and rebalancing never look like magic. Collapsed to that summary
 // by default (#122), so the month fits on a screen; the detail (pace, the
 // buffer's breakdown, the month bars, history, Edit) opens from the header,
@@ -49,6 +53,7 @@ export function TargetCard({
   bars,
   viewedMonth,
   partialMonth,
+  partialShare = null,
   covers,
   backdate,
   transactionsHref,
@@ -63,6 +68,8 @@ export function TargetCard({
   viewedMonth: string;
   // Null on a past month, whose card shows its final figure instead of a projection (#147).
   partialMonth: string | null;
+  // How far through the month in progress is (#159), for its bar's pace.
+  partialShare?: number | null;
   // The buffer's card only: every category it covers, with this period's spend (#110).
   covers?: { categoryId: string; name: string; spentCents: number }[];
   backdate?: { earliestMonth: string | null; currentMonth: string };
@@ -94,8 +101,9 @@ export function TargetCard({
   const over = t.remainingCents < 0;
   const projection = partialMonth ? projectionLabel(t) : null;
   const scale = Math.max(t.availableCents, t.spentCents, 1);
-  const spentWidth = (Math.max(0, t.spentCents) / scale) * 100;
-  const paceAt = t.paceCents !== null && t.availableCents > 0 ? (t.paceCents / scale) * 100 : null;
+  // Against what's available, rollover included (#159's open question).
+  const pace = t.availableCents > 0 ? paceFor(t.availableCents, t.elapsedShare) : null;
+  const paceAt = pace !== null ? (pace / scale) * 100 : null;
   const parts = [
     `target ${formatCents(t.targetCents)}`,
     t.carryInCents ? `${t.carryInCents > 0 ? "+" : "−"}${formatCents(Math.abs(t.carryInCents))} rolled over` : null,
@@ -126,11 +134,7 @@ export function TargetCard({
         </span>
       </button>
 
-      <div className="relative h-2.5 rounded-sm bg-muted" aria-hidden>
-        <div
-          className={`h-full rounded-sm ${over ? "bg-negative/80" : "bg-primary"}`}
-          style={{ width: `${spentWidth}%` }}
-        />
+      <PaceBar spentCents={t.spentCents} budgetCents={t.availableCents} paceCents={pace} className="h-2.5">
         {over && t.availableCents > 0 ? (
           // When over, the bar is scaled to what was spent; this tick marks
           // where the limit was.
@@ -138,9 +142,9 @@ export function TargetCard({
         ) : null}
         {paceAt !== null ? (
           // Where spending would be today at an even pace through the period.
-          <div className="absolute -top-1 h-4.5 w-0.5 bg-warning" style={{ left: `calc(${Math.min(paceAt, 100)}% - 1px)` }} />
+          <div className="absolute -top-1 h-4.5 border-l-2 border-dotted border-foreground/70" style={{ left: `calc(${Math.min(paceAt, 100)}% - 1px)` }} />
         ) : null}
-      </div>
+      </PaceBar>
 
       <div className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground tabular-nums">
         <span>{parts.join(" ")}</span>
@@ -161,7 +165,7 @@ export function TargetCard({
         <div id={`${anchor}-detail`} className="space-y-2">
           {t.paceCents !== null ? (
             <p className="text-xs text-muted-foreground tabular-nums">
-              <span className="mr-1 inline-block h-2 w-0.5 bg-warning align-middle" aria-hidden />
+              <span className="mr-1 inline-block h-2 border-l-2 border-dotted border-foreground/70 align-middle" aria-hidden />
               Even pace to date: {formatCents(t.paceCents)} ({t.spentCents <= t.paceCents ? "under" : "ahead of"} pace)
               {t.setAsideMonthlyCents !== null
                 ? ` · Set aside ${formatCents(t.setAsideMonthlyCents)}/month; ${formatCents(t.setAsideByNowCents ?? 0)} by now`
@@ -170,7 +174,7 @@ export function TargetCard({
           ) : null}
 
           {covers ? <BufferCovers covers={covers} /> : null}
-          <MonthBars bars={bars} viewedMonth={viewedMonth} partialMonth={partialMonth} />
+          <MonthBars bars={bars} viewedMonth={viewedMonth} partialMonth={partialMonth} partialShare={partialShare} />
           <p className="text-xs text-muted-foreground tabular-nums">{historyLabel(history, windowMonths)}</p>
 
           {editable ? (
