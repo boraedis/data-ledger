@@ -4,17 +4,21 @@ import { formatShare } from "@/lib/cashflow/format";
 import { buildFlowGraph, type FlowGraph } from "@/lib/cashflow/graph";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
-import { parsePeriod, type PeriodParams } from "@/lib/spending/analyze";
+import { parseView, step, switchTo, viewQuery, VIEWS, type CashFlowView, type ViewPeriod } from "@/lib/cashflow/view";
+import { cashFlowSeries } from "@/operations/cashflow";
 import { read } from "@/operations/runtime";
 import { misfiledTransfers } from "@/operations/transactions";
 import { MisfiledTransfers } from "./misfiled-transfers";
 import { Sankey } from "./sankey";
 
-// Cash flow (#62): a month or a year as a Sankey in five levels: where the
-// money came from; take-home and what came off the paycheck first; where it
-// went (spending, investing, cash savings, debt); the breakdown; and
-// subcategories. Built from the same numbers as Budgets and Spending, so
-// the pages agree. Display only.
+// Cash flow (#62, #168): Annual (the default), Monthly and Weekly tabs, each
+// first saying whether money came in faster than it went out
+// (cashflow.series, #169), then "Where it went": the period as a Sankey in
+// five levels: where the money came from; take-home and what came off the
+// paycheck first; where it went (spending, investing, cash savings, debt);
+// the breakdown; and subcategories. Switching tabs keeps the period
+// (lib/cashflow/view.ts). Built from the same numbers as Budgets and
+// Spending, so the pages agree. Display only.
 
 type Grouping = "category" | "merchant";
 const GROUPINGS: { id: Grouping; label: string }[] = [
@@ -42,16 +46,16 @@ function totals(graph: FlowGraph) {
 export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
-  const params: PeriodParams = one(sp.year) ? { year: one(sp.year) } : { month: one(sp.month) };
-  const period = parsePeriod(params, today);
+  const period = parseView(sp, today);
   const by: Grouping = GROUPINGS.some((g) => g.id === one(sp.by)) ? (one(sp.by) as Grouping) : "category";
   const gross = one(sp.gross) === "1";
   const percent = one(sp.show) === "percent";
 
   const db = getDb();
-  const [{ paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut, unmatched }, misfiled] = await Promise.all([
+  const [{ paychecks, lines, transfers, uncategorized, accounts, lookup, uncategorizedOut, unmatched }, misfiled, flow] = await Promise.all([
     cashFlowInputs(db, { from: period.from, to: period.to, gross }),
     read(db, misfiledTransfers, { from: period.from, to: period.to }),
+    read(db, cashFlowSeries, { from: period.from, to: period.to, gross }),
   ]);
   const graph = buildFlowGraph({ paychecks, lines, uncategorized, transfers, accounts, by, lookup });
   const t = totals(graph);
@@ -60,17 +64,25 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const totalIn = t.income + t.drawn;
   const label = new Map(graph.nodes.map((n) => [n.id, n.label]));
 
-  const href = (next: { period?: PeriodParams; by?: Grouping; gross?: boolean; percent?: boolean }) => {
+  const href = (next: { period?: ViewPeriod; by?: Grouping; gross?: boolean; percent?: boolean }) => {
     const q = new URLSearchParams();
-    for (const [k, v] of Object.entries(next.period ?? params)) if (v) q.set(k, v);
+    const p = next.period ?? period;
+    // This year's Annual is the page's default: a bare /cash-flow.
+    const isDefault = p.view === "annual" && p.key === today.slice(0, 4);
+    if (!isDefault) for (const [k, v] of Object.entries(viewQuery(p))) q.set(k, v);
     if ((next.by ?? by) !== "category") q.set("by", next.by ?? by);
     if (next.gross ?? gross) q.set("gross", "1");
     if (next.percent ?? percent) q.set("show", "percent");
     const qs = q.toString();
     return `/cash-flow${qs ? `?${qs}` : ""}`;
   };
-  const thisMonth = today.slice(0, 7);
   const tab = (current: boolean) => (current ? "font-medium" : "text-muted-foreground hover:text-foreground");
+  const earlier = step(period, -1, today);
+  const later = step(period, 1, today);
+  const soFar = period.from <= today && today <= period.to;
+  const totalsFlow = flow.totals;
+  // The same uncategorized money the Sankey shows, so the two can be reconciled.
+  const uncategorizedIn = uncategorized.filter((u) => u.amountCents > 0).reduce((sum, u) => sum + u.amountCents, 0);
 
   return (
     <div className="space-y-6">
@@ -78,26 +90,73 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <h1 className="text-2xl font-semibold">Cash flow</h1>
           <nav aria-label="Period" className="flex items-center gap-3 text-sm">
-            <Link href={href({ period: period.earlier })} className="text-muted-foreground hover:text-foreground">
-              ← Earlier
-            </Link>
+            {earlier ? (
+              <Link href={href({ period: earlier })} className="text-muted-foreground hover:text-foreground">
+                ← Earlier
+              </Link>
+            ) : null}
             <span className="font-medium">{period.label}</span>
-            {period.later ? (
-              <Link href={href({ period: period.later })} className="text-muted-foreground hover:text-foreground">
+            {later ? (
+              <Link href={href({ period: later })} className="text-muted-foreground hover:text-foreground">
                 Later →
               </Link>
             ) : null}
           </nav>
         </div>
+        {/* Each tab keeps the period: March's Monthly opens 2026's Annual. */}
+        <nav aria-label="Cash flow views" className="flex flex-wrap gap-1 text-sm">
+          {VIEWS.map((v) => (
+            <Link
+              key={v.id}
+              href={href({ period: switchTo(period, v.id as CashFlowView, today) })}
+              aria-current={v.id === period.view ? "page" : undefined}
+              className={`rounded-md px-3 py-1 ${v.id === period.view ? "bg-secondary font-medium text-foreground" : "text-muted-foreground hover:text-foreground"}`}
+            >
+              {v.label}
+            </Link>
+          ))}
+        </nav>
+      </div>
+
+      {/* Is money coming in faster than it goes out? (#169) */}
+      <section aria-label="In and out" className="space-y-2">
+        <dl className="grid grid-cols-3 gap-2 text-sm">
+          {[
+            { name: `Cash in${soFar ? " so far" : ""}`, cents: totalsFlow.inCents, tone: "" },
+            { name: `Cash out${soFar ? " so far" : ""}`, cents: totalsFlow.outCents, tone: "" },
+            { name: "Net", cents: totalsFlow.netCents, tone: totalsFlow.netCents < 0 ? "text-negative" : totalsFlow.netCents > 0 ? "text-positive" : "" },
+          ].map((f) => (
+            <div key={f.name} className="rounded-lg border p-3">
+              <dt className="text-xs text-muted-foreground">{f.name}</dt>
+              <dd className={`text-lg font-semibold tabular-nums ${f.tone}`}>
+                {f.name === "Net" && f.cents > 0 ? "+" : f.cents < 0 ? "−" : ""}
+                {formatCents(Math.abs(f.cents))}
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <p className="text-xs text-muted-foreground">
+          Cash in is paychecks (what landed) and income; cash out is spending, net of refunds{gross ? "" : " and friends' shares"}. Moving money between
+          your own accounts, card payments included, is neither.
+        </p>
+        {uncategorizedIn || uncategorizedOut.cents ? (
+          // Not cash in or out until it's filed (#169); "Where it went" shows it as Uncategorized, so the two differ by this much.
+          <p className="text-xs text-warning">
+            Not counted until categorized: {[uncategorizedIn ? `${formatCents(uncategorizedIn)} in` : null, uncategorizedOut.cents ? `${formatCents(uncategorizedOut.cents)} out` : null].filter(Boolean).join(" and ")}
+            , which &ldquo;Where it went&rdquo; shows as Uncategorized.{" "}
+            <Link href="/inbox" className="underline">
+              File them in Inbox
+            </Link>
+          </p>
+        ) : null}
+      </section>
+
+      <section aria-labelledby="where-it-went" className="space-y-4">
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 id="where-it-went" className="text-lg font-medium">
+            Where it went
+          </h2>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-          <nav aria-label="Period length" className="flex gap-3">
-            <Link href={href({ period: { month: period.kind === "month" ? period.from.slice(0, 7) : thisMonth } })} aria-current={period.kind === "month" ? "page" : undefined} className={tab(period.kind === "month")}>
-              Month
-            </Link>
-            <Link href={href({ period: { year: period.from.slice(0, 4) } })} aria-current={period.kind === "year" ? "page" : undefined} className={tab(period.kind === "year")}>
-              Year
-            </Link>
-          </nav>
           <nav aria-label="Show amounts as" className="flex gap-3">
             <Link href={href({ percent: false })} aria-current={!percent ? "page" : undefined} className={tab(!percent)}>
               $
@@ -120,7 +179,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
             ))}
           </nav>
         </div>
-      </div>
+        </div>
 
       <dl className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
         {[
@@ -170,15 +229,6 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
           </>
         )}
       </p>
-      {uncategorizedOut.count ? (
-        <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
-          {formatCents(uncategorizedOut.cents)} of spending is uncategorized ({uncategorizedOut.count} transaction{uncategorizedOut.count === 1 ? "" : "s"}), shown as
-          &quot;Uncategorized&quot;.{" "}
-          <Link href="/inbox" className="underline">
-            File them in Inbox
-          </Link>
-        </p>
-      ) : null}
 
       <MisfiledTransfers pairs={misfiled} />
 
@@ -254,6 +304,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
           </details>
         </>
       )}
+      </section>
     </div>
   );
 }

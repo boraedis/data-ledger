@@ -305,6 +305,18 @@ the owner's own (see below).
   - **Reads:** `budgets.status`, `budgets.history` and `budgets.targets`. Budget figures come from transactions, not balances, so Tally may read them.
   - **Writes:** `budgets.setTarget`, `removeTarget` and `rebalance`. All are logged and undoable, and Tally's are proposals.
 
+### Cash flow
+
+The Cash flow page (#62) shows a month or a year as a Sankey: where money came from, what came off the paycheck first, and where it went. The cash flow epic (#168) adds Annual, Monthly and Weekly tabs on top.
+
+- **Cash in and cash out** (#169, `cashflow.series`, `lib/cashflow/series.ts`): one read for any span, day by day, with week and month rollups built from the same days, so a month always equals its days and weeks.
+  - **Cash in:** paychecks (a pay stub's linked net deposits, on its pay date; never its gross or deductions again) and income categories, in budget accounts.
+  - **Cash out:** spending in expense categories, in budget accounts, from the same lines Budgets and Spending use (net of shared expenses and refunds unless gross).
+  - **In neither:** transfers between your own accounts, card payments matched as transfers (#102), and transfer categories.
+  - **Reported apart:** money out not categorized yet (`uncategorizedOut`), and the change in investment value (`lib/cashflow/investments.ts`), which isn't cash in or out. It comes from balance snapshots, so it stays in the library with net worth rather than going through an operation.
+  - Pay is in it, so it's the owner's read only, like `budgets.pay`.
+- **Tabs** (#170, `lib/cashflow/view.ts`): Annual (the default), Monthly and Weekly (Monday to Sunday), each with its own period and Earlier/Later. Switching tabs keeps the period: March's Monthly opens 2026's Annual, and its Weekly opens the first week starting in March (or this week, for the current month). `?view=monthly&month=` or `?view=weekly&week=`; a link from before the tabs (`?month=` alone) opens Monthly. Each tab starts with cash in, cash out and net, then "Where it went": the Sankey with its controls, for the same period. Money not categorized yet isn't cash in or out, but the Sankey shows it as Uncategorized, so a note gives both amounts and links to Inbox.
+
 ### Savings goals
 
 **Goals** (#10) are something to save toward: a target, and optionally a date.
