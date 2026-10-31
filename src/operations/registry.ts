@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createManualAccount, deleteManualAccount, listAccounts, setManualValue, updateAccount } from "@/operations/accounts";
-import { budgetHistory, budgetMonthly, budgetStatus, listTargets, rebalance, removeTarget, setTarget } from "@/operations/budgets";
+import { backdatePreview, backdateRange, backdateTarget, budgetHistory, budgetPay, budgetPayYear, targetTransactions, budgetMonthly, budgetYear, budgetStatus, listTargets, yearlyCharges, rebalance, removeTarget, setTarget } from "@/operations/budgets";
 import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goals";
 import { applySnapshot } from "@/operations/import";
 import { createPayStub, deletePayStub, linkPayDeposit, listPayStubs, payDepositCandidates, updatePayStub } from "@/operations/pay";
@@ -25,7 +25,7 @@ import {
 } from "@/operations/reimbursements";
 import { investmentIncome } from "@/operations/investments";
 import { createCategory, deleteCategory, listCategories, moveCategory, renameCategory } from "@/operations/categories";
-import { createRule, deleteRule, listRules, updateRule } from "@/operations/rules";
+import { createRule, deleteRule, listRules, reapplyPreview, reapplyRule, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
 import { taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
@@ -48,6 +48,7 @@ import {
   uncategorizedSpend,
   unmatchTransfer,
 } from "@/operations/transactions";
+import { moveToCategory, moveToCategoryPreview } from "@/operations/recategorize";
 
 // The one list of everything that can be done to the ledger. The UI calls
 // these, Tally gets them as tools (#11), and the nightly pipeline runs them. Adding a capability means adding it
@@ -66,8 +67,12 @@ export const operations: Operation[] = [
   listRules,
   createRule,
   updateRule,
+  reapplyPreview,
+  reapplyRule,
   deleteRule,
   listTransactions,
+  moveToCategoryPreview,
+  moveToCategory,
   getTransaction,
   spendingLines,
   uncategorizedSpend,
@@ -75,6 +80,14 @@ export const operations: Operation[] = [
   budgetStatus,
   budgetHistory,
   budgetMonthly,
+  budgetYear,
+  budgetPay,
+  budgetPayYear,
+  targetTransactions,
+  backdateRange,
+  backdateTarget,
+  backdatePreview,
+  yearlyCharges,
   listTargets,
   setTarget,
   removeTarget,

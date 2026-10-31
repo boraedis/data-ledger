@@ -93,6 +93,37 @@ export function netWorthSeries(
   return points;
 }
 
+/**
+ * Each account's contribution to net worth on every day from the first
+ * snapshot to `through` (#134), carried forward like netWorthSeries, and
+ * null before the account's own first snapshot: nothing is known then, so
+ * it's blank on a chart rather than a zero. Summing any day's values gives
+ * that day's netCents.
+ */
+export function dailyContributions(
+  accountKinds: Map<string, AccountKind>,
+  snapshots: Snapshot[],
+  through: string,
+): { days: string[]; byAccount: Record<string, (number | null)[]> } {
+  const included = snapshots.filter((s) => accountKinds.has(s.accountId)).sort((a, b) => a.on.localeCompare(b.on));
+  if (included.length === 0) return { days: [], byAccount: {} };
+  const days: string[] = [];
+  const end = included.at(-1)!.on > through ? included.at(-1)!.on : through;
+  for (let day = included[0].on; day <= end; day = addDays(day, 1)) days.push(day);
+  const byAccount: Record<string, (number | null)[]> = {};
+  for (const id of new Set(included.map((s) => s.accountId))) byAccount[id] = new Array(days.length).fill(null);
+  let i = 0;
+  const latest = new Map<string, number>();
+  days.forEach((day, d) => {
+    while (i < included.length && included[i].on <= day) {
+      latest.set(included[i].accountId, included[i].balanceCents);
+      i++;
+    }
+    for (const [id, balance] of latest) byAccount[id][d] = netWorthContribution(accountKinds.get(id)!, balance);
+  });
+  return { days, byAccount };
+}
+
 export type NetWorthSummary = {
   currency: string;
   assetsCents: number;
@@ -103,6 +134,8 @@ export type NetWorthSummary = {
   // Accounts left out of the totals, and why.
   excluded: { account: NetWorthAccount; reason: "currency" | "no balance" }[];
   series: NetWorthPoint[];
+  // Each counted account's value per day, for the breakdown (#134).
+  daily: { days: string[]; byAccount: Record<string, (number | null)[]> };
 };
 
 export async function netWorthSummary(db: Db, { today = new Date() }: { today?: Date } = {}): Promise<NetWorthSummary> {
@@ -160,5 +193,6 @@ export async function netWorthSummary(db: Db, { today = new Date() }: { today?: 
     accounts: counted.sort((a, b) => (b.contributionCents ?? 0) - (a.contributionCents ?? 0)),
     excluded,
     series: netWorthSeries(kinds, snapshots, today.toISOString().slice(0, 10)),
+    daily: dailyContributions(kinds, snapshots, today.toISOString().slice(0, 10)),
   };
 }

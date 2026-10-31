@@ -51,3 +51,20 @@ export function suggestedTargetCents(h: HistorySummary | undefined, periodMonths
   const cents = Math.round((h.averageCents * periodMonths) / 100) * 100;
   return cents > 0 ? cents : null;
 }
+
+const day = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+
+/**
+ * The month-end projection on a card (#147): "Projected $450.00 by Sep 30,
+ * $150.00 over", "On track: about $240.00 by Sep 30", or "Nothing spent
+ * yet". Against what's available, so rollover and moved budget count, as
+ * in the card's own "left" and "over".
+ */
+export function projectionLabel(t: { projectedCents: number | null; availableCents: number; end: string }): { text: string; over: boolean } {
+  if (t.projectedCents === null) return { text: "Nothing spent yet", over: false };
+  const by = `by ${day(t.end)}`;
+  const over = t.projectedCents - t.availableCents;
+  return over > 0
+    ? { text: `Projected ${formatCents(t.projectedCents)} ${by}, ${formatCents(over)} over`, over: true }
+    : { text: `On track: about ${formatCents(t.projectedCents)} ${by}`, over: false };
+}

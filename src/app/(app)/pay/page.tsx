@@ -42,8 +42,10 @@ export default async function PayPage() {
       { kind: "medicare", label: "Medicare", amountCents: 0, categoryId: null },
     ],
     employerLines: [],
+    oneTime: false,
   };
-  const next = last ? { ...last, ...nextPeriod(last) } : blank;
+  // The next regular paycheck, even when the last stub was a bonus.
+  const next = last ? { ...last, ...nextPeriod(last), oneTime: false } : blank;
 
   return (
     <div className="space-y-6">

@@ -23,7 +23,7 @@
 //   reach a budget. Shared expenses arrive here already net of what
 //   friends owe (#8, in transactions.spendingLines).
 
-import { elapsedShare, evenPace } from "@/lib/pace";
+import { elapsedShare, evenPace, projectAtEnd } from "@/lib/pace";
 
 export const BUFFER = "buffer" as const;
 export type TargetKey = string; // a category id, or BUFFER
@@ -126,6 +126,24 @@ export function targetKeyFor(
   return BUFFER;
 }
 
+/**
+ * The lines one target counted (#135): each resolved on its own date, as
+ * budgetStatus resolves them, between start and end. Their spending is the
+ * card's spent figure exactly, refunds included.
+ */
+export function linesForTarget<L extends SpendLine>(input: {
+  key: TargetKey;
+  start: string;
+  end: string;
+  versions: TargetVersion[];
+  lines: L[];
+  categories: CategoryInfo[];
+}): L[] {
+  const byKey = versionsByKey(input.versions);
+  const categories = new Map(input.categories.map((c) => [c.id, c]));
+  return input.lines.filter((l) => l.date >= input.start && l.date <= input.end && targetKeyFor(l, categories, byKey) === input.key);
+}
+
 // --- Periods and status -------------------------------------------------------
 
 export type PeriodStatus = {
@@ -218,6 +236,9 @@ export type TargetStatus = PeriodStatus & {
   elapsedShare: number;
   // Spend you'd expect by now at an even pace (multi-month periods).
   paceCents: number | null;
+  // Spend at the period's end if it carries on at its pace so far (#147);
+  // null with nothing spent yet. Measured against availableCents.
+  projectedCents: number | null;
   // Sinking fund: what to set aside each month, and what should be set aside by now.
   setAsideMonthlyCents: number | null;
   setAsideByNowCents: number | null;
@@ -273,6 +294,7 @@ export function budgetStatus(input: {
       ...current,
       elapsedShare: elapsed,
       paceCents: multiMonth ? evenPace(0, current.availableCents, elapsed) : null,
+      projectedCents: projectAtEnd(current.spentCents, elapsed),
       setAsideMonthlyCents: setAsideMonthly,
       setAsideByNowCents: setAsideMonthly === null ? null : Math.min(current.targetCents, setAsideMonthly * monthsStarted),
     });
@@ -409,6 +431,8 @@ export type MonthBar = {
   // The target's monthly amount in effect that month (a multi-month
   // target's even monthly share); null before the target existed.
   targetCents: number | null;
+  // Transactions behind spentCents (#139); a split counts once.
+  transactions: number;
 };
 
 /**
@@ -418,7 +442,8 @@ export type MonthBar = {
  * toward it (lines resolved on their own dates). Before it existed, a month
  * counts what the target would cover today, as recentHistory does, so the
  * trend leading up to a new target is there to see rather than empty. Every
- * month is listed, with $0 where nothing was spent.
+ * month is listed, with $0 where nothing was spent. (An ended target covers
+ * nothing today, so its months without a target read $0.)
  *
  * The reference amount is the target itself, not what was available: rollover
  * and rebalancing change what a period can spend, not what it was meant to.
@@ -426,9 +451,12 @@ export type MonthBar = {
 export function monthlySeries(input: {
   on: string;
   versions: TargetVersion[];
-  lines: SpendLine[];
+  lines: (SpendLine & { transactionId?: string })[];
   categories: CategoryInfo[];
   months?: number;
+  // Also targets in effect at some point in the window but not on `on`
+  // (#108's grid, where a past month shows the target it had).
+  includeEnded?: boolean;
 }): Map<TargetKey, MonthBar[]> {
   const months = input.months ?? SERIES_MONTHS;
   const end = monthIndex(input.on);
@@ -438,15 +466,16 @@ export function monthlySeries(input: {
 
   const result = new Map<TargetKey, MonthBar[]>();
   for (const [key, list] of byKey) {
-    if (!versionAt(list, input.on)) continue;
     const bars: MonthBar[] = [];
     for (let m = start; m <= end; m++) {
       const v = versionAt(list, firstOfMonth(m));
-      bars.push({ month: firstOfMonth(m), spentCents: 0, targetCents: v ? Math.round(v.amountCents! / v.periodMonths) : null });
+      bars.push({ month: firstOfMonth(m), spentCents: 0, targetCents: v ? Math.round(v.amountCents! / v.periodMonths) : null, transactions: 0 });
     }
-    result.set(key, bars);
+    const current = Boolean(versionAt(list, input.on));
+    if (current || (input.includeEnded && bars.some((b) => b.targetCents !== null))) result.set(key, bars);
   }
 
+  const counted = new Map<MonthBar, Set<string>>();
   for (const line of input.lines) {
     const m = monthIndex(line.date);
     if (m < start || m > end || line.date > input.on) continue;
@@ -456,8 +485,100 @@ export function monthlySeries(input: {
     for (const [key, bars] of result) {
       const bar = bars[m - start];
       // In effect then: what status counted. Not yet: what it would cover now.
-      if ((bar.targetCents !== null ? onItsDate : today) === key) bar.spentCents -= line.amountCents;
+      if ((bar.targetCents !== null ? onItsDate : today) !== key) continue;
+      bar.spentCents -= line.amountCents;
+      if (line.transactionId) counted.set(bar, (counted.get(bar) ?? new Set()).add(line.transactionId));
     }
+  }
+  for (const [bar, ids] of counted) bar.transactions = ids.size;
+  return result;
+}
+
+/**
+ * Every target's periods through `on`, with rollover carried and
+ * rebalancing applied, resolved exactly as budgetStatus resolves them: the
+ * figures behind a past month's card (#139's tooltip).
+ */
+export function periodsByKey(input: { on: string; versions: TargetVersion[]; lines: SpendLine[]; categories: CategoryInfo[]; adjustments: Adjustment[] }) {
+  const byKey = versionsByKey(input.versions);
+  const categories = new Map(input.categories.map((c) => [c.id, c]));
+  const linesFor = new Map<TargetKey, SpendLine[]>();
+  for (const line of input.lines) {
+    const key = targetKeyFor(line, categories, byKey);
+    if (key !== null) linesFor.set(key, [...(linesFor.get(key) ?? []), line]);
+  }
+  const result = new Map<TargetKey, PeriodStatus[]>();
+  for (const [key, list] of byKey) {
+    const lines = linesFor.get(key) ?? [];
+    const adjustments = input.adjustments.filter((a) => keyOf(a.categoryId) === key);
+    result.set(
+      key,
+      periodsFor(
+        list,
+        (start, end) => -lines.filter((l) => l.date >= start && l.date <= end).reduce((sum, l) => sum + l.amountCents, 0),
+        (start, end) => adjustments.filter((a) => a.on >= start && a.on <= end).reduce((sum, a) => sum + a.amountCents, 0),
+        input.on,
+      ),
+    );
+  }
+  return result;
+}
+
+// --- A calendar year across all targets (#123) -----------------------------------
+
+export type YearTarget = {
+  key: TargetKey;
+  // The year's share of each period's target and spending, summed.
+  targetCents: number;
+  spentCents: number;
+  // Periods that touch the year, whole or in part.
+  periods: number;
+};
+
+/**
+ * Every target's calendar year: the target and net spending of each of its
+ * periods that falls in the year, at the version each period had, so a
+ * target changed mid-year counts each period at its own amount and one that
+ * has ended still counts for the periods it covered. Later periods of the
+ * current year count in full (the year's budget, not just what's elapsed);
+ * their spending is whatever there is so far.
+ *
+ * A period that straddles the year (an annual target starting in April)
+ * contributes the year's months of its target, pro rata, and the spending
+ * dated in the year. The target is the target, not what rollover or
+ * rebalancing made available: rebalancing moves money between targets and
+ * sums to nothing across them anyway. Each line counts toward exactly one
+ * target, so the targets add up without counting anything twice.
+ */
+export function yearSummary(input: { year: number; versions: TargetVersion[]; lines: SpendLine[]; categories: CategoryInfo[] }): YearTarget[] {
+  const yearStart = `${input.year}-01-01`;
+  const yearEnd = `${input.year}-12-31`;
+  const byKey = versionsByKey(input.versions);
+  const categories = new Map(input.categories.map((c) => [c.id, c]));
+  const linesFor = new Map<TargetKey, SpendLine[]>();
+  for (const line of input.lines) {
+    const key = targetKeyFor(line, categories, byKey);
+    if (key !== null) linesFor.set(key, [...(linesFor.get(key) ?? []), line]);
+  }
+
+  const result: YearTarget[] = [];
+  for (const [key, list] of byKey) {
+    const lines = linesFor.get(key) ?? [];
+    const spentIn = (start: string, end: string) => -lines.filter((l) => l.date >= start && l.date <= end).reduce((sum, l) => sum + l.amountCents, 0);
+    let targetCents = 0;
+    let spentCents = 0;
+    let periods = 0;
+    for (const p of periodsFor(list, spentIn, () => 0, yearEnd)) {
+      if (p.end < yearStart || p.start > yearEnd) continue;
+      const months = monthIndex(p.end) - monthIndex(p.start) + 1;
+      const from = p.start < yearStart ? yearStart : p.start;
+      const to = p.end > yearEnd ? yearEnd : p.end;
+      const inYear = monthIndex(to) - monthIndex(from) + 1;
+      targetCents += inYear === months ? p.targetCents : Math.round((p.targetCents * inYear) / months);
+      spentCents += spentIn(from, to);
+      periods++;
+    }
+    if (periods) result.push({ key, targetCents, spentCents, periods });
   }
   return result;
 }

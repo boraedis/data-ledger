@@ -1,7 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition, type FormEvent } from "react";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { categoryOptions, type CategoryRow } from "@/lib/categorize/labels";
 import * as actions from "./actions";
@@ -143,7 +144,8 @@ export function ManageCategories({ categories, rules }: { categories: CategoryRo
         </div>
         <p className="text-sm text-muted-foreground">
           Rules run in this order and only ever fill in uncategorized transactions. They&apos;re the only thing that categorizes on its own;
-          everything else waits in the inbox as a suggestion to confirm.
+          everything else waits in the inbox as a suggestion to confirm. To bring transactions that already have a category in line with a
+          fixed rule, or find transfers filed as spending, <Link href="/categories/reapply" className="underline">fix past transactions</Link>.
         </p>
         {rules.length ? (
           <ul className="divide-y rounded-lg border">
@@ -154,7 +156,12 @@ export function ManageCategories({ categories, rules }: { categories: CategoryRo
                   {r.categoryName}
                   {r.hasLimits ? <span className="text-xs text-muted-foreground"> (with limits)</span> : null}
                 </span>
-                <span className="flex gap-1">
+                <span className="flex items-center gap-1">
+                  {r.enabled ? (
+                    <Link href={`/categories/reapply?rule=${r.id}`} className={buttonVariants({ size: "sm", variant: "ghost" })}>
+                      Re-apply
+                    </Link>
+                  ) : null}
                   <Button size="sm" variant="ghost" disabled={rulesAction.pending} onClick={() => rulesAction.run(() => actions.setRuleEnabled(r.id, !r.enabled))}>
                     {r.enabled ? "Disable" : "Enable"}
                   </Button>

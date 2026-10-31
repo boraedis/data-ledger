@@ -1,12 +1,13 @@
 import Link from "next/link";
-import { KIND_LABELS } from "@/lib/account-kinds";
+import { KIND_LABELS, type AccountKind } from "@/lib/account-kinds";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { isLiability, netWorthSummary } from "@/lib/net-worth";
 import { investmentIncome } from "@/operations/investments";
 import { read } from "@/operations/runtime";
 import { ManualBadge } from "../accounts/account-row";
-import { ValueChart } from "@/components/charts/value-chart";
+import { CASH_KINDS, INVESTMENT_KINDS } from "@/lib/investments/activity";
+import { NetWorthHistory } from "./history";
 
 // Net worth today and over time (#25). Read-only: balances come from syncs,
 // and how each kind counts is explained in src/lib/net-worth.ts.
@@ -32,13 +33,9 @@ export default async function NetWorthPage() {
       <section className="space-y-2">
         <h2 className="text-lg font-medium">Over time</h2>
         {summary.series.length > 1 ? (
-          <ValueChart
-            label="Net worth"
-            series={summary.series.map((p) => ({
-              on: p.on,
-              cents: p.netCents,
-              detail: `Assets ${formatCents(p.assetsCents)} · Liabilities ${formatCents(p.liabilitiesCents)}`,
-            }))}
+          <NetWorthHistory
+            accounts={summary.accounts.map((a) => ({ id: a.id, name: a.name, institution: a.institution, kind: a.kind }))}
+            daily={summary.daily}
           />
         ) : (
           // Banks only report today's balance, so history can't be
@@ -50,6 +47,8 @@ export default async function NetWorthPage() {
           </p>
         )}
       </section>
+
+      {summary.accounts.length ? <Split accounts={summary.accounts} /> : null}
 
       <section className="space-y-2">
         <h2 className="text-lg font-medium">By kind</h2>
@@ -152,5 +151,55 @@ export default async function NetWorthPage() {
         </p>
       </section>
     </div>
+  );
+}
+
+// Where net worth sits today (#134): what's owned against what's owed, and
+// what's owned as cash, investments or other assets. Two simple bars, each
+// segment labelled, so the split never rests on colour alone.
+function Split({ accounts }: { accounts: { kind: AccountKind; contributionCents: number | null }[] }) {
+  const sum = (pick: (k: AccountKind) => boolean) => accounts.filter((a) => pick(a.kind)).reduce((s, a) => s + (a.contributionCents ?? 0), 0);
+  const owed = -sum((k) => isLiability(k));
+  const cash = sum((k) => CASH_KINDS.includes(k));
+  const investments = sum((k) => INVESTMENT_KINDS.includes(k));
+  const other = sum((k) => !isLiability(k) && !CASH_KINDS.includes(k) && !INVESTMENT_KINDS.includes(k));
+  const assets = cash + investments + other;
+  const rows = [
+    { label: "Owned and owed", parts: [{ name: "Assets", cents: assets, color: "var(--series-1)" }, { name: "Owed", cents: owed, color: "var(--series-8)" }] },
+    {
+      label: "What you own",
+      parts: [
+        { name: "Cash", cents: cash, color: "var(--series-1)" },
+        { name: "Investments", cents: investments, color: "var(--series-7)" },
+        { name: "Other assets", cents: other, color: "var(--series-5)" },
+      ],
+    },
+  ];
+  return (
+    <section className="space-y-3">
+      <h2 className="text-lg font-medium">Where it sits</h2>
+      {rows.map((row) => {
+        const parts = row.parts.filter((p) => p.cents > 0);
+        const whole = parts.reduce((s, p) => s + p.cents, 0) || 1;
+        return (
+          <div key={row.label} className="space-y-1 text-sm">
+            <div className="text-xs text-muted-foreground">{row.label}</div>
+            <div className="flex h-2.5 gap-0.5 overflow-hidden rounded-sm" aria-hidden>
+              {parts.map((p) => (
+                <span key={p.name} className="h-full" style={{ width: `${(p.cents / whole) * 100}%`, background: p.color }} />
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs tabular-nums">
+              {parts.map((p) => (
+                <span key={p.name} className="flex items-center gap-1.5">
+                  <span className="size-2.5 rounded-sm" style={{ background: p.color }} aria-hidden />
+                  {p.name} {formatCents(p.cents)} <span className="text-muted-foreground">({Math.round((p.cents / whole) * 100)}%)</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+    </section>
   );
 }

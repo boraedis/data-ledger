@@ -57,6 +57,7 @@ export function StubForm({
     initial.lines.map((l) => ({ kind: l.kind, label: l.label, amount: dollars(l.amountCents), categoryId: l.categoryId ?? "" })),
   );
   const [employerLines, setEmployerLines] = useState<EmployerLine[]>(initial.employerLines.map((l) => ({ kind: l.kind, label: l.label, amount: dollars(l.amountCents) })));
+  const [oneTime, setOneTime] = useState(initial.oneTime ?? false);
   const [deposits, setDeposits] = useState<DepositMatch[]>([]);
   const [automatic, setAutomatic] = useState<string[] | null>(null);
   const [deposit, setDeposit] = useState<string>("auto");
@@ -100,6 +101,7 @@ export function StubForm({
         netCents: netCents!,
         lines: lines.map((l, i) => ({ kind: l.kind, label: l.label, amountCents: lineCents[i]!, categoryId: l.categoryId || null })),
         employerLines: employerLines.map((l, i) => ({ kind: l.kind, label: l.label.trim(), amountCents: employerCents[i]! })),
+        oneTime,
         ...(deposit === "auto" ? {} : { depositTransactionIds: deposit === "none" ? null : deposit.split(",") }),
       };
       const result = payStubId ? await updateStub(payStubId, fields) : await createStub(fields);
@@ -222,6 +224,16 @@ export function StubForm({
           Add employer-paid item
         </Button>
       </div>
+
+      <label className="flex items-start gap-2">
+        <input type="checkbox" className="mt-0.5" checked={oneTime} onChange={(e) => setOneTime(e.target.checked)} />
+        <span>
+          One-time payment, like a bonus
+          <span className="block text-xs text-muted-foreground">
+            Counts in full toward the year so far, but the tax estimate doesn&apos;t project the rest of the year from it.
+          </span>
+        </span>
+      </label>
 
       {adds ? (
         <label className="block space-y-1">

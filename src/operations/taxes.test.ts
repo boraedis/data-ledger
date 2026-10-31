@@ -4,6 +4,7 @@ import { applySeed } from "@/lib/seed/apply";
 import { toolSpecs } from "@/lib/tally/tools";
 import { testDb } from "@/lib/test-utils/db";
 import { execute, read } from "@/operations/runtime";
+import { listPayStubs } from "@/operations/pay";
 import { taxEstimate } from "@/operations/taxes";
 
 // The tax estimate over the seed's three synthetic pay stubs (June 2026).
@@ -51,4 +52,34 @@ it("is the owner's alone: never a Tally tool, and refused to Tally", async () =>
 
 it("says so when a year has no stubs", async () => {
   expect((await read(db, taxEstimate, { year: 2025 })).estimate).toBeNull();
+});
+
+it("leaves a stub flagged one-time out of the pace, keeps the flag on an edit that omits it, and shows it (#113)", async () => {
+  type Stub = { id: string; employer: string; periodStart: string; periodEnd: string; payDate: string; grossCents: number; netCents: number; oneTime: boolean; lines: { kind: string; label: string; amountCents: number; categoryId: string | null }[]; employerLines: { kind: string; label: string; amountCents: number }[] };
+  const list = async () => (await read(db, listPayStubs, { year: 2026 })) as unknown as Stub[];
+  const [latest] = await list();
+  expect(latest.oneTime).toBe(false);
+  const fields = (s: Stub) => ({
+    payStubId: s.id,
+    employer: s.employer,
+    periodStart: s.periodStart,
+    periodEnd: s.periodEnd,
+    payDate: s.payDate,
+    grossCents: s.grossCents,
+    netCents: s.netCents,
+    lines: s.lines,
+    employerLines: s.employerLines,
+  });
+  const before = (await read(db, taxEstimate, { year: 2026 })).estimate!;
+
+  await execute(db, { operation: "payStubs.update", actor: "user", reason: "Test", input: { ...fields(latest), oneTime: true } });
+  const after = (await read(db, taxEstimate, { year: 2026 })).estimate!;
+  expect(after).toMatchObject({ stubCount: 3, oneTimeCount: 1 });
+  // Same year to date; the pace now comes from the two regular stubs.
+  expect(after.gross.ytdCents).toBe(before.gross.ytdCents);
+  expect(after.lastPayDate < latest.payDate).toBe(true);
+
+  // An edit that doesn't mention it keeps it.
+  await execute(db, { operation: "payStubs.update", actor: "user", reason: "Test", input: fields(latest) });
+  expect((await list()).find((s) => s.id === latest.id)!.oneTime).toBe(true);
 });

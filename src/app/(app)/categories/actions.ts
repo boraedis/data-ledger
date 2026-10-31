@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { runCategorization } from "@/lib/categorize/pipeline";
 import { execute } from "@/operations/runtime";
-import { asOwner } from "@/operations/server";
+import { asOwner, executeAsOwner } from "@/operations/server";
 
 type Result = { error: string } | { ok: true; message?: string };
 
@@ -60,6 +60,24 @@ export async function runRulesNow(): Promise<Result> {
     const result = await asOwner((db) => runCategorization(db));
     revalidatePath("/inbox");
     return { ok: true, message: `${result.byRules} categorized by rules, ${result.remaining} left in the inbox to confirm` };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Something went wrong" };
+  }
+}
+
+// Re-applying a rule to transactions that already have a category (#100):
+// only the rows the owner left ticked in the preview, as one undoable
+// command.
+export async function reapplyRule(ruleId: string, transactionIds: string[], ruleLabel: string): Promise<Result> {
+  try {
+    const result = await executeAsOwner({
+      operation: "rules.reapply",
+      input: { ruleId, transactionIds },
+      reason: `Re-applied rule ${ruleLabel} to past transactions`,
+    });
+    const applied = result.status === "applied" ? (result.output as { applied: number }).applied : 0;
+    for (const path of ["/categories", "/categories/reapply", "/transactions", "/spending", "/budgets", "/cash-flow"]) revalidatePath(path);
+    return { ok: true, message: `Changed ${applied} transaction${applied === 1 ? "" : "s"}. Undo it in Activity if it's not what you wanted.` };
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Something went wrong" };
   }

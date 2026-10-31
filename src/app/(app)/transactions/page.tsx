@@ -123,9 +123,15 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
           Filter
         </button>
         {Object.values(filters).some(Boolean) ? (
-          <Link href="/transactions" className="text-sm text-muted-foreground underline">
-            Clear
-          </Link>
+          <>
+            <Link href="/transactions" className="text-sm text-muted-foreground underline">
+              Clear
+            </Link>
+            {/* Everything this filter shows, filed somewhere else at once (#116). */}
+            <Link href={pageHref(1).replace("/transactions", "/transactions/move")} className="text-sm text-muted-foreground underline">
+              Move these to a category
+            </Link>
+          </>
         ) : null}
       </form>
 

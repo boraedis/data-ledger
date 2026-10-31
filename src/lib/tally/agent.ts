@@ -20,8 +20,9 @@ import { runTool, toolSpecs } from "@/lib/tally/tools";
 // propose a change"; a model going in circles stops here.
 const MAX_ROUNDS = 6;
 // Context replayed each turn. Older messages drop off; the system prompt
-// and tools are always there.
-const HISTORY_MESSAGES = 40;
+// and tools are always there. Kept modest so a chat with several lookups
+// stays inside the model's 32k context (model/serve.py).
+const HISTORY_MESSAGES = 16;
 
 export function systemPrompt(today: string): string {
   return [

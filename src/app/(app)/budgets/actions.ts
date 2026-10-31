@@ -17,7 +17,8 @@ async function run(operation: string, input: Record<string, unknown>, reason: st
     }
     return { error: error instanceof Error ? error.message : "Something went wrong" };
   }
-  revalidatePath("/budgets");
+  // Every budgets page, item pages (#174) included.
+  revalidatePath("/budgets", "layout");
 }
 
 export type TargetInput = {
@@ -31,6 +32,29 @@ export type TargetInput = {
 
 export async function setTarget(input: TargetInput, name: string) {
   return run("budgets.setTarget", { ...input }, `Set the ${name} target to $${(input.amountCents / 100).toFixed(2)}`);
+}
+
+export type BackdateMonth = { month: string; before: { targetCents: number; periodMonths: number } | null; after: { targetCents: number; periodMonths: number } | null };
+
+// What a backdate would change, month by month (#137), shown before it's
+// saved. A read: nothing is written.
+export async function previewBackdate(input: TargetInput & { fromMonth: string }): Promise<{ error: string } | { months: BackdateMonth[]; until: string | null }> {
+  try {
+    const result = await executeAsOwner({ operation: "budgets.backdatePreview", input: { ...input }, reason: "Preview" });
+    if (result.status !== "read") return { error: "Something went wrong" };
+    return result.output as { months: BackdateMonth[]; until: string | null };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Something went wrong" };
+  }
+}
+
+// An earlier start for a target (#130): fills months that had none.
+export async function backdateTarget(input: TargetInput & { fromMonth: string }, name: string) {
+  return run(
+    "budgets.backdateTarget",
+    { ...input },
+    `Backdated the ${name} target to ${input.fromMonth}: $${(input.amountCents / 100).toFixed(2)} until its next version`,
+  );
 }
 
 export async function removeTarget(categoryId: string | null, name: string) {

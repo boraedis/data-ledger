@@ -121,6 +121,43 @@ never overwrites a category that's already set:
    above `MODEL_AUTO_APPLY_THRESHOLD`, default 90%). After confirming,
    "Always categorize this merchant this way" makes it a rule in one tap.
 
+**Fixing past transactions** (#100, `/categories/reapply`): since nothing
+above touches a category that's already set, a rule fixed later doesn't
+reach what was already filed. The owner reaches back by hand, never on a
+schedule:
+
+- **Re-apply a rule** (`rules.reapplyPreview`, `rules.reapply`): a preview
+  of every categorized transaction the rules, run today, would file
+  differently (the first matching rule still wins), with old and new
+  category and a total, before anything is written.
+  - Ticked by default: rows whose category a rule or another machine step
+    set.
+  - Left unticked unless the owner ticks them: rows the owner set (or
+    approved from Tally), rows with no record of who set them (worked out
+    from the command log, and checked against the current category), and
+    rows filed as transfers, which a rule would turn into spending counted
+    twice.
+  - Apply re-checks each row, so nothing that changed since the preview is
+    overwritten. It's one command as `user`, undone together.
+- **Transfers across all history**: `transactions.misfiledTransfers` over
+  every date, settled pair by pair as on Cash flow. Transfers that are
+  uncategorized or already filed as transfers are paired by the matcher,
+  so they need no step here.
+- **Move many to one category** (#116, `/transactions/move`): from a
+  filtered Transactions list, "Move these to a category" takes everything
+  that filter shows (the same query, `transactionFilters`), up to 2,000
+  at a time. A preview (`transactions.moveToCategoryPreview`, the same
+  checklist as re-applying a rule) shows each row's old and new category
+  and a total; single rows are ticked in or out there.
+  - Split transactions stay unticked unless ticked, since moving one
+    replaces its split.
+  - Rows already in the category, and sides of a paired transfer (unpair
+    those instead), are left alone.
+  - `transactions.moveToCategory` is one command as `user`, undone
+    together. It reports old categories left with nothing in them, and the
+    page offers to delete each one; `categories.delete` still checks it's
+    unused.
+
 Until #86, memory and the model's confident answers were applied without
 asking (logged and undoable). Only the owner's explicit rules do that
 now; the rest is a confirmation.
@@ -212,7 +249,55 @@ the owner's own (see below).
 - **Rebalancing:** `budgets.rebalance` moves money between two targets for the current period only, as a dated adjustment pair. Both targets stay as they are.
 - **What it usually costs** (#105): each target card, and the target form, shows the category's average monthly net spend over the last 3 full months (the current month left out), from the same lines budgets count (`budgets.history`, `recentHistory` in the engine). A category covers its subcategories without their own target, as a target on it would; a category first seen inside the window is averaged from then; nothing in the window reads "No spending", not $0. For a monthly target it adds how many of those months went over today's target.
 - **Suggested targets** (#106): with at least 2 months of that history, the Add target form fills in the amount from the average, times the period's length and rounded to whole dollars (`suggestedTargetCents`). It follows the category and period until the owner types, and a "Use suggested" link puts it back, including when editing a target. It's only a value in the field: nothing is written until the target is saved through `budgets.setTarget` as usual. It always comes from net spend, even on the gross view.
+- **Transactions behind a target** (#135): the lines budgets counted toward a target in its period, from the same calculation as its spent figure, so the total always matches. Now part of each target's own page (#174), at `#transactions`; the separate `/budgets/transactions` page is gone.
+  - Refunds appear and lower the total.
+  - The buffer's list covers every category without a target, never transfers or income.
+  - Each row opens its transaction.
+  - It's its own page rather than the Transactions page's filters, because a card covers subcategories without their own target, dates by experience date, and counts your share of shared expenses. Those filters can't express all three.
+- **Pay against the budget** (#128): a strip under the overview shows net pay, total targets, expected saving (pay less targets), spent so far and saved so far, each with its share of net pay (`budgets.pay`, `src/lib/budgets/pay.ts`).
+  - **Net pay** is the month's pay stubs by pay date, so two paychecks both count, and a one-time stub counts in the month it's paid.
+  - **A typical month** (#142) is what every figure is measured against: the recent regular paycheck (the last three, so a raise shows quickly and a bonus never sets it) × paychecks a year (52, 26, 24 or 12 from the usual gap between pay dates) ÷ 12. A past month uses the pay of the time. So a month that gets a third biweekly paycheck doesn't look like a raise, and two months with different paychecks have the same expected saving. Beside it, the strip shows what landed: "+$X extra this month" (a third paycheck, a bonus) or "$X short". Without regular stubs, what landed is used as before.
+  - **This month** also adds the paychecks still to come at the usual cadence, at the recent pace from the last three regular stubs (as the tax estimate does), and says so. A past month without stubs reads "No pay recorded", never $0.
+  - **Targets** count at their monthly share: a twelfth of an annual one.
+  - **Spending** is expense lines in budget accounts. Transfers (savings included) and pay never count. A linked paycheck's deduction lines are left out too: they left the gross before net pay landed, so against net pay they'd count twice.
+  - **Uncategorized money out** isn't in spending. The strip says how much there is.
+- **Backdating** (#130): the target form's "Applies from" month gives a target an earlier start (`budgets.backdateTarget`). It's for after backfilling transactions, when earlier months have spending and nothing to measure it against.
+  - It runs from that month until the target's next version, which keeps its amount. With no later version, it becomes the current target.
+  - It only fills months that had no target, so a past month never has what it was held to rewritten.
+  - It can't start before the first month with transactions (`budgets.backdateRange`) or in the current month.
+  - The buffer can be backdated too.
+  - With rollover, the form warns that later months' available amounts will change.
+  - Every backdated save is shown first (#137), rollover or not. The form lists each month it changes, from the start month to the next version (or this month), with the target before ("no target") and after, worked out by the engine (`budgets.backdatePreview`) so they're the figures the page shows once saved. Nothing is written until the owner confirms. Changing any field drops the preview.
+  - The command keeps the chosen start month.
+- **Overview** (#122): the page opens with every target on one screen: spent of available, a thin bar, and left or over. The figures are the same as each card's (`budgetOverview` in `src/lib/budgets/overview.ts`). A total adds up the targets measured on the month alone. An annual or other multi-month target is listed below it with its own period, since a year's budget and spending since January don't add up with a month's. Nothing is counted twice, since each spending line counts toward exactly one target. Cards are collapsed to that summary line, and the detail opens from the card's header or from its overview row, which also scrolls to it. A `#target-…` link opens it directly.
 - **Monthly chart** (#107): each target card shows the last 6 months up to the one being viewed (`budgets.monthly`, `monthlySeries` in the engine) as bars against a dashed line at that month's target (a multi-month target's even monthly share). Where the target was in effect a bar is exactly what `budgets.status` counted; months before it existed are faded, have no line, and show what it would cover today. Every month gets a column, $0 included. A bar links to its month's view, keeping net/gross, and the chart carries a text summary for screen readers. The line is the target, not what rollover or rebalancing made available.
+- **Year view** (#108, `/budgets/year`): one row per target (the buffer first, targets ended since included), one column per month for the 12 months ending at `?month=`. Each cell is that month's spend against the target version it had (a multi-month target's even monthly share), shaded green under and red over in three steps by how far off, with the amount over or under where the screen has room. It all comes from a single `budgets.monthly` read (`months: 12, includeEnded: true`). Cells link to their month and keep net/gross. It's a real table, sized to fit a phone without scrolling sideways.
+- **The year across every target** (#123): a section on the Budgets page for a calendar year. It defaults to the viewed month's year, and `?year=` picks another. Each target counts its periods' targets at the version each period had, against the spending in them (`budgets.year`, `yearSummary` in the engine). Since #174 it's no longer on the Month view; the dashboard and the Year view cover the year.
+  - A target changed mid-year counts each period at its own amount, and an ended one counts for the periods it covered.
+  - The current year's later periods count in full, so the target is the year's budget, against spending so far.
+  - A period that straddles the year, such as an annual target starting in April, counts the year's months of its target pro rata, and the spending dated in the year.
+  - The target is the target, not what rollover or rebalancing made available.
+  - The total is the sum of the targets, with nothing counted twice. Each row opens that target's row in the Year view.
+- **Pay across the year** (#138): the Year view gets the month strip's five figures for its 12 months, and Net pay and Saved rows under the grid (`budgets.payYear`).
+  - **Same rules as the month view.** They share their code: pay stubs by pay date (with this month's paychecks still to come), targets at their monthly share, and spending without paychecks' deductions.
+  - **Actual pay, not a typical month (#142),** so the year is always the sum of the months shown.
+  - **Months with no pay** are left out of the year, along with their targets and spending, and the strip says how many.
+  - **Bonuses:** one-time stubs count in the month they're paid. `?bonus=0` (a link on the strip) leaves them out.
+- **Year view tooltips** (#139): every square, and every total, has a styled tooltip in place of the browser's native one.
+  - It opens on hover, keyboard focus or a tap, and Escape or a tap elsewhere closes it. On a phone a tap opens it rather than following the link, and it carries the links instead: the month, and its transactions.
+  - A square shows the target (a multi-month target's share), spent, how far under or over, and how many transactions. With rollover it adds what rolled in and what was available.
+  - A month with no target says so, with any spending.
+  - Totals say how many months or targets went over.
+  - The data is `budgets.monthly` with `details`: a count per month, and the period each month falls in as `budgets.status` had it.
+- **Quarterly and annual targets on the Year view** (#157): one box per period, spanning its months (three columns for a quarter, twelve for a year), with the period's own target and spend and the same shading and tooltip. A period running past either edge is clipped there, marked ‹ or ›, and its tooltip gives the whole period; a period still in progress is "so far". The row's "over N of M" counts periods. The totals are unchanged: they still add the period's even monthly share, so months and targets add up (`gridSegments` in `lib/budgets/year.ts`).
+- **Budgets tabs** (#145): Month, Year and Targets share one tab bar, the current tab marked; switching keeps `?month=` and `?gross=1`, so March's Month view opens the Year view ending in March (`src/lib/budgets/tabs.ts`). `/budgets/targets` lists every target in effect, with its amount, schedule and how often it has changed, and the ended ones apart; adding a target and moving budget moved there from the Month view. Changing a target stays on its Month card, and Edit opens it.
+- **Budgets dashboard** (#146, `/budgets/dashboard`): the month and the year so far, targets against spend with the amount under or over, and the three biggest overspends in each, linking to the month's card or the target's Year view row. Its figures are the Year view's cells (`budgets.monthly` from January), so the year is exactly its months added up, a multi-month target counts at its monthly share, and only months with a target count. A month with no targets prompts to add one. Budget moved between targets counts in the month it was moved (`budgets.monthly` with `moved`), so a target matches its card; rollover doesn't, since it would count a month's target twice in the year. Each box also has a pay line: the Month strip's figures (a typical month) and the Year strip's (what landed, months without pay left out), kept apart from the target totals because they follow their own rules.
+- **Month-end projection** (#147): each card for the current month says where its period ends up at the pace so far: spent so far over the share of the period elapsed (a straight line, `projectAtEnd` in `lib/pace.ts`), against what's available, so rollover and moved budget count. "On track: about $335.50 by Oct 31" or "Projected $450.00 by Sep 30, $150.00 over" (in red). On the period's last day it equals the spend; with nothing spent yet it says so rather than projecting $0. A past month shows its final figures and no projection. An annual or quarterly target projects to its period's end.
+- **Pace colours** (#159): budget bars are coloured by pace (`lib/budgets/pace-colour.ts`). In a period still in progress, the pace is what's available times the share elapsed (the straight line #147 projects with): spend within it is green; over it but within budget is green to the pace line and yellow beyond; over budget is yellow to the budget and red beyond, finished periods included, so the part still within budget shows. Cards (with a dotted pace line for every period in progress), the overview, and each card's month bars use the split; the Year view's squares and period boxes are one colour, yellow for ahead of pace. The year summary splits overspend but has no pace, since a row is several periods and a straight line across the calendar year would misjudge a target that started mid-year. The dashboard keeps its own figures.
+- **A page for each budget item** (#174, `/budgets/<category id>` or `/budgets/buffer`): the place to analyse and change one target. This period's status (pace bar, projection, the arithmetic of rollover and moved budget); spending over the last 6, 12 or 24 months against the target each month had; what it usually costs and a suggested amount; the target, with every version listed oldest first, each editable (a past one through the backdate review, from its own start or, if that's before your first transactions, the first of its periods from then; `versionEditFrom`); moving budget; the period's transactions with a breakdown by category and by merchant that adds up to the spent figure (`periodBreakdown`); and, for the buffer, every category it covers, each opening its own page. A category with no target gets the add form. The **Month view** is now one row per target (bar, spent of available, left or over, "heading $X over" when the projection is), each opening its page, with "+ Add a target" at the top, the pay strip, and spending without a target; the cards, their month bars and the year summary moved off it.
+- **Year view totals** (#124): a Total column gives each target's 12 months, as spending against the sum of the targets its months had, shaded like the months. An "All targets" row totals each month, and the grid as a whole (`yearTotals` in `src/lib/budgets/year.ts`). Only months with a target count, on both sides: a "–" month adds nothing to the spending or the target, so a target set in March isn't measured on January's spending. Cells are monthly figures (a multi-month target's monthly share), so they add up across targets, and each spending line belongs to one target, so nothing is counted twice. Net or gross, as the view is.
+- **Yearly bills** (#109): `budgets.yearlyCharges` takes what recurring-charge detection finds on an annual rhythm (two charges about a year apart, still current, not dismissed or cancelled on Subscriptions), whether or not it's a subscription, and groups it by the category of its latest charge. The Add target form lists those categories. One tap fills an annual sinking-fund target for the latest charge, with periods starting the month after it so each year ends with the next charge and the card shows a twelfth as the monthly set-aside. Nothing is written until the owner adds the target through `budgets.setTarget`.
+- **What the buffer covers** (#110): the buffer's card explains that it covers every expense category without a target of its own or its parent's. It lists those with spending this period and a total that equals the card's spent figure, and folds away the ones with nothing spent (`budgets.status` → `unbudgeted.covers`). Display only; the engine's math is unchanged. Without a buffer target, "Spending without a target" stays as its own section.
 - **Operations:**
   - **Reads:** `budgets.status`, `budgets.history` and `budgets.targets`. Budget figures come from transactions, not balances, so Tally may read them.
   - **Writes:** `budgets.setTarget`, `removeTarget` and `rebalance`. All are logged and undoable, and Tally's are proposals.
@@ -260,6 +345,7 @@ Each pay stub is recorded as structured income (#60, `payStubs.*`), so a paychec
 
 **Tax estimate** (#61, Wealth → Taxes, `/pay/taxes`): the year's position from these stubs. It's an estimate from your own numbers, not tax advice.
 - **Withholding:** per tax so far, with the stub count, and projected to year end at the pace of the last three stubs. The cadence comes from the pay dates. Insurance and retirement deductions are shown separately, since they aren't taxes.
+- **One-time stubs** (#113): a bonus or other one-off pay recorded as its own stub can be marked one-time. It counts in full in the year to date (gross, every line, withholding), but the pace, the cadence and the paychecks still to come follow the regular stubs only, so adding one leaves the projection for the rest of the year unchanged. The stub shows a "one-time" tag, and the estimate says how many were left out of the pace.
 - **Federal balance:** wages less the usual pre-tax deductions (401(k), HSA, FSA, insurance), plus other income, less the standard or itemized deduction. That goes through the year's brackets and credits, and is set against withholding plus other payments, giving a likely refund or amount owed.
 - **Social Security and Medicare:** checked against what they should come to on your wages.
 - **Not modelled:** state income tax (only what's withheld is shown) and Additional Medicare Tax.
@@ -605,6 +691,14 @@ rewritten; the convention is applied when reading
 (`src/lib/net-worth.ts`), so fixing an account's kind also fixes its
 history. Between snapshots a balance carries forward. Only USD is summed;
 an account in another currency is listed but left out.
+
+**Breakdown over time** (#134). The history chart stacks each group's value per day, with assets above zero and what's owed below. Net worth is drawn as a line on top.
+- **Grouping:** by account kind (the default), account or institution. Every account is in exactly one group, and the smallest past seven fold into "Other", so the total is the same whichever way it's sliced.
+- **Ranges:** 1M, 3M, year to date, 1Y and all history. Each starts on its own first day; days before the first balance are blank, not zero. The change shown, for the total and for each group, is from the first day in the range that has a balance.
+- **Legend:** each group's value and change. Clicking a group shows it alone.
+- **Colour:** a kind always keeps the same colour. The colours come from the data-viz reference palette (`--series-1`…`8`).
+- **"Where it sits":** splits today's figures into owned against owed, and cash against investments against other assets.
+- **Source:** `dailyContributions` in `src/lib/net-worth.ts`, with grouping, ranges and changes in `src/lib/net-worth-breakdown.ts`. Not an operation, for the same reason as the rest of net worth.
 
 **Manual accounts** cover what no aggregator does: a home, a car, a loan
 from a friend, an account at an unsupported institution. Add one under

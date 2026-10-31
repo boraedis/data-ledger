@@ -36,6 +36,8 @@ const stubFields = z.object({
   netCents: z.number().int().min(0),
   lines: z.array(line).max(30),
   employerLines: z.array(employerLine).max(10).default([]),
+  // A bonus or other one-off pay (#113). Omitted on update: unchanged.
+  oneTime: z.boolean().optional(),
   // Omitted: link automatically if exactly one way fits (one deposit, or
   // pay split across accounts). Null: no link. Ids: those deposits, which
   // must add up to the net pay.
@@ -138,6 +140,7 @@ const stubColumns = (input: z.infer<typeof stubFields>) => ({
   payDate: input.payDate,
   grossCents: input.grossCents,
   netCents: input.netCents,
+  ...(input.oneTime === undefined ? {} : { oneTime: input.oneTime }),
 });
 
 async function writeLines(ctx: WriteContext, payStubId: string, lines: z.infer<typeof line>[], employerLines: z.infer<typeof employerLine>[]) {
@@ -164,7 +167,8 @@ export const createPayStub = defineWrite({
   description:
     "Record a pay stub: employer label, pay period, pay date, gross pay, each deduction (kind, the stub's label, " +
     "positive cents, optionally the category it counts under in budgets), net pay, and optionally what the employer " +
-    "paid on top (401(k) match, HSA, life insurance, imputed income; never part of gross or net). Gross minus deductions must " +
+    "paid on top (401(k) match, HSA, life insurance, imputed income; never part of gross or net), and oneTime for a bonus " +
+    "or other one-off pay (counted in the year to date, left out of the tax estimate's pace). Gross minus deductions must " +
     "equal net exactly. The net-pay deposits are linked automatically when exactly one way fits: one deposit of the " +
     "net, or pay split across accounts (two or three deposits from the same payer adding up to it); then budgets " +
     "count gross pay and each deduction instead of the net.",
@@ -243,7 +247,8 @@ export const listPayStubs = defineRead({
   name: "payStubs.list",
   description:
     "Pay stubs, newest pay date first, optionally for one calendar year: employer label, period, pay date, gross, " +
-    "net, each deduction (kind, group: tax / insurance / retirement / other, label, amount, category), totals per " +
+    "net, oneTime (a bonus or other one-off, left out of the tax estimate's pace), each deduction (kind, group: tax / " +
+    "insurance / retirement / other, label, amount, category), totals per " +
     "group, what the employer paid on top (employerLines: 401(k) match, HSA, life insurance, imputed income), " +
     "and the linked net-pay deposits if any (more than one when pay is split across accounts: each with its " +
     "date, amount and account name). Amounts are integer cents.",
@@ -286,6 +291,7 @@ export const listPayStubs = defineRead({
         payDate: s.payDate,
         grossCents: s.grossCents,
         netCents: s.netCents,
+        oneTime: s.oneTime,
         deposits: deposits
           .filter((d) => d.payStubId === s.id)
           .map((d) => ({ id: d.id, postedOn: d.postedOn, amountCents: d.amountCents, accountId: d.accountId, accountName: d.accountName })),

@@ -20,6 +20,17 @@ export function evenPace(fromCents: number, toCents: number, share: number): num
   return Math.round(fromCents + (toCents - fromCents) * share);
 }
 
+/**
+ * Where spending ends up at the end of a span if it carries on as it has
+ * (#147): spent so far over the share elapsed, a straight line. Null with
+ * nothing spent yet (or a net refund): there's no pace to carry on at, and
+ * $0 would read as a prediction.
+ */
+export function projectAtEnd(spentCents: number, share: number): number | null {
+  if (spentCents <= 0 || share <= 0) return null;
+  return Math.round(spentCents / share);
+}
+
 /** Calendar months from `on` until `end`, counting the current one: Oct 13 → Dec 31 is 3. */
 export function monthsLeft(on: string, end: string): number {
   if (end < on) return 0;

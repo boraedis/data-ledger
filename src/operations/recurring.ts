@@ -99,6 +99,16 @@ function describe(series: Series, status: SeriesStatus | undefined, accountName:
   };
 }
 
+/**
+ * Detected series with the owner's decision on each, for other features
+ * built on detection (#109's yearly set-asides) so they find exactly what
+ * Subscriptions shows.
+ */
+export async function detectedSeries(db: Db, on: string): Promise<{ series: Series; status: SeriesStatus | undefined }[]> {
+  const [charges, status] = await Promise.all([loadCharges(db, on), decisions(db)]);
+  return detectSeries(charges, on).map((series) => ({ series, status: status.get(series.key) }));
+}
+
 export const listRecurring = defineRead({
   name: "recurring.list",
   description:
