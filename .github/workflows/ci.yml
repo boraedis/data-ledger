@@ -28,7 +28,34 @@ jobs:
       - run: npm run typecheck
       # Includes applying drizzle/ to an in-process Postgres (PGlite), so
       # a broken migration fails here rather than on a real database.
-      - run: npm test
+      #
+      # Since 2026-10-31 this step has died now and then 35–110s in: the test
+      # process killed (exit 143), or the whole runner shut down. That's the
+      # window where every worker boots PGlite, migrates and seeds at once,
+      # and locally it's when memory peaks. Two things, until that's settled:
+      #   - Two workers, not the three vitest picks on a 4-core runner, to
+      #     lower that peak. Slower, but a red check that isn't a real
+      #     failure costs more.
+      #   - A memory line every 5s ("[mem]"), in this step's own log so it
+      #     survives a killed test run, to show whether memory is the cause.
+      #     Once it's known, drop the logging; keep or lift the cap by what
+      #     it shows.
+      - name: npm test
+        run: |
+          (while sleep 5; do
+            echo "[mem] $(date -u +%T) $(free -m | awk '/^Mem:/ {print "used=" $3 "MB available=" $7 "MB"}') top: $(ps -eo rss=,comm= --sort=-rss | head -4 | awk '{printf "%s=%dMB ", $2, $1/1024}')"
+          done) &
+          monitor=$!
+          set +e
+          npm test -- --maxWorkers 2
+          status=$?
+          kill $monitor
+          exit $status
+      # When the runner survives a failure, say whether the kernel's
+      # out-of-memory killer was what stopped the tests.
+      - name: Out-of-memory kills
+        if: failure()
+        run: sudo dmesg | grep -iE "out of memory|oom-kill|killed process" || echo "No out-of-memory kills logged."
       # No secrets needed: the DB client and session secret are read lazily,
       # and every page is dynamic, so the build never touches a database.
       - run: npm run build
