@@ -1,32 +1,43 @@
-// Generates the app's icons (#29) into public/icons from one SVG mark:
-// three rising bars on near-black. Run with `node scripts/generate-icons.mjs`
-// after changing the mark; the PNGs are committed.
+// Generates the app's icons from Tally's mascot (#73), a thermal receipt
+// with a face: the full receipt on the app's green for the home-screen icons
+// (#29), and the simpler mark as the browser tab's icon. Run with
+// `node scripts/generate-icons.mjs` after changing the mascot
+// (src/lib/tally/mascot.ts); the files are committed. Needs Node 22.18 or
+// later, which loads that TypeScript file directly.
+import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
+import { mascotSvg } from "../src/lib/tally/mascot.ts";
+
+// The app's primary green (--primary), the tile the receipt sits on.
+const TILE = "#1a6444";
+
+// The receipt's extent in its 100-unit box: 84 units tall, centred on y 52.
+const RECEIPT_HEIGHT = 0.84;
+const RECEIPT_CENTRE_Y = 0.52;
 
 // Full-bleed square: iOS rounds the corners itself, and Android's maskable
-// icon keeps the mark inside the central safe zone (80%).
-function mark(size, inset) {
-  const s = size;
-  const pad = s * inset;
-  const w = s - pad * 2;
-  // Bottom-aligned bars of rising height.
-  const bar = (x, height) =>
-    `<rect x="${pad + w * x}" y="${pad + w * (0.82 - height)}" width="${w * 0.16}" height="${w * height}" rx="${w * 0.04}" fill="#fafafa"/>`;
-  return Buffer.from(`<svg xmlns="http://www.w3.org/2000/svg" width="${s}" height="${s}" viewBox="0 0 ${s} ${s}">
-  <rect width="${s}" height="${s}" fill="#171717"/>
-  ${bar(0.2, 0.3)}
-  ${bar(0.42, 0.46)}
-  ${bar(0.64, 0.64)}
-</svg>`);
+// icon keeps the mark inside the central safe zone (80%). `fill` is how much
+// of the icon's height the receipt takes.
+function icon(size, fill) {
+  const box = Math.round((size * fill) / RECEIPT_HEIGHT);
+  return sharp({ create: { width: size, height: size, channels: 4, background: TILE } })
+    .composite([{ input: Buffer.from(mascotSvg("full", { size: box })), left: Math.round(size / 2 - box / 2), top: Math.round(size / 2 - box * RECEIPT_CENTRE_Y) }])
+    .png();
 }
 
 const outputs = [
-  ["public/icons/icon-192.png", 192, 0.12],
-  ["public/icons/icon-512.png", 512, 0.12],
-  ["public/icons/icon-maskable-512.png", 512, 0.2],
-  ["public/icons/apple-touch-icon.png", 180, 0.12],
+  ["public/icons/icon-192.png", 192, 0.74],
+  ["public/icons/icon-512.png", 512, 0.74],
+  ["public/icons/icon-maskable-512.png", 512, 0.6],
+  ["public/icons/apple-touch-icon.png", 180, 0.74],
 ];
-for (const [file, size, inset] of outputs) {
-  await sharp(mark(size, inset)).png().toFile(file);
+for (const [file, size, fill] of outputs) {
+  await icon(size, fill).toFile(file);
   console.log(file);
 }
+
+// The tab icon, as SVG so it stays sharp at 16px and on high-density screens.
+// No background: a tab strip is light or dark, and the receipt's brown edge
+// reads on both.
+await writeFile("src/app/icon.svg", `${mascotSvg("mark")}\n`);
+console.log("src/app/icon.svg");
