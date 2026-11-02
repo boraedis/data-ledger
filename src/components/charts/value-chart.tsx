@@ -63,7 +63,21 @@ function formatDay(on: string, withYear = true): string {
 
 // A guide is a second line drawn dashed over the same days (a goal's pace,
 // say), aligned to the series by position: guide[i] is for series[i].
-export function ValueChart({ series, label, height = 220, guide }: { series: ValuePoint[]; label: string; height?: number; guide?: ValuePoint[] }) {
+export function ValueChart({
+  series,
+  label,
+  height = 220,
+  guide,
+  ranges = true,
+}: {
+  series: ValuePoint[];
+  label: string;
+  height?: number;
+  guide?: ValuePoint[];
+  // The range buttons count days back from the end, so they're for daily
+  // history; a series of another step (a monthly forecast) turns them off.
+  ranges?: boolean;
+}) {
   const HEIGHT = height;
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -146,29 +160,31 @@ export function ValueChart({ series, label, height = 220, guide }: { series: Val
             </>
           ) : null}
         </div>
-        <div role="group" aria-label="Time range" className="flex rounded-md border text-xs">
-          {RANGES.map((r) => {
-            // Ranges longer than the history would all draw the same thing.
-            const available = r.key === "all" || r.days < totalDays;
-            if (!available) return null;
-            return (
-              <button
-                key={r.key}
-                type="button"
-                aria-pressed={range === r.key}
-                onClick={() => {
-                  setRange(r.key);
-                  setHover(null);
-                }}
-                className={`px-2.5 py-1 first:rounded-l-md last:rounded-r-md ${
-                  range === r.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                {r.label}
-              </button>
-            );
-          })}
-        </div>
+        {ranges ? (
+          <div role="group" aria-label="Time range" className="flex rounded-md border text-xs">
+            {RANGES.map((r) => {
+              // Ranges longer than the history would all draw the same thing.
+              const available = r.key === "all" || r.days < totalDays;
+              if (!available) return null;
+              return (
+                <button
+                  key={r.key}
+                  type="button"
+                  aria-pressed={range === r.key}
+                  onClick={() => {
+                    setRange(r.key);
+                    setHover(null);
+                  }}
+                  className={`px-2.5 py-1 first:rounded-l-md last:rounded-r-md ${
+                    range === r.key ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
       </div>
 
       <div
