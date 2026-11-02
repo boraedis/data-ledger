@@ -2,7 +2,7 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { manualPositions, quotes } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { coinbaseSource } from "@/lib/prices/coinbase";
-import { REFRESH_MINUTES, STALE_MINUTES } from "@/lib/prices/config";
+import { REFRESH_MINUTES } from "@/lib/prices/config";
 import type { AssetClass, PriceSource } from "@/lib/prices/source";
 import { execute } from "@/operations/runtime";
 
@@ -61,15 +61,4 @@ export async function refreshPricesIfDue(db: Db, { now = new Date(), sources = d
   });
   if (result.status !== "applied") throw new Error("Price refresh wasn't applied");
   return { status: "refreshed", commandId: result.commandId, ...(result.output as { priced: number; unpriced: number; failed: number }) };
-}
-
-export type Quote = { price: string | null; asOf: Date | null; stale: boolean; source: string };
-
-/** The latest quote per crypto symbol, for display: "no price" is a null price, and a stale one says so. */
-export async function latestQuotes(db: Db, assetClass: AssetClass, { now = new Date() }: { now?: Date } = {}): Promise<Map<string, Quote>> {
-  const rows = await db.select().from(quotes).where(eq(quotes.assetClass, assetClass));
-  const staleBefore = now.getTime() - STALE_MINUTES * 60_000;
-  return new Map(
-    rows.map((q) => [q.symbol, { price: q.price, asOf: q.asOf, stale: q.asOf === null || q.asOf.getTime() < staleBefore, source: q.source }]),
-  );
 }
