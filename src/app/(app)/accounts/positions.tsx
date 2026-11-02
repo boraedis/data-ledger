@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { normalizeQuantity } from "@/lib/holdings/value";
 import { formatCents, parseAmountCents } from "@/lib/money";
+import { priceTime } from "@/lib/prices/describe";
 import type { ManualPosition } from "@/operations/holdings";
 import { addPosition, removePosition, setPositionPrice, setPositionQuantity } from "./actions";
 
@@ -45,15 +46,16 @@ function parseCost(text: string): number | null | undefined {
 
 // The market price from the price cache (#229), when the symbol has been
 // looked up: null price means the provider has none. Shown beside the
-// owner's own price; until live valuing (#230), the value still uses theirs.
+// owner's own price. The value here is at the owner's price, what's recorded;
+// net worth values it live at the market price (#230).
 export type PositionWithMarket = ManualPosition & { market: { price: string | null; asOf: string | null; stale: boolean } | null };
 
-const shortTime = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
 
 function MarketPrice({ symbol, market }: { symbol: string; market: PositionWithMarket["market"] }) {
   if (!market) return null;
   if (market.price === null) return <span>No market price for {symbol}</span>;
-  const when = market.asOf ? shortTime.format(new Date(market.asOf)) : "";
+  const when = market.asOf ? priceTime(new Date(market.asOf)) : "";
   return (
     <span className={market.stale ? "text-warning" : undefined}>
       Market {formatPrice(market.price)} · {market.stale ? `stale, from ${when}` : when}

@@ -4,6 +4,7 @@ import type { Db } from "@/db/types";
 import type { AccountKind } from "@/lib/account-kinds";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { NET_WORTH_CURRENCY } from "@/lib/net-worth";
+import { liveValues, type LiveValue } from "@/lib/prices/live-value";
 
 // The investments view (#27): allocation, value and cost basis, built from
 // balance and holding snapshots. Display only — no advice, no projections.
@@ -41,6 +42,9 @@ export type InvestmentAccount = {
   positions: Position[];
   // Balance not accounted for by the listed positions. Null without holdings.
   cashAndOtherCents: number | null;
+  // Valued from its positions at market prices (#230); valueCents is then
+  // the live value. Unset when it holds no positions, so it keeps its balance.
+  live?: LiveValue;
   series: { on: string; cents: number; holdingsCents: number | null }[];
 };
 
@@ -124,7 +128,7 @@ export async function investmentsSummary(db: Db, { today = new Date() }: { today
     };
   }
 
-  const [balances, holdingTotals, latestDays] = await Promise.all([
+  const [balances, holdingTotals, latestDays, live] = await Promise.all([
     db
       .select({ accountId: balanceSnapshots.accountId, on: balanceSnapshots.on, cents: balanceSnapshots.balanceCents })
       .from(balanceSnapshots)
@@ -140,6 +144,7 @@ export async function investmentsSummary(db: Db, { today = new Date() }: { today
       .from(holdingSnapshots)
       .where(inArray(holdingSnapshots.accountId, ids))
       .groupBy(holdingSnapshots.accountId),
+    liveValues(db, { now: today }),
   ]);
   const latestPositions = latestDays.length
     ? await db
@@ -176,7 +181,8 @@ export async function investmentsSummary(db: Db, { today = new Date() }: { today
       institution: a.institution,
       kind: a.type,
       manual: a.source === "manual",
-      valueCents: a.balanceCents!,
+      valueCents: live.get(a.id)?.valueCents ?? a.balanceCents!,
+      live: live.get(a.id),
       balanceAt: a.balanceAt,
       holdingsOn,
       positions,
