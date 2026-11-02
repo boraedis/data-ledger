@@ -328,6 +328,37 @@ export const manualPositions = pgTable(
   (t) => [uniqueIndex("manual_positions_account_symbol_idx").on(t.accountId, sql`upper(${t.symbol})`)],
 );
 
+// Trades (#247): dated buys, sells and share transfers per account, so how
+// much was held on any past day can be rebuilt by replaying them (#232).
+// For a manual account (#231) they're the source of its positions: each
+// position's quantity is what its trades add up to. For a synced brokerage
+// they only build the past, and are checked against what it reports.
+// Never transactions, never in budgets, never sent to a model.
+export const tradeSide = pgEnum("trade_side", ["buy", "sell", "transfer_in", "transfer_out"]);
+
+export const trades = pgTable(
+  "trades",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Restrict: removing a manual account removes its trades through
+    // tracked removes first, so undo brings them back.
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    on: date("on").notNull(),
+    // Upper case, as positions match it.
+    symbol: text("symbol").notNull(),
+    side: tradeSide("side").notNull(),
+    // Exact decimals. Quantity is always positive; the side says which way.
+    quantity: numeric("quantity").notNull(),
+    // Per unit, when the owner gives it. History is priced from daily prices,
+    // so a trade needs only its quantity.
+    price: numeric("price"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("trades_account_symbol_on_idx").on(t.accountId, t.symbol, t.on)],
+);
+
 // Market prices (#229): the latest quote per symbol, and one price per
 // symbol per day for history (#232). Public prices, refreshed at most once
 // an hour when a page that shows values is opened, and by the nightly sync

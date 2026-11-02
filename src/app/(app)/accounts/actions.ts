@@ -57,3 +57,16 @@ export async function setPositionPrice(positionId: string, symbol: string, unitP
 export async function removePosition(positionId: string, symbol: string): Result {
   return run("holdings.remove", { positionId }, `Removed ${symbol}`, "Couldn't remove the position");
 }
+
+// The trade log (#247). Reasons name the symbol, never a quantity or price.
+export async function addTrade(input: { accountId: string; on: string; side: string; symbol: string; quantity: string; price: string | null }, accountName: string): Result {
+  return run("trades.add", input, `Recorded a trade of ${input.symbol.toUpperCase()} in "${accountName}"`, "Couldn't record the trade");
+}
+
+export async function updateTrade(tradeId: string, symbol: string, changes: { on: string; side: string; quantity: string; price: string | null }): Result {
+  return run("trades.update", { tradeId, ...changes }, `Corrected a trade of ${symbol}`, "Couldn't change the trade");
+}
+
+export async function removeTrade(tradeId: string, symbol: string): Result {
+  return run("trades.remove", { tradeId }, `Removed a trade of ${symbol}`, "Couldn't remove the trade");
+}

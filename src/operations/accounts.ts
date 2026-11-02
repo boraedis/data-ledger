@@ -1,6 +1,6 @@
 import { and, count, desc, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
-import { ACCOUNT_KINDS, accounts, balanceSnapshots, countsTowardBudgetsByDefault, manualPositions, transactions } from "@/db/schema";
+import { ACCOUNT_KINDS, accounts, balanceSnapshots, countsTowardBudgetsByDefault, manualPositions, trades, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { defineRead, defineWrite } from "@/operations/define";
 import type { WriteContext } from "@/operations/tracked";
@@ -222,6 +222,8 @@ export const deleteManualAccount = defineWrite({
     if (txns > 0) throw new Error("This account has transactions; it can't be removed");
     const positions = await ctx.db.select({ id: manualPositions.id }).from(manualPositions).where(eq(manualPositions.accountId, accountId));
     for (const { id } of positions) await ctx.remove(manualPositions, id);
+    const traded = await ctx.db.select({ id: trades.id }).from(trades).where(eq(trades.accountId, accountId));
+    for (const { id } of traded) await ctx.remove(trades, id);
     // History first, through tracked removes: the FK cascade would delete it
     // invisibly, and undo couldn't bring it back.
     const history = await ctx.db.select({ id: balanceSnapshots.id }).from(balanceSnapshots).where(eq(balanceSnapshots.accountId, accountId));

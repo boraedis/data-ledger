@@ -4,6 +4,8 @@ import { getDb } from "@/lib/db";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 import { latestQuotes } from "@/lib/prices/quotes";
 import { listManualPositions } from "@/operations/holdings";
+import { listTrades, tradeCheck } from "@/operations/trades";
+import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { AccountRow } from "./account-row";
 import { AddManualAccount } from "./manual-account";
 
@@ -12,11 +14,16 @@ import { AddManualAccount } from "./manual-account";
 // each one is in Activity and can be undone there.
 export default async function AccountsPage() {
   const db = getDb();
-  const [rows, positions, quotes] = await Promise.all([
+  const [rows, positions, quotes, tradeRows, mismatches] = await Promise.all([
     db.select().from(accountsTable).orderBy(accountsTable.institution, accountsTable.name),
     listManualPositions(db),
     latestQuotes(db, "crypto"),
+    listTrades(db),
+    tradeCheck(db),
   ]);
+  // Which accounts take trades (#247): a manual asset account, or a synced brokerage or retirement one.
+  const takesTrades = (a: (typeof rows)[number]) =>
+    a.source === "manual" ? a.type !== "loan" && a.type !== "credit" : (INVESTMENT_KINDS as readonly string[]).includes(a.type);
   // Hand-entered positions show their market price (#229); refresh it after
   // the page is sent, if it's due.
   if (positions.length) refreshPricesAfterResponse();
@@ -43,6 +50,7 @@ export default async function AccountsPage() {
         const q = quotes.get(p.symbol.toUpperCase());
         return { ...p, market: q ? { price: q.price, asOf: q.asOf?.toISOString() ?? null, stale: q.stale } : null };
       }),
+    trades: takesTrades(a) ? { rows: tradeRows.filter((t) => t.accountId === a.id), mismatches: mismatches.get(a.id) ?? [] } : undefined,
   });
 
   return (
