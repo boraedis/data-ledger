@@ -102,6 +102,59 @@ describe("adding, changing and deleting", () => {
     expect(await row(brokerageIn.id)).toMatchObject({ transferPairId: cashIn.id });
   });
 
+  it("adds the other half of an unmatched transfer, pre-filled and paired, as one undoable command", async () => {
+    const [brokerage] = await db.select().from(accounts).where(eq(accounts.type, "brokerage"));
+    const [transferCategory] = await db.select().from(categories).where(eq(categories.kind, "transfer"));
+    const source = (
+      await db
+        .insert(transactions)
+        .values({ accountId: checking, postedOn: "2026-01-10", amountCents: -200_00, description: "Example brokerage funding", externalId: "unmatched-out", categoryId: transferCategory.id })
+        .returning()
+    )[0];
+
+    const added = await run("transactions.addOtherHalf", { transactionId: source.id, accountId: brokerage.id });
+    const other = (added.output as { transactionId: string }).transactionId;
+    expect(await row(other)).toMatchObject({
+      source: "manual",
+      accountId: brokerage.id,
+      postedOn: "2026-01-10",
+      amountCents: 200_00,
+      description: "Example brokerage funding",
+      categoryId: transferCategory.id,
+      transferPairId: source.id,
+    });
+    expect(await row(source.id)).toMatchObject({ transferPairId: other });
+
+    await undoCommand(db, added.commandId);
+    expect(await row(other)).toBeUndefined();
+    expect(await row(source.id)).toMatchObject({ transferPairId: null });
+  });
+
+  it("refuses the same account, a manual account, an account the matcher wouldn't pair, and a second pairing", async () => {
+    const [brokerage] = await db.select().from(accounts).where(eq(accounts.type, "brokerage"));
+    const [transferCategory] = await db.select().from(categories).where(eq(categories.kind, "transfer"));
+    const source = (
+      await db
+        .insert(transactions)
+        .values({ accountId: checking, postedOn: "2026-01-10", amountCents: -200_00, description: "Example transfer", externalId: "unmatched-refuse", categoryId: transferCategory.id })
+        .returning()
+    )[0];
+    await expect(run("transactions.addOtherHalf", { transactionId: source.id, accountId: checking })).rejects.toThrow(/same account/);
+    const house = await run("accounts.createManual", { name: "Example House", kind: "other_asset", valueCents: 1_000_00, on: "2026-06-01" });
+    await expect(run("transactions.addOtherHalf", { transactionId: source.id, accountId: (house.output as { id: string }).id })).rejects.toThrow(/balance only/);
+    // A brokerage pairs with cash, never with a card: the matcher has no such pass.
+    const [brokerageOut] = await db
+      .insert(transactions)
+      .values({ accountId: brokerage.id, postedOn: "2026-01-10", amountCents: -50_00, description: "Example fund buy", externalId: "unmatched-brokerage", categoryId: transferCategory.id })
+      .returning();
+    const [card] = await db.select().from(accounts).where(eq(accounts.type, "credit"));
+    await expect(run("transactions.addOtherHalf", { transactionId: brokerageOut.id, accountId: card.id })).rejects.toThrow(/pairs a cash account/);
+
+    const added = await run("transactions.addOtherHalf", { transactionId: source.id, accountId: brokerage.id });
+    expect(added.status).toBe("applied");
+    await expect(run("transactions.addOtherHalf", { transactionId: source.id, accountId: brokerage.id })).rejects.toThrow(/already has its other half/);
+  });
+
   it("splits and shares like any other, and won't change the amount under them", async () => {
     const added = await add({ categoryId: cat.Dining });
     await run("transactions.split", {

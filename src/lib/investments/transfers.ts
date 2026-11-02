@@ -27,6 +27,11 @@ export const TRANSFER_PASSES: { from: readonly AccountKind[]; to: readonly Accou
   { from: CASH_KINDS, to: CASH_KINDS, what: "between cash accounts", outOnly: true },
 ];
 
+/** Whether the matcher would pair a transaction in an account of kind `a` with one in an account of kind `b`, either way round. */
+export function canPairKinds(a: AccountKind, b: AccountKind): boolean {
+  return TRANSFER_PASSES.some((pass) => (pass.from.includes(a) && pass.to.includes(b)) || (pass.from.includes(b) && pass.to.includes(a)));
+}
+
 export type TransferCandidate = { id: string; accountId: string; amountCents: number; postedOn: string };
 
 const DAY_MS = 86_400_000;

@@ -102,6 +102,13 @@ never overwrites a category that's already set:
    flagged on Cash flow and Spending (#102, `transactions.misfiledTransfers`),
    to settle as a transfer (both lose their category and are paired) or as
    not one.
+   A transfer that's filed but unpaired (its other side isn't connected, or
+   is older than the sync) can get its other half added by hand: the
+   transaction page offers the accounts the matcher would pair it with, and
+   "Add and pair" creates the opposite row (same date, amount and transfer
+   category, description editable) and pairs both sides as one undoable
+   command (`transactions.addOtherHalf`). The new row is marked added by hand,
+   so if the bank later reports it, the usual merge prompt applies.
 1. **Rules** — the owner's own, in priority order: merchant or description
    equals / contains / starts with a pattern, optionally limited to one
    account or an amount range. No regex (a user pattern run over every
