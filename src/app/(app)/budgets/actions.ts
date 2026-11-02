@@ -76,6 +76,25 @@ export async function deleteVersion(categoryId: string | null, fromMonth: string
   return run("budgets.deleteVersion", { categoryId, fromMonth }, `Deleted the ${name} target starting ${fromMonth}`);
 }
 
+// What ending a target from a month would change, month by month (#204). A read.
+export async function previewEndTarget(
+  categoryId: string | null,
+  endMonth: string,
+): Promise<{ error: string } | { months: BackdateMonth[]; until: string | null }> {
+  try {
+    const result = await executeAsOwner({ operation: "budgets.endTargetPreview", input: { categoryId, endMonth }, reason: "Preview" });
+    if (result.status !== "read") return { error: "Something went wrong" };
+    return result.output as { months: BackdateMonth[]; until: string | null };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Something went wrong" };
+  }
+}
+
+// Ends a target from a month (#204): no target from then, history kept.
+export async function endTarget(categoryId: string | null, endMonth: string, name: string) {
+  return run("budgets.endTarget", { categoryId, endMonth }, `Ended the ${name} target from ${endMonth}`);
+}
+
 export async function removeTarget(categoryId: string | null, name: string) {
   return run("budgets.removeTarget", { categoryId }, `Removed the ${name} target`);
 }
