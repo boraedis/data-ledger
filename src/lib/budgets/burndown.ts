@@ -1,8 +1,9 @@
 // A budget period day by day (#149): the burndown of what's left against a
 // straight line from the full amount to zero, the same days of past periods
-// as a share of each one's target, and a calendar of each day's spending
-// against its even share. Client-safe and pure; dates are YYYY-MM-DD and
-// lines are signed like transactions (−$50 spent, +$10 refunded).
+// as a share of each one's target. (A calendar of each day's spending was
+// here too, until the item page dropped it, #206.) Client-safe and pure;
+// dates are YYYY-MM-DD and lines are signed like transactions (−$50 spent,
+// +$10 refunded).
 
 export type DayLine = { date: string; amountCents: number };
 export type DailyPeriod = { start: string; end: string; availableCents: number; lines: DayLine[] };
@@ -75,31 +76,6 @@ export function burndown(p: DailyPeriod, through: string, past: DailyPeriod[] = 
         typicalCents: average.periods ? Math.round(p.availableCents * (1 - average.share[i])) : null,
         spentCents: spent[i],
       };
-    }),
-  };
-}
-
-export type CalendarDay = {
-  date: string;
-  /** Null for a day still to come; 0 for a day with no spending. */
-  spentCents: number | null;
-  /** Unshaded with no spending (or a net refund); else how the day compares with its even share. */
-  tone: null | "under" | "near" | "over" | "far-over";
-};
-
-/** Each day against its even share of the period's budget (#149). */
-export function spendCalendar(p: DailyPeriod, through: string): { share: number; days: CalendarDay[] } {
-  const days = daysOf(p.start, p.end);
-  const share = p.availableCents / days.length;
-  const spent = dailySpent(p);
-  return {
-    share: Math.round(share),
-    days: days.map((date, i) => {
-      if (date > through) return { date, spentCents: null, tone: null };
-      const s = spent[i];
-      if (s <= 0) return { date, spentCents: s, tone: null };
-      const ratio = share > 0 ? s / share : Infinity;
-      return { date, spentCents: s, tone: ratio <= 0.5 ? "under" : ratio <= 1 ? "near" : ratio <= 2 ? "over" : "far-over" };
     }),
   };
 }

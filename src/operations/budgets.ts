@@ -176,6 +176,114 @@ export const targetTransactions = defineRead({
   },
 });
 
+// --- A budget item over time (#206) ----------------------------------------------
+//
+// The item page judges a target over months, not one period: its spend
+// against the target month by month across a range, what it usually costs,
+// how often it went over, and the biggest charges behind it, with this
+// month and the year so far on top. Every figure comes from the reads the
+// other views use (budgets.monthly, budgets.year, budgets.status), so the
+// page can't disagree with them.
+
+export const ITEM_RANGES = ["3", "ytd", "12"] as const;
+export type ItemRange = (typeof ITEM_RANGES)[number];
+
+/** How many months a range covers, through `on`'s month. */
+export function rangeMonths(range: ItemRange, on: string): number {
+  if (range === "ytd") return Number(on.slice(5, 7));
+  return Number(range);
+}
+
+const median = (values: number[]) => {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+};
+
+export const itemAnalysis = defineRead({
+  name: "budgets.itemAnalysis",
+  description:
+    "One budget item (categoryId null = the buffer) over a range (3 months, ytd, or 12 months, through `on`'s month, " +
+    "default today): each month's spend and the target it had (null before one), as budgets.monthly; the average and " +
+    "typical (median) month over the range's complete months; how many of those had a target and went over or stayed " +
+    "under; the largest charges in the range; and the year so far as budgets.year counts it (spent of the year's " +
+    "target). Net unless gross is true.",
+  input: z.object({
+    categoryId: targetCategory,
+    range: z.enum(ITEM_RANGES).default("12"),
+    on: isoDate.optional(),
+    gross: z.boolean().default(false),
+    largest: z.number().int().min(1).max(20).default(5),
+  }),
+  run: async (db, { categoryId, range, on = today(), gross, largest }) => {
+    const months = rangeMonths(range, on);
+    const from = firstOfMonth(monthIndex(on) - months + 1);
+    const [series, year, versions, lines, { rows, labelOf }] = await Promise.all([
+      budgetMonthly.run(db, { on, gross, months, includeEnded: true, details: false, moved: false }),
+      budgetYear.run(db, { year: Number(on.slice(0, 4)), gross }),
+      loadVersions(db),
+      spendingLines.run(db, { from, to: on, budgetOnly: true, gross }),
+      labels(db),
+    ]);
+    const bars = (series.find((r) => r.categoryId === categoryId)?.months ?? []).map((m) => ({ month: m.month, spentCents: m.spentCents, targetCents: m.targetCents }));
+    // The month in progress is partial, so it's left out of what a month
+    // usually costs and of over and under, unless it's already over.
+    const thisMonth = `${on.slice(0, 7)}-01`;
+    const complete = bars.filter((b) => b.month < thisMonth);
+    const current = bars.find((b) => b.month === thisMonth);
+    const judged = [...complete, ...(current && current.targetCents !== null && current.spentCents > current.targetCents ? [current] : [])].filter(
+      (b) => b.targetCents !== null,
+    );
+    const spends = complete.map((b) => b.spentCents);
+
+    const counted = linesForTarget({
+      key: categoryId ?? BUFFER,
+      start: from,
+      end: on,
+      versions,
+      lines,
+      categories: rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind })),
+    })
+      // Spending only, biggest first: a refund isn't a charge to look at.
+      .filter((l) => l.amountCents < 0)
+      .sort((a, b) => a.amountCents - b.amountCents || b.date.localeCompare(a.date))
+      .slice(0, largest);
+    const ids = [...new Set(counted.map((l) => l.transactionId))];
+    const details = ids.length
+      ? await db
+          .select({ id: transactions.id, description: transactions.description, accountName: accounts.name })
+          .from(transactions)
+          .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+          .where(inArray(transactions.id, ids))
+      : [];
+    const byId = new Map(details.map((d) => [d.id, d]));
+    const yearRow = year.targets.find((t) => t.categoryId === categoryId) ?? null;
+
+    return {
+      range,
+      from,
+      to: on,
+      months: bars,
+      averageCents: spends.length ? Math.round(spends.reduce((a, b) => a + b, 0) / spends.length) : null,
+      typicalCents: median(spends),
+      completeMonths: complete.length,
+      overMonths: judged.filter((b) => b.spentCents > b.targetCents!).length,
+      underMonths: judged.filter((b) => b.spentCents <= b.targetCents!).length,
+      largest: counted.map((l) => ({
+        transactionId: l.transactionId,
+        date: l.date,
+        merchant: l.merchant,
+        description: byId.get(l.transactionId)?.description ?? "",
+        accountName: byId.get(l.transactionId)?.accountName ?? "",
+        categoryName: labelOf.get(l.categoryId) ?? "Unknown category",
+        spentCents: -l.amountCents,
+      })),
+      yearToDate: yearRow ? { year: year.year, targetCents: yearRow.targetCents, spentCents: yearRow.spentCents, remainingCents: yearRow.remainingCents } : null,
+    };
+  },
+});
+
 export const budgetHistory = defineRead({
   name: "budgets.history",
   description:

@@ -1,15 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import type { BurndownDay, CalendarDay } from "@/lib/budgets/burndown";
+import type { BurndownDay } from "@/lib/budgets/burndown";
 import { formatCents } from "@/lib/money";
 
-// A budget period day by day (#149): the burndown and the spending calendar.
+// A budget period day by day (#149): the burndown, on the Month view.
 //
 // The burndown is one axis (money left) with three lines: this period's
 // actual, the straight line from the full amount to zero, and what a typical
 // past period had left by the same day. Series are told apart by line style
-// as well as weight, with a legend; status colours stay for the calendar.
+// as well as weight, with a legend.
 // Hovering (or tapping) a day reads out all three; a text summary carries
 // the same for screen readers.
 
@@ -144,84 +144,5 @@ export function Burndown({
         </text>
       </svg>
     </figure>
-  );
-}
-
-const TONE: Record<NonNullable<CalendarDay["tone"]>, string> = {
-  under: "bg-positive/25",
-  near: "bg-positive/50",
-  over: "bg-negative/35",
-  "far-over": "bg-negative/60",
-};
-
-/** Each day against its even share: a month as weeks in rows, a longer period as weeks in columns. */
-export function SpendCalendar({ days, share, today }: { days: CalendarDay[]; share: number; today: string | null }) {
-  const lead = (new Date(`${days[0].date}T00:00:00Z`).getUTCDay() + 6) % 7; // Monday first
-  const cells: (CalendarDay | null)[] = [...Array<null>(lead).fill(null), ...days];
-  const long = days.length > 31;
-  // A longer period's weeks run in columns; each column that holds a 1st is labelled with its month.
-  const weeks = Math.ceil(cells.length / 7);
-  const monthAt = Array.from({ length: weeks }, (_, w) => {
-    const first = cells.slice(w * 7, w * 7 + 7).find((d) => d?.date.endsWith("-01"));
-    return first ? new Date(`${first.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }) : "";
-  });
-  const label = (d: CalendarDay) =>
-    `${dayLabel(d.date, true)}: ${
-      d.spentCents === null ? "still to come" : d.spentCents <= 0 ? (d.spentCents < 0 ? `${formatCents(-d.spentCents)} refunded` : "nothing spent") : `${formatCents(d.spentCents)} spent`
-    }, against ${formatCents(share)} a day`;
-  return (
-    <div className="space-y-1.5">
-      <div className={long ? "overflow-x-auto" : ""}>
-        {long ? (
-          <div className="mb-0.5 grid w-max auto-cols-[0.75rem] grid-flow-col gap-0.5 text-[9px] leading-none text-muted-foreground" aria-hidden>
-            {monthAt.map((m, w) => (
-              <span key={w} className="overflow-visible whitespace-nowrap">
-                {m}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <div className="mb-1 grid grid-cols-7 gap-1 text-center text-[10px] text-muted-foreground" aria-hidden>
-            {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-              <span key={d}>{d}</span>
-            ))}
-          </div>
-        )}
-        <ol
-          className={long ? "grid w-max grid-flow-col grid-rows-7 gap-0.5" : "grid grid-cols-7 gap-1"}
-          aria-label={`Spending by day, against an even share of ${formatCents(share)} a day`}
-        >
-          {cells.map((d, i) =>
-            d === null ? (
-              <li key={`lead-${i}`} aria-hidden />
-            ) : (
-              <li
-                key={d.date}
-                title={label(d)}
-                aria-label={label(d)}
-                className={`flex items-center justify-center rounded-sm tabular-nums ${long ? "size-3" : "h-9 text-xs"} ${
-                  d.tone ? TONE[d.tone] : "border border-border/60"
-                } ${d.spentCents === null ? "text-muted-foreground/50" : ""} ${d.date === today ? "outline-1 outline-offset-1 outline-foreground" : ""}`}
-              >
-                {long ? null : Number(d.date.slice(8, 10))}
-              </li>
-            ),
-          )}
-        </ol>
-      </div>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <span className="size-3 rounded-sm border border-border/60" aria-hidden /> Nothing spent
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="size-3 rounded-sm bg-positive/25" aria-hidden />
-          <span className="size-3 rounded-sm bg-positive/50" aria-hidden /> Up to {formatCents(share)} a day
-        </span>
-        <span className="flex items-center gap-1">
-          <span className="size-3 rounded-sm bg-negative/35" aria-hidden />
-          <span className="size-3 rounded-sm bg-negative/60" aria-hidden /> Over (deeper past double)
-        </span>
-      </div>
-    </div>
   );
 }
