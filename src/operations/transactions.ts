@@ -235,12 +235,18 @@ async function transferAndActivity(
   } => {
     const kind = kindOf.get(row.accountId);
     const payStub = stubOf.get(row.id) ?? null;
+    const transferCategory = row.categoryId !== null && isTransferCategory.has(row.categoryId);
     return {
       transfer: transferPairId ? { transactionId: transferPairId, accountId: pairAccount.get(transferPairId)! } : null,
-      transferUnmatched: !transferPairId && row.categoryId !== null && isTransferCategory.has(row.categoryId),
+      transferUnmatched: !transferPairId && transferCategory,
       payStub,
+      // A transfer is the owner's own money moving, never pay (#209), even
+      // when its payer matches a linked paycheck's: a card payment from
+      // savings at the same bank as the paycheck's account, say.
       paycheckWithoutStub:
         !payStub &&
+        !transferPairId &&
+        !transferCategory &&
         row.amountCents > 0 &&
         ((row.categoryId !== null && paycheckCategories.has(row.categoryId)) || (row.merchant !== null && paycheckPayers.has(row.merchant))),
       investmentActivity: kind && isInvestmentKind(kind) ? investmentActivity(row.description) : null,

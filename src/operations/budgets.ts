@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { and, eq, inArray, isNull, min } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, min } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, budgetAdjustments, budgetTargets, categories, payStubDeposits, payStubs, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
@@ -591,6 +591,39 @@ async function writeVersion(ctx: WriteContext, values: Omit<typeof budgetTargets
   return existing ? ctx.update(budgetTargets, existing.id, values) : ctx.insert(budgetTargets, values);
 }
 
+// One run of the same terms is one item, not two. A version whose terms match
+// the one before it adds nothing, so it's dropped; a version whose terms match
+// the one after it absorbs that one, so a backdated run and the current month
+// don't show as two budgets. A change in terms still starts a new version.
+// A monthly target's anchor doesn't change its periods (every month is one),
+// so only a longer period compares its anchor.
+const sameTerms = (a: typeof budgetTargets.$inferSelect, b: typeof budgetTargets.$inferSelect) =>
+  a.amountCents !== null &&
+  a.amountCents === b.amountCents &&
+  a.periodMonths === b.periodMonths &&
+  (a.periodMonths === 1 || a.anchorOn === b.anchorOn) &&
+  a.rollover === b.rollover &&
+  a.sinkingFund === b.sinkingFund;
+
+/** Writes a version, then folds it into a neighbour with the same terms (see sameTerms). */
+async function writeMergedVersion(ctx: WriteContext, values: Omit<typeof budgetTargets.$inferInsert, "id" | "createdAt">) {
+  const row = await writeVersion(ctx, values);
+  const rows = await ctx.db
+    .select()
+    .from(budgetTargets)
+    .where(values.categoryId ? eq(budgetTargets.categoryId, values.categoryId) : isNull(budgetTargets.categoryId))
+    .orderBy(asc(budgetTargets.effectiveFrom));
+  const at = rows.findIndex((r) => r.id === row.id);
+  const before = rows[at - 1];
+  const after = rows[at + 1];
+  if (before && sameTerms(before, row)) {
+    await ctx.remove(budgetTargets, row.id);
+    return before;
+  }
+  if (after && sameTerms(row, after)) await ctx.remove(budgetTargets, after.id);
+  return row;
+}
+
 export const setTarget = defineWrite({
   name: "budgets.setTarget",
   description:
@@ -633,7 +666,7 @@ export const setTarget = defineWrite({
       sinkingFund: input.sinkingFund && input.periodMonths > 1,
     };
     assertWholePeriod(versions, version);
-    const row = await writeVersion(ctx, version);
+    const row = await writeMergedVersion(ctx, version);
     return { id: row.id, effectiveFrom };
   },
 });
@@ -752,7 +785,7 @@ export const backdateTarget = defineWrite({
   apply: async (ctx, input) => {
     await assertExpenseCategory(ctx, input.categoryId);
     const { version, until } = await plannedBackdate(ctx.db, input);
-    const row = await writeVersion(ctx, version);
+    const row = await writeMergedVersion(ctx, version);
     // Until the next version, or open-ended when there's none (it becomes the current target).
     return { id: row.id, effectiveFrom: version.effectiveFrom, until };
   },
