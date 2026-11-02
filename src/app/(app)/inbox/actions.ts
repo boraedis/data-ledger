@@ -126,3 +126,25 @@ export async function matchAlert(provisionalId: string, transactionId: string) {
 export async function discardAlert(transactionId: string) {
   return provisionalAction("transactions.discardProvisional", { transactionId }, "Discarded a purchase alert the bank never reported");
 }
+
+/**
+ * The owner's verdict on a suspicious-charge flag (#33). "Fine" also tunes
+ * the checks; see src/lib/suspicious/checks.ts.
+ */
+export async function reviewFlag(alertId: string, verdict: "fine" | "suspicious", title: string): Promise<{ error: string } | { ok: true }> {
+  try {
+    await asOwner((db) =>
+      execute(db, {
+        operation: "alerts.review",
+        input: { alertId, verdict },
+        actor: "user",
+        reason: `${verdict === "fine" ? "Fine" : "Suspicious"}: ${title}`,
+      }),
+    );
+    revalidatePath("/inbox");
+    revalidatePath("/");
+    return { ok: true };
+  } catch (error) {
+    return failure(error);
+  }
+}

@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { ACTIVITY_LABELS } from "@/lib/investments/activity";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
@@ -8,7 +7,9 @@ import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { listTags } from "@/operations/tags";
 import { manualMatches } from "@/operations/manual";
-import { listTransactions } from "@/operations/transactions";
+import { listTransactions, transactionTypeCounts } from "@/operations/transactions";
+import { categoryBadge } from "./category-badge";
+import { SubmitOnChange } from "./submit-on-change";
 
 const PAGE_SIZE = 100;
 const select = "h-9 rounded-md border bg-background px-2 text-sm";
@@ -18,9 +19,25 @@ function param(value: string | string[] | undefined): string | undefined {
   return v && v.trim() ? v.trim() : undefined;
 }
 
+const isDay = (value: string | undefined) => (value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined);
+
+// The type filter (#208): one dropdown, one kind of row at a time, each
+// value the list operation's own filter for it.
+const TYPES = {
+  unmatched: { label: "Unmatched transfers", filter: "unmatchedTransfers" },
+  uncategorized: { label: "Uncategorized", filter: "uncategorized" },
+  paystub: { label: "Connected to a pay stub", filter: "payStubLinked" },
+} as const;
+type TypeKey = keyof typeof TYPES;
+const isType = (value: string | undefined): value is TypeKey => value !== undefined && Object.hasOwn(TYPES, value);
+
 // Every transaction, filterable. The filter is a plain GET form: no client
 // JavaScript, and every filtered view is a shareable, back-button-friendly
 // URL. Rows open the detail page, where splitting and tagging happen.
+// ?type= picks one kind of row (#208): transfers with no other half (#184),
+// uncategorized, or connected to a pay stub. ?unmatched=1, its older form,
+// still works for links saved before. ?from= and ?to= limit it to posted
+// dates, as the Cash flow page links to its own period.
 export default async function TransactionsPage(props: PageProps<"/transactions">) {
   const sp = await props.searchParams;
   const filters = {
@@ -28,16 +45,22 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
     categoryId: param(sp.category),
     tagId: param(sp.tag),
     accountId: param(sp.account),
+    from: isDay(param(sp.from)),
+    to: isDay(param(sp.to)),
   };
+  const typeParam = param(sp.type) ?? (param(sp.unmatched) === "1" ? "unmatched" : undefined);
+  const type = isType(typeParam) ? typeParam : undefined;
   const page = Math.max(Number(param(sp.page) ?? 1) || 1, 1);
 
   const db = getDb();
-  const [rows, cats, tagList, accts, toMerge] = await Promise.all([
-    read(db, listTransactions, { ...filters, limit: PAGE_SIZE + 1, offset: (page - 1) * PAGE_SIZE }),
+  const [rows, cats, tagList, accts, toMerge, counts] = await Promise.all([
+    read(db, listTransactions, { ...filters, ...(type ? { [TYPES[type].filter]: true } : {}), limit: PAGE_SIZE + 1, offset: (page - 1) * PAGE_SIZE }),
     read(db, listCategories, {}),
     read(db, listTags, {}),
     read(db, listAccounts, {}),
     read(db, manualMatches, {}),
+    // Under the other filters, so an option's count is the rows it lists.
+    read(db, transactionTypeCounts, filters),
   ]);
   const hasMore = rows.length > PAGE_SIZE;
   const visible = rows.slice(0, PAGE_SIZE);
@@ -45,12 +68,16 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
   const labelOf = new Map(options.map((o) => [o.id, o.label]));
   const accountName = new Map(accts.map((a) => [a.id, a.name]));
 
-  const pageHref = (p: number) => {
+  // Dates default to the view's own; pass {} to drop them.
+  const pageHref = (p: number, dates: { from?: string; to?: string } = filters) => {
     const q = new URLSearchParams();
     if (filters.search) q.set("q", filters.search);
     if (filters.categoryId) q.set("category", filters.categoryId);
     if (filters.tagId) q.set("tag", filters.tagId);
     if (filters.accountId) q.set("account", filters.accountId);
+    if (type) q.set("type", type);
+    if (dates.from) q.set("from", dates.from);
+    if (dates.to) q.set("to", dates.to);
     if (p > 1) q.set("page", String(p));
     const s = q.toString();
     return s ? `/transactions?${s}` : "/transactions";
@@ -119,21 +146,47 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
             </option>
           ))}
         </select>
+        <select name="type" defaultValue={type ?? ""} aria-label="Type" className={select}>
+          <option value="">All types</option>
+          {Object.entries(TYPES).map(([key, t]) => (
+            <option key={key} value={key}>
+              {t.label} ({counts[t.filter]})
+            </option>
+          ))}
+        </select>
+        {/* The Cash flow link carries its period; the form would drop it without these. */}
+        {filters.from ? <input type="hidden" name="from" value={filters.from} /> : null}
+        {filters.to ? <input type="hidden" name="to" value={filters.to} /> : null}
+        {/* Applies a dropdown as soon as it changes (#207); the button is for
+            the search box, and for when scripts are off. */}
+        <SubmitOnChange />
         <button type="submit" className="h-9 rounded-md border px-3 text-sm hover:bg-accent">
           Filter
         </button>
-        {Object.values(filters).some(Boolean) ? (
+        {type || Object.values(filters).some(Boolean) ? (
           <>
             <Link href="/transactions" className="text-sm text-muted-foreground underline">
               Clear
             </Link>
-            {/* Everything this filter shows, filed somewhere else at once (#116). */}
-            <Link href={pageHref(1).replace("/transactions", "/transactions/move")} className="text-sm text-muted-foreground underline">
-              Move these to a category
-            </Link>
+            {/* Everything this filter shows, filed somewhere else at once (#116). The move page reads the
+                category, tag, account and search only, so with a type or dated view it would move more than
+                is shown; those views leave the link out. */}
+            {type || filters.from || filters.to ? null : (
+              <Link href={pageHref(1).replace("/transactions", "/transactions/move")} className="text-sm text-muted-foreground underline">
+                Move these to a category
+              </Link>
+            )}
           </>
         ) : null}
       </form>
+      {filters.from || filters.to ? (
+        <p className="text-sm text-muted-foreground">
+          Posted {filters.from ?? "any day"} to {filters.to ?? "now"}.{" "}
+          <Link href={pageHref(1, {})} className="underline">
+            Show all dates
+          </Link>
+        </p>
+      ) : null}
 
       {visible.length === 0 ? (
         <p className="text-muted-foreground">No transactions match.</p>
@@ -141,28 +194,23 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
         <ul className="min-w-0 divide-y rounded-lg border">
           {visible.map((t) => (
             <li key={t.id}>
-              <Link href={`/transactions/${t.id}`} className="flex min-w-0 items-start justify-between gap-3 px-3 py-2 text-sm hover:bg-accent">
+              {/* A pending row is greyed (#212): it can still change or vanish
+                  before it posts, when its posted version replaces it. */}
+              <Link
+                href={`/transactions/${t.id}`}
+                className={`flex min-w-0 items-start justify-between gap-3 px-3 py-2 text-sm hover:bg-accent ${t.pending ? "text-muted-foreground" : ""}`}
+              >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate font-medium">{t.merchant ?? t.description}</span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {t.postedOn}
                     {t.experiencedOn ? ` (for ${t.experiencedOn})` : ""} · {accountName.get(t.accountId)}
-                    {t.pending ? " · pending" : ""}
                     {t.provisionalSource ? " · from an alert, not yet from the bank" : ""}
                     {t.manual ? " · added by hand" : ""}
                   </span>
                   <span className="mt-0.5 flex flex-wrap gap-1 text-xs">
-                    {t.isSplit ? (
-                      <span className="rounded bg-secondary px-1.5">Split</span>
-                    ) : t.categoryId ? (
-                      <span className="rounded bg-secondary px-1.5">{labelOf.get(t.categoryId)}</span>
-                    ) : t.reimbursedCents >= t.amountCents && t.amountCents > 0 ? null : t.transfer ? null : t.investmentActivity ? (
-                      // Investment accounts are out of budgets: an
-                      // uncategorized trade isn't waiting on anything.
-                      <span className="rounded bg-secondary px-1.5">{ACTIVITY_LABELS[t.investmentActivity]}</span>
-                    ) : (
-                      <span className="rounded bg-warning/15 px-1.5 text-warning">Uncategorized</span>
-                    )}
+                    {t.pending ? <span className="rounded border border-dashed px-1.5">Pending</span> : null}
+                    <Badge badge={categoryBadge(t, (id) => labelOf.get(id))} />
                     {/* What it's connected to, so nothing reads as counted twice:
                         the other side of a transfer, a paycheck's pay stub. */}
                     {t.transfer ? (
@@ -196,7 +244,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     ))}
                   </span>
                 </span>
-                <span className={`shrink-0 tabular-nums ${t.amountCents > 0 ? "text-positive" : ""}`}>
+                <span className={`shrink-0 tabular-nums ${t.amountCents > 0 && !t.pending ? "text-positive" : ""}`}>
                   {formatCents(t.amountCents)}
                 </span>
               </Link>
@@ -211,4 +259,23 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
       </div>
     </div>
   );
+}
+
+function Badge({ badge }: { badge: ReturnType<typeof categoryBadge> }) {
+  if (!badge) return null;
+  switch (badge.kind) {
+    case "split":
+      return <span className="rounded bg-secondary px-1.5">Split</span>;
+    case "category":
+    case "activity":
+      return <span className="rounded bg-secondary px-1.5">{badge.label}</span>;
+    case "uncategorized":
+      // Investment accounts are out of budgets: an uncategorized trade
+      // isn't waiting on anything, so it isn't a warning.
+      return badge.waiting ? (
+        <span className="rounded bg-warning/15 px-1.5 text-warning">Uncategorized</span>
+      ) : (
+        <span className="rounded bg-secondary px-1.5">Uncategorized</span>
+      );
+  }
 }

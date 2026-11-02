@@ -92,3 +92,43 @@ export function changeOver(days: string[], values: (number | null)[], from: stri
   const endCents = values[end] ?? 0;
   return { since: days[start], startCents: values[start]!, endCents, changeCents: endCents - values[start]! };
 }
+
+// --- Stacking (#195) -----------------------------------------------------------
+//
+// A stack puts what's owned above zero and what's owed below, in group
+// order. A balance of exactly zero has no sign of its own, so it takes its
+// group's side from the nearest day with a balance: a card paid off stays
+// in the owed half and narrows to nothing where it sat. Putting zero with
+// the positives instead sent a paid-off card to the top of the assets, and
+// the band was drawn stretched across the chart between the two.
+
+export type Side = "up" | "down";
+export type Band = { y0: number; y1: number };
+
+/** Which half of the stack each day's value belongs to; zero and blank days follow the nearest day with a balance (the earlier one first). */
+export function stackSides(values: (number | null)[]): Side[] {
+  const own = values.map((v): Side | null => (v === null || v === 0 ? null : v > 0 ? "up" : "down"));
+  const filled = [...own];
+  // Forward from the last day with a balance, then backward for the days before the first.
+  for (let d = 1; d < filled.length; d++) filled[d] ??= filled[d - 1];
+  for (let d = filled.length - 2; d >= 0; d--) filled[d] ??= filled[d + 1];
+  return filled.map((side) => side ?? "up");
+}
+
+/** One day's bands, one per group in order, each stacked on the groups before it in its half. */
+export function stackDay(values: (number | null)[], sides: Side[]): Band[] {
+  let up = 0;
+  let down = 0;
+  return values.map((v, g) => {
+    const value = v ?? 0;
+    const side: Side = value > 0 ? "up" : value < 0 ? "down" : sides[g];
+    if (side === "up") {
+      const band = { y0: up, y1: up + value };
+      up += value;
+      return band;
+    }
+    const band = { y0: down, y1: down + value };
+    down += value;
+    return band;
+  });
+}

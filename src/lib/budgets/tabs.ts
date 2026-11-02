@@ -7,7 +7,7 @@ export type BudgetTab = { id: "dashboard" | "month" | "year" | "targets"; label:
 
 export const BUDGET_TABS: BudgetTab[] = [
   { id: "dashboard", label: "Dashboard", path: "/budgets/dashboard" },
-  { id: "month", label: "Month", path: "/budgets" },
+  { id: "month", label: "Month", path: "/budgets/month" },
   { id: "year", label: "Year", path: "/budgets/year" },
   { id: "targets", label: "Targets", path: "/budgets/targets" },
 ];

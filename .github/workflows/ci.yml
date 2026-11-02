@@ -28,7 +28,30 @@ jobs:
       - run: npm run typecheck
       # Includes applying drizzle/ to an in-process Postgres (PGlite), so
       # a broken migration fails here rather than on a real database.
-      - run: npm test
+      #
+      # Since 2026-10-31 this step had died now and then: the test process
+      # killed (exit 143), or the whole runner shut down. It ran out of
+      # memory: every test's database stayed open until its file ended, and
+      # one worker reached 11.6GB of the runner's 16GB. testDb() now closes
+      # each test's database (src/lib/test-utils/db.ts). The memory line
+      # every 5s ("[mem]"), in this step's own log so it survives a killed
+      # run, stays until a few runs confirm that; then drop it.
+      - name: npm test
+        run: |
+          (while sleep 5; do
+            echo "[mem] $(date -u +%T) $(free -m | awk '/^Mem:/ {print "used=" $3 "MB available=" $7 "MB"}') top: $(ps -eo rss=,comm= --sort=-rss | head -4 | awk '{printf "%s=%dMB ", $2, $1/1024}')"
+          done) &
+          monitor=$!
+          set +e
+          npm test
+          status=$?
+          kill $monitor
+          exit $status
+      # When the runner survives a failure, say whether the kernel's
+      # out-of-memory killer was what stopped the tests.
+      - name: Out-of-memory kills
+        if: failure()
+        run: sudo dmesg | grep -iE "out of memory|oom-kill|killed process" || echo "No out-of-memory kills logged."
       # No secrets needed: the DB client and session secret are read lazily,
       # and every page is dynamic, so the build never touches a database.
       - run: npm run build

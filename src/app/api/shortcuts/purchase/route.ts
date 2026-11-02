@@ -1,7 +1,8 @@
 import { getDb, withTransactionalDb } from "@/lib/db";
 import { sendPush } from "@/lib/push/send";
-import { purchaseBody, purchaseNotification, recordPurchase, unmappedNotification } from "@/lib/shortcuts/purchase";
+import { checkPurchase, flaggedNotification, purchaseBody, purchaseNotification, recordPurchase, unmappedNotification, type PurchaseFlag } from "@/lib/shortcuts/purchase";
 import { verifyBearer } from "@/lib/shortcuts/tokens";
+import { execute } from "@/operations/runtime";
 
 // POST /api/shortcuts/purchase: an Apple Pay purchase from the iOS
 // Shortcuts "Transaction" automation (#32; setup in
@@ -32,7 +33,25 @@ export async function POST(request: Request) {
     return json({ status: "unmapped", message: `No account uses the Wallet card name "${outcome.card}" yet. Map it in Settings.` }, 202);
   }
   if (outcome.status === "created") {
-    await sendPush(db, purchaseNotification(parsed.data, outcome)).catch((error) => console.error("Push failed", error));
+    // Checked in its own transaction, after the purchase is saved: a failed
+    // check must never lose the purchase, and tonight's pass checks it again.
+    let flag: PurchaseFlag | null = null;
+    try {
+      flag = await withTransactionalDb((tx) => checkPurchase(tx, outcome.transactionId));
+    } catch (error) {
+      console.error("Suspicious-charge check failed", error);
+    }
+    const notification = flag ? flaggedNotification(outcome, flag) : purchaseNotification(parsed.data, outcome);
+    const sent = await sendPush(db, notification).catch((error) => {
+      console.error("Push failed", error);
+      return null;
+    });
+    // Marked so the nightly push doesn't send the same flag again.
+    if (flag && sent?.sent) {
+      await withTransactionalDb((tx) =>
+        execute(tx, { operation: "alerts.markNotified", actor: "matcher", reason: "Sent a suspicious-charge alert with its purchase", input: { alertIds: [flag.alertId] } }),
+      ).catch((error) => console.error("Marking the alert sent failed", error));
+    }
   }
   return json({ status: outcome.status, transactionId: outcome.transactionId });
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from "crypto";
-import { and, eq, inArray, isNull, min } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, min } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, budgetAdjustments, budgetTargets, categories, payStubDeposits, payStubs, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
@@ -271,6 +271,73 @@ export const budgetMonthly = defineRead({
   },
 });
 
+// A period day by day (#149): one target's current period and its last
+// `past` complete periods, or (categoryId omitted) the month's monthly
+// targets together and the months before, as the Month view totals them.
+// Multi-month targets stay out of the month-wide figures, as they do from
+// "Total this month". Only each line's date and amount: the page draws
+// the burndown and the calendar from them (lib/budgets/burndown.ts).
+export const budgetDaily = defineRead({
+  name: "budgets.daily",
+  description:
+    "Day-by-day spending for a burndown: one target's period as of `on` (categoryId null = the buffer) and its last " +
+    "`past` (default 3) complete periods, or with categoryId omitted, the month's monthly targets together (multi-month " +
+    "targets left out, as in the month's total) and the `past` months before. Each period: start, end, availableCents " +
+    "(target with rollover and rebalancing) and its lines (date, signed amountCents), through `on` for the current one. " +
+    "Null when the target isn't in effect on `on`. Net unless gross is true.",
+  input: z.object({
+    categoryId: targetCategory.optional(),
+    on: isoDate.optional(),
+    gross: z.boolean().default(false),
+    past: z.number().int().min(0).max(6).default(3),
+  }),
+  run: async (db, { categoryId, on = today(), gross, past }) => {
+    const versions = await loadVersions(db);
+    if (!versions.length) return null;
+    // Rollover carries from a target's first period, so the lines go back that far.
+    const from = versions.reduce((min, v) => (v.effectiveFrom < min ? v.effectiveFrom : min), firstOfMonth(monthIndex(on) - 12 * 3));
+    const [lines, { rows }, adjustments] = await Promise.all([
+      spendingLines.run(db, { from, to: on, budgetOnly: true, gross }),
+      labels(db),
+      db.select({ categoryId: budgetAdjustments.categoryId, on: budgetAdjustments.on, amountCents: budgetAdjustments.amountCents }).from(budgetAdjustments),
+    ]);
+    const categories = rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind }));
+    const spend = lines.map((l) => ({ date: l.date, amountCents: l.amountCents, categoryId: l.categoryId }));
+    const periods = periodsByKey({ on, versions, lines: spend, categories, adjustments });
+    const linesOf = (key: string, start: string, end: string) =>
+      linesForTarget({ key: key as typeof BUFFER, start, end: end < on ? end : on, versions, lines: spend, categories }).map((l) => ({ date: l.date, amountCents: l.amountCents }));
+
+    if (categoryId !== undefined) {
+      const key = keyOf(categoryId);
+      const list = periods.get(key) ?? [];
+      const current = list.find((p) => p.start <= on && on <= p.end);
+      if (!current) return null;
+      const period = (p: (typeof list)[number]) => ({ start: p.start, end: p.end, availableCents: p.availableCents, lines: linesOf(key, p.start, p.end) });
+      return { ...period(current), past: list.filter((p) => p.end < current.start).slice(-past).reverse().map(period) };
+    }
+
+    // The month's monthly targets together, and the same for each month before.
+    const month = (index: number) => {
+      const start = firstOfMonth(index);
+      let availableCents = 0;
+      let targets = 0;
+      const out: { date: string; amountCents: number }[] = [];
+      for (const [key, list] of periods) {
+        const p = list.find((x) => x.start === start && monthIndex(x.end) === index);
+        if (!p) continue;
+        targets++;
+        availableCents += p.availableCents;
+        out.push(...linesOf(key, p.start, p.end));
+      }
+      return targets ? { start, end: lastOfMonth(index), availableCents, lines: out } : null;
+    };
+    const current = month(monthIndex(on));
+    if (!current) return null;
+    const before = Array.from({ length: past }, (_, i) => month(monthIndex(on) - 1 - i)).filter((m): m is NonNullable<typeof m> => m !== null);
+    return { ...current, past: before };
+  },
+});
+
 export const budgetYear = defineRead({
   name: "budgets.year",
   description:
@@ -523,6 +590,39 @@ async function writeVersion(ctx: WriteContext, values: Omit<typeof budgetTargets
   return existing ? ctx.update(budgetTargets, existing.id, values) : ctx.insert(budgetTargets, values);
 }
 
+// One run of the same terms is one item, not two. A version whose terms match
+// the one before it adds nothing, so it's dropped; a version whose terms match
+// the one after it absorbs that one, so a backdated run and the current month
+// don't show as two budgets. A change in terms still starts a new version.
+// A monthly target's anchor doesn't change its periods (every month is one),
+// so only a longer period compares its anchor.
+const sameTerms = (a: typeof budgetTargets.$inferSelect, b: typeof budgetTargets.$inferSelect) =>
+  a.amountCents !== null &&
+  a.amountCents === b.amountCents &&
+  a.periodMonths === b.periodMonths &&
+  (a.periodMonths === 1 || a.anchorOn === b.anchorOn) &&
+  a.rollover === b.rollover &&
+  a.sinkingFund === b.sinkingFund;
+
+/** Writes a version, then folds it into a neighbour with the same terms (see sameTerms). */
+async function writeMergedVersion(ctx: WriteContext, values: Omit<typeof budgetTargets.$inferInsert, "id" | "createdAt">) {
+  const row = await writeVersion(ctx, values);
+  const rows = await ctx.db
+    .select()
+    .from(budgetTargets)
+    .where(values.categoryId ? eq(budgetTargets.categoryId, values.categoryId) : isNull(budgetTargets.categoryId))
+    .orderBy(asc(budgetTargets.effectiveFrom));
+  const at = rows.findIndex((r) => r.id === row.id);
+  const before = rows[at - 1];
+  const after = rows[at + 1];
+  if (before && sameTerms(before, row)) {
+    await ctx.remove(budgetTargets, row.id);
+    return before;
+  }
+  if (after && sameTerms(row, after)) await ctx.remove(budgetTargets, after.id);
+  return row;
+}
+
 export const setTarget = defineWrite({
   name: "budgets.setTarget",
   description:
@@ -565,7 +665,7 @@ export const setTarget = defineWrite({
       sinkingFund: input.sinkingFund && input.periodMonths > 1,
     };
     assertWholePeriod(versions, version);
-    const row = await writeVersion(ctx, version);
+    const row = await writeMergedVersion(ctx, version);
     return { id: row.id, effectiveFrom };
   },
 });
@@ -684,7 +784,7 @@ export const backdateTarget = defineWrite({
   apply: async (ctx, input) => {
     await assertExpenseCategory(ctx, input.categoryId);
     const { version, until } = await plannedBackdate(ctx.db, input);
-    const row = await writeVersion(ctx, version);
+    const row = await writeMergedVersion(ctx, version);
     // Until the next version, or open-ended when there's none (it becomes the current target).
     return { id: row.id, effectiveFrom: version.effectiveFrom, until };
   },
@@ -713,6 +813,91 @@ export const backdatePreview = defineRead({
       months.push({ month: firstOfMonth(m).slice(0, 7), before: targetIn(versions, m), after: targetIn([...versions, version], m) });
     }
     return { months, until, rollover: version.rollover };
+  },
+});
+
+// --- Deleting one term or month (#181) ------------------------------------------
+//
+// A target is a list of versions, and each one covers the months from its
+// start until the next one. Deleting a version gives its months back to the
+// version before it, and leaves every later version as it was. A whole
+// target is only ended once no versions are left.
+
+const deleteInput = z.object({
+  categoryId: targetCategory,
+  fromMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  today: isoDate.optional(),
+});
+
+/** The version starting `fromMonth`, the versions without it, and where it stops; refuses what the delete would cut short. */
+async function plannedDelete(db: Db, input: z.infer<typeof deleteInput>) {
+  const on = input.today ?? today();
+  const effectiveFrom = `${input.fromMonth}-01`;
+  const versions = await loadVersions(db);
+  const own = versions.filter((v) => v.categoryId === input.categoryId).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  const version = own.find((v) => v.effectiveFrom === effectiveFrom);
+  if (!version) throw new Error("There's no target starting that month");
+  const previous = own.filter((v) => v.effectiveFrom < effectiveFrom).at(-1) ?? null;
+  const next = own.find((v) => v.effectiveFrom > effectiveFrom) ?? null;
+  // The version before is still in force up to the next one, so the next
+  // one can't start inside one of its multi-month periods.
+  if (previous && next && previous.amountCents !== null && previous.periodMonths > 1) {
+    const start = monthIndex(next.effectiveFrom);
+    const period = naturalPeriod(start, previous.periodMonths, previous.anchorOn);
+    if (period.start !== start) {
+      throw new Error(
+        `Deleting this would cut the target before it short: it runs ${monthName(period.start)} to ${monthName(period.end)} as one budget.`,
+      );
+    }
+  }
+  return { on, version, versions, without: versions.filter((v) => v !== version), until: next ? next.effectiveFrom : null };
+}
+
+export const deleteVersionPreview = defineRead({
+  name: "budgets.deleteVersionPreview",
+  description:
+    "What budgets.deleteVersion would change, without changing anything (#181): each month the version covered, from its " +
+    "start until the next version (or this month), with the target that month had before and the one it falls back to " +
+    "(null: none). Refuses what deleteVersion would refuse.",
+  input: deleteInput,
+  run: async (db, input) => {
+    const { on, version, versions, without, until } = await plannedDelete(db, input);
+    const key = input.categoryId;
+    const targetIn = (all: TargetVersion[], month: number) => {
+      const s = computeStatus({ on: lastOfMonth(month), versions: all, lines: [], categories: [], adjustments: [] });
+      const t = s.targets.find((x) => x.key === (key ?? BUFFER));
+      return t ? { targetCents: t.targetCents, periodMonths: t.periodMonths, start: t.start, end: t.end } : null;
+    };
+    const last = until ? monthIndex(until) - 1 : monthIndex(on);
+    const months = [];
+    for (let m = monthIndex(version.effectiveFrom); m <= last; m++) {
+      months.push({ month: firstOfMonth(m).slice(0, 7), before: targetIn(versions, m), after: targetIn(without, m) });
+    }
+    return { months, until };
+  },
+});
+
+export const deleteVersion = defineWrite({
+  name: "budgets.deleteVersion",
+  description:
+    "Delete one version of a target (categoryId null = the buffer), starting fromMonth (YYYY-MM): its months fall back to " +
+    "the target in force before it, and later versions keep their amounts. budgets.deleteVersionPreview lists the months " +
+    "it changes first. Refused when there's no version starting that month, or when the version before would be cut short.",
+  input: deleteInput,
+  apply: async (ctx, input) => {
+    await assertExpenseCategory(ctx, input.categoryId);
+    const { version } = await plannedDelete(ctx.db, input);
+    const [row] = await ctx.db
+      .select({ id: budgetTargets.id })
+      .from(budgetTargets)
+      .where(
+        and(
+          input.categoryId ? eq(budgetTargets.categoryId, input.categoryId) : isNull(budgetTargets.categoryId),
+          eq(budgetTargets.effectiveFrom, version.effectiveFrom),
+        ),
+      );
+    await ctx.remove(budgetTargets, row.id);
+    return { effectiveFrom: version.effectiveFrom };
   },
 });
 

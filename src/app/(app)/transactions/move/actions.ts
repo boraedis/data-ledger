@@ -6,7 +6,7 @@ import { executeAsOwner } from "@/operations/server";
 type Result = { error: string } | { ok: true; message?: string; unusedCategoryIds?: string[] };
 
 const refresh = () => {
-  for (const path of ["/transactions", "/transactions/move", "/categories", "/spending", "/budgets", "/cash-flow", "/inbox"]) revalidatePath(path);
+  for (const path of ["/transactions", "/transactions/move", "/categories", "/spending", "/budgets/month", "/cash-flow", "/inbox"]) revalidatePath(path);
 };
 
 // Moving the rows the owner left ticked in the preview (#116): one command

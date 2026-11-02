@@ -11,7 +11,7 @@ async function run(operation: string, input: Record<string, unknown>, reason: st
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Something went wrong" };
   }
-  for (const path of ["/cash-flow", "/spending", "/budgets", "/transactions", "/inbox", "/categories/reapply"]) revalidatePath(path);
+  for (const path of ["/cash-flow", "/spending", "/budgets/month", "/transactions", "/inbox", "/categories/reapply"]) revalidatePath(path);
   return { ok: true };
 }
 

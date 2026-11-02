@@ -43,7 +43,16 @@ export function yearTotals(rows: { months: YearCell[] }[]) {
 // monthly share), which is what lets a row's months and a month's targets
 // add up at all.
 
-type PeriodLike = { start: string; end: string; periodMonths: number; targetCents: number; spentCents: number };
+type PeriodLike = { start: string; end: string; periodMonths: number; targetCents: number; availableCents?: number; spentCents: number };
+
+/**
+ * What a period's spending is held to: its target plus rollover and moved
+ * budget, as on the target's card and the Month view (#194). Comparing the
+ * grid's boxes with the bare target put their pace and their over/under a
+ * little off from the card's whenever a period had anything carried in or
+ * moved.
+ */
+export const periodBudget = (p: { targetCents: number; availableCents?: number }): number => p.availableCents ?? p.targetCents;
 type SegmentCell = { month: string; targetCents: number | null; spentCents: number; period?: PeriodLike | null };
 
 export type Segment<C extends SegmentCell> = {
@@ -82,7 +91,7 @@ export function gridSegments<C extends SegmentCell>(cells: C[]): Segment<C>[] {
 
 /** A segment's target and spend: the period's own for a box, the month's for a cell. */
 export function segmentFigures(s: Segment<SegmentCell>): { spentCents: number; targetCents: number } | null {
-  if (s.period) return { spentCents: s.period.spentCents, targetCents: s.period.targetCents };
+  if (s.period) return { spentCents: s.period.spentCents, targetCents: periodBudget(s.period) };
   const c = s.cells[0];
   return c.targetCents === null ? null : { spentCents: c.spentCents, targetCents: c.targetCents };
 }

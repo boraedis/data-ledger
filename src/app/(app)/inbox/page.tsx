@@ -6,7 +6,9 @@ import { listAccounts } from "@/operations/accounts";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { listProvisional } from "@/operations/provisional";
+import { listFlags } from "@/operations/suspicious";
 import { listInbox } from "@/operations/transactions";
+import { FlagList } from "./flags";
 import { Inbox } from "./inbox";
 import { ProvisionalList } from "./provisional";
 
@@ -20,11 +22,12 @@ export const maxDuration = 300;
 // the assistant sees.
 export default async function InboxPage() {
   const db = getDb();
-  const [inbox, cats, accts, alerted] = await Promise.all([
+  const [inbox, cats, accts, alerted, flags] = await Promise.all([
     read(db, listInbox, { limit: LIMIT }),
     read(db, listCategories, {}),
     read(db, listAccounts, {}),
     read(db, listProvisional, {}),
+    read(db, listFlags, {}),
   ]);
   const accountName = new Map(accts.map((a) => [a.id, a.name]));
   const rows = inbox.map((r) => ({ ...r, accountName: accountName.get(r.accountId) ?? "" }));
@@ -40,8 +43,10 @@ export default async function InboxPage() {
             : `${rows.length}${rows.length === LIMIT ? "+" : ""} transactions waiting for a category. Only your rules file transactions on their own; suggestions from your history and the model wait here, pre-selected, for you to confirm one at a time or a set at once.`}
         </p>
       </div>
-      {/* Above the inbox, which can run to hundreds of rows; stale alerts
-          first, since those wait on the owner. */}
+      {/* Above the inbox, which can run to hundreds of rows: a charge that
+          may not be the owner's (#33) first, then stale alerts, since those
+          wait on the owner. */}
+      {flags.open.length || flags.suspicious.length ? <FlagList open={flags.open} suspicious={flags.suspicious} /> : null}
       {alerted.length ? <ProvisionalList rows={[...alerted].sort((a, b) => Number(b.stale) - Number(a.stale))} /> : null}
       {options.length === 0 ? (
         <p className="text-muted-foreground">

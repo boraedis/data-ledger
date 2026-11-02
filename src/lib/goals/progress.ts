@@ -1,7 +1,7 @@
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { accounts, balanceSnapshots, goalAccounts, goals, tags, transactionTags, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { elapsedShare, evenPace, monthlyNeeded } from "@/lib/pace";
+import { daysInclusive, elapsedShare, evenPace, monthlyNeeded } from "@/lib/pace";
 
 // Savings-goal progress (#10). Progress is
 //   the linked accounts' balances (today: their current balance; earlier
@@ -49,6 +49,16 @@ export type GoalProgress = {
   status: GoalStatus;
   // To reach the target by its date from here, per month.
   monthlyNeededCents: number | null;
+  // Where an even pace from the start to the target by its date stands today
+  // (what the goal should hold by now), and on each day of the series.
+  paceNowCents: number | null;
+  pace: { on: string; cents: number }[] | null;
+  // What's been gained each month since the start, so far, over the whole
+  // trajectory: from the first day, however few there've been.
+  averagePerMonthCents: number;
+  // Where the balance lands on the target date if it keeps the same pace as
+  // the whole trajectory: null without a date, or once the target's reached.
+  projectedAtTargetCents: number | null;
   series: { on: string; cents: number }[];
 };
 
@@ -109,6 +119,13 @@ export function goalProgress(goal: GoalInput, today: string): GoalProgress {
         : { kind: "behind", expectedCents, shortCents: expectedCents - currentCents };
   }
 
+  const paceAt = (on: string) => (goal.targetDate ? evenPace(startCents, goal.targetCents, elapsedShare(goal.startOn, goal.targetDate, on)) : null);
+  // The whole trajectory so far, as a per-day pace: the gain over the days
+  // since the start. A few days is a noisy pace, but it's the one there is.
+  const days = daysInclusive(goal.startOn, end);
+  const gainPerDay = (currentCents - startCents) / days;
+  const averagePerMonthCents = Math.round(gainPerDay * (365.25 / 12));
+
   return {
     id: goal.id,
     name: goal.name,
@@ -122,6 +139,13 @@ export function goalProgress(goal: GoalInput, today: string): GoalProgress {
     share: goal.targetCents > 0 ? currentCents / goal.targetCents : 0,
     status,
     monthlyNeededCents: goal.targetDate && remaining > 0 ? monthlyNeeded(remaining, today, goal.targetDate) : null,
+    paceNowCents: paceAt(end),
+    pace: goal.targetDate ? series.map((d) => ({ on: d.on, cents: paceAt(d.on)! })) : null,
+    averagePerMonthCents,
+    projectedAtTargetCents:
+      goal.targetDate && remaining > 0 && today <= goal.targetDate
+        ? Math.round(currentCents + gainPerDay * Math.round((Date.parse(goal.targetDate) - Date.parse(end)) / DAY_MS))
+        : null,
     series,
   };
 }

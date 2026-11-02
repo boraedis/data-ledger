@@ -1,10 +1,12 @@
 import { z } from "zod";
 import { createManualAccount, deleteManualAccount, listAccounts, setManualValue, updateAccount } from "@/operations/accounts";
-import { backdatePreview, backdateRange, backdateTarget, budgetHistory, budgetPay, budgetPayYear, targetTransactions, budgetMonthly, budgetYear, budgetStatus, listTargets, yearlyCharges, rebalance, removeTarget, setTarget } from "@/operations/budgets";
+import { backdatePreview, backdateRange, backdateTarget, budgetDaily, budgetHistory, budgetPay, budgetPayYear, targetTransactions, budgetMonthly, budgetYear, budgetStatus, deleteVersion, deleteVersionPreview, listTargets, yearlyCharges, rebalance, removeTarget, setTarget } from "@/operations/budgets";
+import { cashFlowSeries } from "@/operations/cashflow";
 import { archiveGoal, createGoal, listGoals, updateGoal } from "@/operations/goals";
 import { applySnapshot } from "@/operations/import";
 import { createPayStub, deletePayStub, linkPayDeposit, listPayStubs, payDepositCandidates, updatePayStub } from "@/operations/pay";
 import { categoryChoices } from "@/operations/choices";
+import { checkSuspicious, listFlags, reviewFlag } from "@/operations/suspicious";
 import { setTaxAssumptions, taxEstimate } from "@/operations/taxes";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
 import { getImportMapping, importHistory, saveImportMapping } from "@/operations/history";
@@ -36,6 +38,7 @@ import {
   listInbox,
   recordSuggestions,
   listTransactions,
+  transactionTypeCounts,
   matchTransfers,
   misfiledTransfers,
   pairAsTransfer,
@@ -71,22 +74,27 @@ export const operations: Operation[] = [
   reapplyRule,
   deleteRule,
   listTransactions,
+  transactionTypeCounts,
   moveToCategoryPreview,
   moveToCategory,
   getTransaction,
   spendingLines,
   uncategorizedSpend,
   investmentIncome,
+  cashFlowSeries,
   budgetStatus,
   budgetHistory,
   budgetMonthly,
   budgetYear,
+  budgetDaily,
   budgetPay,
   budgetPayYear,
   targetTransactions,
   backdateRange,
   backdateTarget,
   backdatePreview,
+  deleteVersion,
+  deleteVersionPreview,
   yearlyCharges,
   listTargets,
   setTarget,
@@ -114,6 +122,9 @@ export const operations: Operation[] = [
   markAlertsNotified,
   listAlerts,
   dismissAlert,
+  checkSuspicious,
+  reviewFlag,
+  listFlags,
   listPeople,
   createPerson,
   updatePerson,

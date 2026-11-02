@@ -31,3 +31,17 @@ describe("pace", () => {
     expect(monthlyNeeded(100, "2026-10-13", "2026-09-30")).toBeNull();
   });
 });
+
+describe("projecting a quarter from its first month (#194)", () => {
+  it("carries the spending so far over the whole period, by day", () => {
+    // $80 spent by Oct 31 of an Oct–Dec period: 31 of 92 days.
+    const share = elapsedShare("2026-10-01", "2026-12-31", "2026-10-31");
+    expect(share).toBeCloseTo(31 / 92, 10);
+    expect(projectAtEnd(8_000, share)).toBe(23_742);
+  });
+
+  it("has no projection once the period is over or before anything is spent", () => {
+    expect(projectAtEnd(0, 0.34)).toBeNull();
+    expect(elapsedShare("2026-10-01", "2026-12-31", "2026-12-31")).toBe(1);
+  });
+});

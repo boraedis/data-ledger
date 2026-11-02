@@ -384,7 +384,7 @@ const targetText = (t: { targetCents: number; periodMonths: number } | null) =>
 
 // Every month a backdate changes, before and after (#137), shown on every
 // backdated save, rollover or not. Nothing is written until it's confirmed.
-function BackdateWarning({ months, until }: { months: BackdateMonth[]; until: string | null }) {
+export function BackdateWarning({ months, until }: { months: BackdateMonth[]; until: string | null }) {
   return (
     <div role="alert" className="space-y-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs">
       <p className="font-medium text-warning">

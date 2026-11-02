@@ -8,6 +8,8 @@ import {
   changeOver,
   groupSeries,
   rangeStart,
+  stackDay,
+  stackSides,
   sumSeries,
   type BreakdownAccount,
   type Daily,
@@ -15,10 +17,11 @@ import {
   type RangeKey,
 } from "@/lib/net-worth-breakdown";
 
-// Net worth over time, broken down (#134): a stack of each group's value per
-// day, assets above zero and what's owed below, with net worth as a line on
-// top. Group by kind, account or institution; pick a range; click a group to
-// see it alone. SVG at the container's measured width, as ValueChart does.
+// Net worth over time, broken down (#134). Opens on the plain line of net
+// worth (#195); the stacked view is one toggle away: a stack of each group's
+// value per day, assets above zero and what's owed below, with net worth as a
+// line on top. Group by kind, account or institution; pick a range; click a
+// group to see it alone. SVG at the container's measured width, as ValueChart does.
 //
 // Dataviz choices:
 // - Colour follows the group, never its rank: a kind always has the same
@@ -67,8 +70,11 @@ function compact(cents: number) {
 const formatDay = (on: string) => new Date(`${on}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 const signed = (cents: number) => `${cents > 0 ? "+" : cents < 0 ? "−" : ""}${formatCents(Math.abs(cents))}`;
 
+type View = "line" | "stacked";
+
 export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccount[]; daily: Daily }) {
   const [groupBy, setGroupBy] = useState<GroupBy>("kind");
+  const [view, setView] = useState<View>("line");
   const [range, setRange] = useState<RangeKey>("all");
   const [selected, setSelected] = useState<string | null>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -98,23 +104,12 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
 
   const geometry = useMemo(() => {
     if (width === 0 || visibleDays.length === 0) return null;
-    // Each day's stack: positives up from zero, negatives down, in group order.
-    const stacks = visibleDays.map((_, j) => {
-      const d = startIdx + j;
-      let up = 0;
-      let down = 0;
-      return shown.map((g) => {
-        const v = g.values[d] ?? 0;
-        if (v >= 0) {
-          const band = { y0: up, y1: up + v };
-          up += v;
-          return band;
-        }
-        const band = { y0: down, y1: down + v };
-        down += v;
-        return band;
-      });
-    });
+    // Each day's stack: positives up from zero, negatives down, in group
+    // order. A zero balance keeps its group's side (#195). The line view has
+    // no stack, only the line's own values.
+    const stacked = view === "stacked";
+    const sides = shown.map((g) => stackSides(g.values));
+    const stacks = stacked ? visibleDays.map((_, j) => stackDay(shown.map((g) => g.values[startIdx + j]), sides.map((sd) => sd[startIdx + j]))) : [];
     let lo = 0;
     let hi = 0;
     for (const s of stacks) {
@@ -122,6 +117,13 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
         lo = Math.min(lo, b.y1);
         hi = Math.max(hi, b.y1);
       }
+    }
+    // The line sets the scale on its own in the line view, and can reach past the stack's edge in the other.
+    for (let j = 0; j < visibleDays.length; j++) {
+      const v = line[startIdx + j];
+      if (v === null || v === undefined) continue;
+      lo = Math.min(lo, v);
+      hi = Math.max(hi, v);
     }
     if (lo === hi) hi = lo + 10_000;
     const step = niceStep(hi - lo, 4);
@@ -133,7 +135,7 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
     const plotH = HEIGHT - PAD.top - PAD.bottom;
     const x = (i: number) => PAD.left + (domain <= 1 ? plotW / 2 : (i / (domain - 1)) * plotW);
     const y = (v: number) => PAD.top + (1 - (v - min) / (max - min)) * plotH;
-    const areas = shown.map((_, gi) => {
+    const areas = (stacked ? shown : []).map((_, gi) => {
       const top = stacks.map((s, j) => `${x(lead + j).toFixed(1)},${y(s[gi].y1).toFixed(1)}`);
       const bottom = stacks.map((s, j) => `${x(lead + j).toFixed(1)},${y(s[gi].y0).toFixed(1)}`).reverse();
       return `M${top.join("L")}L${bottom.join("L")}Z`;
@@ -144,7 +146,7 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
       .map((p, k) => `${k ? "L" : "M"}${x(lead + p.j).toFixed(1)},${y(p.v!).toFixed(1)}`)
       .join("");
     return { ticks, x, y, areas, netPath, plotW };
-  }, [width, visibleDays, shown, startIdx, lead, domain, line]);
+  }, [width, visibleDays, shown, startIdx, lead, domain, line, view]);
 
   // The readout and legend show the hovered day, else the latest.
   const beforeHistory = hover !== null && hover < lead;
@@ -164,6 +166,13 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
+        <div role="group" aria-label="Chart type" className="flex rounded-md border text-xs">
+          {(["line", "stacked"] as const).map((v) => (
+            <button key={v} type="button" aria-pressed={view === v} className={button(view === v)} onClick={() => setView(v)}>
+              {v === "line" ? "Line" : "Stacked"}
+            </button>
+          ))}
+        </div>
         <div role="group" aria-label="Group by" className="flex rounded-md border text-xs">
           {(["kind", "account", "institution"] as const).map((g) => (
             <button
@@ -217,7 +226,7 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
             width={width}
             height={HEIGHT}
             role="img"
-            aria-label={`${selected ? shown[0]?.label : "Net worth"} from ${formatDay(from)} to ${formatDay(lastDay)}, grouped by ${groupBy}. The legend below lists each group's value and change.`}
+            aria-label={`${selected ? shown[0]?.label : "Net worth"} from ${formatDay(from)} to ${formatDay(lastDay)}${view === "stacked" ? `, stacked by ${groupBy}` : ""}. The legend below lists each group's value and change.`}
           >
             {geometry.ticks.map((t) => (
               <line
@@ -280,7 +289,7 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
         })}
       </ul>
       <p className="text-xs text-muted-foreground">
-        Assets stack above zero and what&apos;s owed below; the line is {selected ? "the selected group" : "net worth"}. Changes are over the range, from
+        {view === "stacked" ? "Assets stack above zero and what's owed below; the line" : "The line"} is {selected ? "the selected group" : "net worth"}. Changes are over the range, from
         its first day or the first day there&apos;s a balance after it.{selected ? " Click it again to see every group." : " Click a group to see it alone."}
       </p>
     </div>

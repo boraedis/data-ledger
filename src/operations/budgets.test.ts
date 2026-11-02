@@ -1,17 +1,18 @@
 import { and, eq, gte, like, lte } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { accounts, budgetTargets, categories, commandLog, payStubs, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { lastOfMonth, monthIndex } from "@/lib/budgets/engine";
 import { suggestedTargetCents } from "@/lib/budgets/format";
 import { applySeed } from "@/lib/seed/apply";
-import { testDb } from "@/lib/test-utils/db";
+import { cloneDb, testDb } from "@/lib/test-utils/db";
 import { execute, undoCommand } from "@/operations/runtime";
 
 // On the synthetic seed. Groceries (QUILLFIELD MARKET) and coffee (CORNER
 // BEAN CAFE) are categorized directly as test setup.
 
 let db: Db;
+let seeded: Db;
 let cat: Record<string, string>;
 
 type Target = { categoryId: string | null; name: string; start: string; end: string; targetCents: number; spentCents: number; availableCents: number; carryInCents: number };
@@ -30,13 +31,19 @@ async function spentOn(pattern: string, from: string, to: string) {
   return -rows.reduce((s, r) => s + r.amountCents, 0);
 }
 
+// The seed is applied once for the file, then each test gets its own copy of
+// it, so every test still starts from the same data without reseeding.
+beforeAll(async () => {
+  seeded = await testDb();
+  await applySeed(seeded, { endDate: new Date("2026-06-30") });
+  cat = Object.fromEntries((await seeded.select().from(categories)).map((c) => [c.name, c.id]));
+  await seeded.update(transactions).set({ categoryId: cat.Groceries }).where(like(transactions.description, "QUILLFIELD%"));
+  await seeded.update(transactions).set({ categoryId: cat.Coffee }).where(like(transactions.description, "CORNER BEAN%"));
+  await seeded.update(transactions).set({ categoryId: cat.Paycheck }).where(like(transactions.description, "ACME WIDGETS%"));
+});
+
 beforeEach(async () => {
-  db = await testDb();
-  await applySeed(db, { endDate: new Date("2026-06-30") });
-  cat = Object.fromEntries((await db.select().from(categories)).map((c) => [c.name, c.id]));
-  await db.update(transactions).set({ categoryId: cat.Groceries }).where(like(transactions.description, "QUILLFIELD%"));
-  await db.update(transactions).set({ categoryId: cat.Coffee }).where(like(transactions.description, "CORNER BEAN%"));
-  await db.update(transactions).set({ categoryId: cat.Paycheck }).where(like(transactions.description, "ACME WIDGETS%"));
+  db = await cloneDb(seeded);
 });
 
 describe("budgets", () => {
@@ -246,6 +253,36 @@ describe("budgets.monthly with moved budget (#146)", () => {
   });
 });
 
+describe("budgets.daily (#149)", () => {
+  type Period = { start: string; end: string; availableCents: number; lines: { date: string; amountCents: number }[] };
+  type Daily = (Period & { past: Period[] }) | null;
+  const daily = async (input: Record<string, unknown>) => (await run("budgets.daily", { on: "2026-06-20", ...input })).output as Daily;
+
+  it("gives a target's period through `on`, its lines matching its spent figure, and the periods before", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 60_000, today: "2026-03-10" });
+    const d = (await daily({ categoryId: cat.Groceries }))!;
+    expect(d).toMatchObject({ start: "2026-06-01", end: "2026-06-30", availableCents: 60_000 });
+    expect(d.lines.every((l) => l.date <= "2026-06-20")).toBe(true);
+    expect(-d.lines.reduce((sum, l) => sum + l.amountCents, 0)).toBe(target(await status("2026-06-20"), cat.Groceries).spentCents);
+    // March, April and May, most recent first.
+    expect(d.past.map((p) => p.start)).toEqual(["2026-05-01", "2026-04-01", "2026-03-01"]);
+    expect(await daily({ categoryId: cat.Coffee })).toBeNull();
+  });
+
+  it("totals the month's monthly targets, leaving a multi-month one out, as the month's total does", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 60_000, today: "2026-06-10" });
+    await run("budgets.setTarget", { categoryId: null, amountCents: 40_000, today: "2026-06-10" });
+    await run("budgets.setTarget", { categoryId: cat.Coffee, amountCents: 120_000, periodMonths: 12, anchorMonth: "2026-06", today: "2026-06-10" });
+    const d = (await daily({}))!;
+    expect(d.availableCents).toBe(100_000);
+    const s = await status("2026-06-20");
+    const monthlySpent = target(s, cat.Groceries).spentCents + target(s, null).spentCents;
+    expect(-d.lines.reduce((sum, l) => sum + l.amountCents, 0)).toBe(monthlySpent);
+    // No monthly targets before June.
+    expect(d.past).toEqual([]);
+  });
+});
+
 describe("budgets.yearlyCharges (#109)", () => {
   type Yearly = { categoryId: string; amountCents: number; setAsideMonthlyCents: number; anchorMonth: string; charges: { merchant: string }[] }[];
   const yearly = async () => (await run("budgets.yearlyCharges", { on: "2026-06-30" })).output as Yearly;
@@ -436,6 +473,74 @@ describe("budgets.backdateTarget (#130)", () => {
   it("still changes a monthly target for one month, from this month", async () => {
     await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-06-10" });
     await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 50_000, today: "2026-10-10" });
+    expect(target(await status("2026-09-30"), cat.Dining).targetCents).toBe(40_000);
+    expect(target(await status("2026-10-31"), cat.Dining).targetCents).toBe(50_000);
+  });
+});
+
+describe("budgets.deleteVersion (#181)", () => {
+  const del = (input: Record<string, unknown>) => run("budgets.deleteVersion", { today: "2026-10-10", ...input });
+  const preview = async (input: Record<string, unknown>) =>
+    (await run("budgets.deleteVersionPreview", { today: "2026-10-10", ...input })).output as {
+      months: { month: string; before: { targetCents: number } | null; after: { targetCents: number } | null }[];
+      until: string | null;
+    };
+
+  it("deletes one term: its months fall back to the target before it, and later versions keep theirs", async () => {
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-06", amountCents: 35_000, today: "2026-10-10" });
+
+    // June onwards is $350; deleting June's version reviews the months it covered, from $350 back to $400.
+    const review = await preview({ categoryId: cat.Dining, fromMonth: "2026-06" });
+    expect(review.months.map((m) => [m.month, m.before?.targetCents, m.after?.targetCents])).toEqual([
+      ["2026-06", 35_000, 40_000],
+      ["2026-07", 35_000, 40_000],
+      ["2026-08", 35_000, 40_000],
+      ["2026-09", 35_000, 40_000],
+      ["2026-10", 35_000, 40_000],
+    ]);
+
+    await del({ categoryId: cat.Dining, fromMonth: "2026-06" });
+    expect(target(await status("2026-05-31"), cat.Dining).targetCents).toBe(40_000);
+    expect(target(await status("2026-10-31"), cat.Dining).targetCents).toBe(40_000);
+    expect(await db.select().from(budgetTargets).where(eq(budgetTargets.categoryId, cat.Dining))).toHaveLength(1);
+  });
+
+  it("refuses a month with no version starting it", async () => {
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    await expect(del({ categoryId: cat.Dining, fromMonth: "2026-03" })).rejects.toThrow(/no target starting that month/);
+  });
+
+  it("removes the target entirely once its last version is deleted", async () => {
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    await del({ categoryId: cat.Dining, fromMonth: "2026-01" });
+    expect(target(await status("2026-10-31"), cat.Dining)).toBeUndefined();
+  });
+});
+
+describe("one run of the same terms is one item (#same-terms)", () => {
+  const versionsOf = async (categoryId: string) => db.select().from(budgetTargets).where(eq(budgetTargets.categoryId, categoryId));
+
+  it("a backdated run that meets the current month with the same terms is one version", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-10-10" });
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    const rows = await versionsOf(cat.Dining);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].effectiveFrom).toBe("2026-01-01");
+    expect(target(await status("2026-03-31"), cat.Dining).targetCents).toBe(40_000);
+    expect(target(await status("2026-10-31"), cat.Dining).targetCents).toBe(40_000);
+  });
+
+  it("setting the same terms again adds no version", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-06-10" });
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 40_000, today: "2026-10-10" });
+    expect(await versionsOf(cat.Dining)).toHaveLength(1);
+  });
+
+  it("a change in terms still starts a new version", async () => {
+    await run("budgets.backdateTarget", { categoryId: cat.Dining, fromMonth: "2026-01", amountCents: 40_000, today: "2026-10-10" });
+    await run("budgets.setTarget", { categoryId: cat.Dining, amountCents: 50_000, today: "2026-10-10" });
+    expect(await versionsOf(cat.Dining)).toHaveLength(2);
     expect(target(await status("2026-09-30"), cat.Dining).targetCents).toBe(40_000);
     expect(target(await status("2026-10-31"), cat.Dining).targetCents).toBe(50_000);
   });

@@ -39,15 +39,17 @@ export function awaitingCategory(db: Db): SQL {
     eq(transactions.isSplit, false),
     isNull(transactions.transferPairId),
     inArray(transactions.accountId, budgetAccountIds(db)),
-    // A payment fully matched to what friends owed (#8) is settled, not
-    // income, and needs no category.
-    sql`not exists (
-      select 1 from ${reimbursementMatches}
-      where ${reimbursementMatches.transactionId} = ${transactions.id}
-      having sum(${reimbursementMatches.amountCents}) >= ${transactions.amountCents}
-    )`,
+    notFullyReimbursed,
   )!;
 }
+
+// A payment fully matched to what friends owed (#8) is settled, not
+// income, and needs no category.
+const notFullyReimbursed = sql`not exists (
+  select 1 from ${reimbursementMatches}
+  where ${reimbursementMatches.transactionId} = ${transactions.id}
+  having sum(${reimbursementMatches.amountCents}) >= ${transactions.amountCents}
+)`;
 
 export type TransactionFilter = {
   from?: string;
@@ -58,6 +60,8 @@ export type TransactionFilter = {
   search?: string;
   uncategorized?: boolean;
   budgetOnly?: boolean;
+  unmatchedTransfers?: boolean;
+  payStubLinked?: boolean;
 };
 
 /**
@@ -69,7 +73,24 @@ export function transactionFilters(db: Db, input: TransactionFilter): SQL[] {
   if (input.from) filters.push(gte(transactions.postedOn, input.from));
   if (input.to) filters.push(lte(transactions.postedOn, input.to));
   if (input.accountId) filters.push(eq(transactions.accountId, input.accountId));
-  if (input.uncategorized) filters.push(isNull(transactions.categoryId), eq(transactions.isSplit, false));
+  // The rows the list badges Uncategorized (#208): a paired transfer or a
+  // fully reimbursed payment has no category either, but its own badge says
+  // what it is, so it isn't one. Unlike awaitingCategory, investment
+  // accounts are in: their rows are uncategorized too, just not waited on.
+  if (input.uncategorized)
+    filters.push(isNull(transactions.categoryId), eq(transactions.isSplit, false), isNull(transactions.transferPairId), notFullyReimbursed);
+  // The same rows as the "other half not found" badge (transferUnmatched): filed
+  // under a transfer category, with no pair. Cash flow's list also matches by
+  // amount within days, so it can differ on a pair not yet stored (#184).
+  if (input.unmatchedTransfers)
+    filters.push(
+      isNull(transactions.transferPairId),
+      inArray(transactions.categoryId, db.select({ id: categories.id }).from(categories).where(eq(categories.kind, "transfer"))),
+    );
+  // Paycheck deposits linked to a pay stub (#60, #91), the rows with a
+  // `payStub` badge.
+  if (input.payStubLinked)
+    filters.push(inArray(transactions.id, db.select({ id: payStubDeposits.transactionId }).from(payStubDeposits)));
   if (input.budgetOnly) filters.push(inArray(transactions.accountId, budgetAccountIds(db)));
   if (input.categoryId) {
     const viaSplit = db
@@ -99,7 +120,9 @@ export const listTransactions = defineRead({
   description:
     "List transactions, newest first. Amounts are integer cents; negative means money left the account. " +
     "Filter by date range (inclusive, YYYY-MM-DD, on posted date), account, category (matches split parts " +
-    "too), tag, text search on merchant/description, or uncategorized only. budgetOnly limits to accounts " +
+    "too), tag, text search on merchant/description, uncategorized only (no category and no transfer or " +
+    "reimbursement that explains it), unmatchedTransfers (transfers with no other half) or payStubLinked " +
+    "(paycheck deposits linked to a pay stub). budgetOnly limits to accounts " +
     "that count toward budgets (excludes investment, retirement, loan and asset accounts) — use it for " +
     "anything about spending. Page with offset. `transfer` is set when the transaction is one side of a " +
     "transfer between the owner's accounts (never spending or income); `investmentActivity` classifies " +
@@ -118,6 +141,8 @@ export const listTransactions = defineRead({
     search: z.string().trim().min(1).max(100).optional(),
     uncategorized: z.boolean().optional(),
     budgetOnly: z.boolean().optional(),
+    unmatchedTransfers: z.boolean().optional(),
+    payStubLinked: z.boolean().optional(),
     limit: z.number().int().min(1).max(500).default(100),
     offset: z.number().int().min(0).default(0),
   }),
@@ -222,12 +247,18 @@ async function transferAndActivity(
   } => {
     const kind = kindOf.get(row.accountId);
     const payStub = stubOf.get(row.id) ?? null;
+    const transferCategory = row.categoryId !== null && isTransferCategory.has(row.categoryId);
     return {
       transfer: transferPairId ? { transactionId: transferPairId, accountId: pairAccount.get(transferPairId)! } : null,
-      transferUnmatched: !transferPairId && row.categoryId !== null && isTransferCategory.has(row.categoryId),
+      transferUnmatched: !transferPairId && transferCategory,
       payStub,
+      // A transfer is the owner's own money moving, never pay (#209), even
+      // when its payer matches a linked paycheck's: a card payment from
+      // savings at the same bank as the paycheck's account, say.
       paycheckWithoutStub:
         !payStub &&
+        !transferPairId &&
+        !transferCategory &&
         row.amountCents > 0 &&
         ((row.categoryId !== null && paycheckCategories.has(row.categoryId)) || (row.merchant !== null && paycheckPayers.has(row.merchant))),
       investmentActivity: kind && isInvestmentKind(kind) ? investmentActivity(row.description) : null,
@@ -251,6 +282,43 @@ export async function removeSplits(ctx: WriteContext, transactionId: string) {
     .where(eq(transactionSplits.transactionId, transactionId));
   for (const part of parts) await ctx.remove(transactionSplits, part.id);
 }
+
+const listFilterInput = {
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  accountId: z.uuid().optional(),
+  categoryId: z.uuid().optional(),
+  tagId: z.uuid().optional(),
+  search: z.string().trim().min(1).max(100).optional(),
+};
+
+/**
+ * How many rows each of the list's type filters would show (#208), under
+ * the other filters in effect, so the number on an option is the number
+ * of rows choosing it lists. Counted in the database, uncapped.
+ */
+export const transactionTypeCounts = defineRead({
+  name: "transactions.typeCounts",
+  description:
+    "Counts for the Transactions list's type filter, under the same date, account, category, tag and search " +
+    "filters as transactions.list: unmatchedTransfers, uncategorized and payStubLinked.",
+  input: z.object(listFilterInput),
+  run: async (db, input) => {
+    const countOf = async (type: Pick<TransactionFilter, "unmatchedTransfers" | "uncategorized" | "payStubLinked">) => {
+      const [{ n }] = await db
+        .select({ n: count() })
+        .from(transactions)
+        .where(and(...transactionFilters(db, { ...input, ...type })));
+      return n;
+    };
+    const [unmatchedTransfers, uncategorized, payStubLinked] = await Promise.all([
+      countOf({ unmatchedTransfers: true }),
+      countOf({ uncategorized: true }),
+      countOf({ payStubLinked: true }),
+    ]);
+    return { unmatchedTransfers, uncategorized, payStubLinked };
+  },
+});
 
 export const setTransactionCategory = defineWrite({
   name: "transactions.setCategory",
