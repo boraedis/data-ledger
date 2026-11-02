@@ -118,7 +118,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
         <input
           name="q"
           defaultValue={filters.search}
-          placeholder="Search merchant or description"
+          placeholder="Search merchant, date or amount"
           aria-label="Search"
           className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 text-sm sm:max-w-xs"
         />
