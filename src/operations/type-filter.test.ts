@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { accounts, categories, payStubDeposits, transactions } from "@/db/schema";
+import { accounts, alerts, categories, payStubDeposits, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
@@ -15,7 +15,7 @@ let db: Db;
 let cat: Record<string, string>;
 let card: string;
 
-const TYPES = ["unmatchedTransfers", "uncategorized", "payStubLinked"] as const;
+const TYPES = ["unmatchedTransfers", "uncategorized", "payStubLinked", "flagged"] as const;
 const list = (type: (typeof TYPES)[number], input: Record<string, unknown> = {}) =>
   read(db, listTransactions, { [type]: true, limit: 500, ...input });
 const idsOf = async (type: (typeof TYPES)[number], input: Record<string, unknown> = {}) => (await list(type, input)).map((r) => r.id);
@@ -70,5 +70,43 @@ describe("the type filter (#208)", () => {
       for (const type of TYPES) expect(counts[type], `${type} with ${JSON.stringify(filters)}`).toBe((await list(type, filters)).length);
     }
     expect((await read(db, transactionTypeCounts, { search: "brightwick" })).uncategorized).toBe(1);
+  });
+
+  describe("Flagged (#210)", () => {
+    const flaggedIds = () => idsOf("flagged");
+    const flag = async (transactionId: string) => {
+      const [row] = await db
+        .insert(alerts)
+        .values({ kind: "new_merchant", dedupeKey: `test-${transactionId}`, merchant: "Brightwick Lamps", accountId: card, transactionId, title: "t", detail: "d", occurredOn: "2026-06-20", amountCents: 32_000 })
+        .returning();
+      return row.id;
+    };
+    const tagOf = async (id: string) => (await read(db, listTransactions, { search: "brightwick", limit: 500 })).find((r) => r.id === id)!.flagged;
+
+    it("tags a flagged charge until it's called fine, and the filter lists exactly the tagged rows", async () => {
+      const lamp = await charge(320, "Brightwick Lamps");
+      expect(await tagOf(lamp.id)).toBe(false);
+      const alertId = await flag(lamp.id);
+      expect(await tagOf(lamp.id)).toBe(true);
+      expect(await flaggedIds()).toEqual([lamp.id]);
+
+      await user("alerts.review", { alertId, verdict: "fine" });
+      expect(await tagOf(lamp.id)).toBe(false);
+      expect(await flaggedIds()).toEqual([]);
+    });
+
+    it("keeps the tag, and the row in the filter, once it's called suspicious", async () => {
+      const lamp = await charge(320, "Brightwick Lamps");
+      const alertId = await flag(lamp.id);
+      await user("alerts.review", { alertId, verdict: "suspicious" });
+      expect(await tagOf(lamp.id)).toBe(true);
+      expect(await flaggedIds()).toEqual([lamp.id]);
+    });
+
+    it("ignores other alerts on a charge, such as a price increase", async () => {
+      const lamp = await charge(320, "Brightwick Lamps");
+      await db.insert(alerts).values({ kind: "price_increase", dedupeKey: "test", merchant: "Brightwick Lamps", accountId: card, transactionId: lamp.id, title: "t", detail: "d", occurredOn: "2026-06-20" });
+      expect(await tagOf(lamp.id)).toBe(false);
+    });
   });
 });
