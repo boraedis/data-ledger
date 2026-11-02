@@ -604,6 +604,8 @@ local Postgres works the same way.
 | `MODEL_AUTO_APPLY_THRESHOLD` | optional | Confidence (0–1) at or above which the model's suggestion counts as confident, for the inbox's "confirm the confident ones" selection; nothing is applied on it. Default 0.9 |
 | `BRIDGE_TOKEN` | optional | Bearer token Data Diary sends to the bridge (32+ chars). Unset = bridge off |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` | optional | Push notifications (#29): the key pair from `npx web-push generate-vapid-keys`, and a `mailto:` or https contact. Unset = no notifications |
+| `TIINGO_API_KEY` | optional | Stock, ETF and mutual fund prices (#229) from Tiingo's free plan (personal use only). Sent as a header, never in a URL. Unset = synced brokerages keep their synced value; crypto prices need no key |
+| `PRICE_REFRESH_MINUTES`, `PRICE_STALE_MINUTES`, `PRICE_DAILY_STALE_MINUTES` | optional | How often prices refresh on request (default 60), when an intraday price counts as stale (180), and when a once-a-day price such as a fund's NAV does (5760, four days) |
 
 ### Authentication
 

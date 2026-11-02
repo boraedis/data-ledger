@@ -15,7 +15,7 @@ import { defineWrite } from "@/operations/define";
 // what the owner holds.
 
 const result = z.union([
-  z.object({ symbol: z.string().min(1).max(16), price: z.string().regex(/^\d+(\.\d+)?$/), asOf: z.iso.datetime() }),
+  z.object({ symbol: z.string().min(1).max(16), price: z.string().regex(/^\d+(\.\d+)?$/), asOf: z.iso.datetime(), daily: z.boolean().optional() }),
   z.object({ symbol: z.string().min(1).max(16), price: z.null() }),
   z.object({ symbol: z.string().min(1).max(16), failed: z.literal(true) }),
 ]);
@@ -42,12 +42,14 @@ export const refreshQuotes = defineWrite({
         // A failed request only moves checkedAt: the last price stays, and
         // grows stale with its time showing, instead of being asked for on
         // every page view.
+        // A once-a-day price is stored as such ("tiingo:daily"), which is how
+        // it's later read as current for a day rather than an hour.
         const values =
           "failed" in r
             ? { checkedAt }
             : r.price === null
               ? { price: null, asOf: null, checkedAt, source }
-              : { price: r.price, asOf: new Date(r.asOf), checkedAt, source };
+              : { price: r.price, asOf: new Date(r.asOf), checkedAt, source: r.daily ? `${source}:daily` : source };
         if (existing) await ctx.update(quotes, existing.id, values);
         else await ctx.insert(quotes, { assetClass, symbol: r.symbol, source, price: null, asOf: null, ...values });
 

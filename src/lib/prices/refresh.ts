@@ -1,9 +1,12 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { manualPositions, quotes } from "@/db/schema";
+import { and, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { accounts, holdingSnapshots, manualPositions, quotes } from "@/db/schema";
 import type { Db } from "@/db/types";
+import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { coinbaseSource } from "@/lib/prices/coinbase";
-import { REFRESH_MINUTES } from "@/lib/prices/config";
+import { DAILY_REFRESH_MINUTES, REFRESH_MINUTES } from "@/lib/prices/config";
+import { isDailySource } from "@/lib/prices/quotes";
 import type { AssetClass, PriceSource } from "@/lib/prices/source";
+import { tiingoSource } from "@/lib/prices/tiingo";
 import { execute } from "@/operations/runtime";
 
 // Keeping market prices fresh (#229), at most once per REFRESH_MINUTES. The
@@ -12,38 +15,90 @@ import { execute } from "@/operations/runtime";
 // hour refreshes, and the rest find nothing due and write nothing.
 //
 // What gets priced: the symbols of positions entered by hand (#231), as
-// crypto. A synced brokerage's equities will join once an equity source is
-// chosen; until then they have none, and nothing is asked about them.
+// crypto, and the symbols in each brokerage or retirement account's newest
+// holdings snapshot, as equities (Tiingo, when TIINGO_API_KEY is set; without
+// it, equities aren't asked about and keep their synced value).
+//
+// Equities are asked about hourly only while the US market is open. Outside
+// it, and for once-a-day prices like a fund's NAV, there's nothing new for
+// half a day, so they wait that long.
 
-export const defaultSources = (): PriceSource[] => [coinbaseSource()];
+export const defaultSources = (): PriceSource[] => {
+  const key = process.env.TIINGO_API_KEY;
+  return [coinbaseSource(), ...(key ? [tiingoSource(key)] : [])];
+};
 
 /** The symbols to price, by asset class. */
 export async function pricedSymbols(db: Db): Promise<Map<AssetClass, string[]>> {
-  const rows = await db.selectDistinct({ symbol: sql<string>`upper(${manualPositions.symbol})` }).from(manualPositions);
-  return new Map<AssetClass, string[]>([["crypto", rows.map((r) => r.symbol).sort()]]);
+  const [manual, latestDays] = await Promise.all([
+    db.selectDistinct({ symbol: sql<string>`upper(${manualPositions.symbol})` }).from(manualPositions),
+    db
+      .select({ accountId: holdingSnapshots.accountId, on: sql<string>`max(${holdingSnapshots.on})` })
+      .from(holdingSnapshots)
+      .innerJoin(accounts, eq(accounts.id, holdingSnapshots.accountId))
+      .where(inArray(accounts.type, [...INVESTMENT_KINDS]))
+      .groupBy(holdingSnapshots.accountId),
+  ]);
+  const held = latestDays.length
+    ? await db
+        .selectDistinct({ symbol: sql<string>`upper(${holdingSnapshots.symbol})` })
+        .from(holdingSnapshots)
+        .where(
+          and(
+            isNotNull(holdingSnapshots.symbol),
+            sql`(${holdingSnapshots.accountId}, ${holdingSnapshots.on}) in (${sql.join(
+              latestDays.map((d) => sql`(${d.accountId}::uuid, ${d.on}::date)`),
+              sql`, `,
+            )})`,
+          ),
+        )
+    : [];
+  return new Map<AssetClass, string[]>([
+    ["crypto", manual.map((r) => r.symbol).sort()],
+    ["equity", held.map((r) => r.symbol).sort()],
+  ]);
+}
+
+const easternParts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short", hour: "numeric", minute: "numeric", hourCycle: "h23" });
+
+/** Whether the US stock market is in its regular session (9:30 to 16:00 ET, Monday to Friday). Holidays aren't known; a refresh then just finds the last close. */
+export function usMarketOpen(now: Date): boolean {
+  const parts = Object.fromEntries(easternParts.formatToParts(now).map((p) => [p.type, p.value]));
+  if (parts.weekday === "Sat" || parts.weekday === "Sun") return false;
+  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
+  return minutes >= 9 * 60 + 30 && minutes < 16 * 60;
+}
+
+/** Whether a symbol last asked about at `checkedAt` (with a quote from `source`) should be asked again. */
+function isDue(assetClass: AssetClass, quote: { checkedAt: Date; source: string } | undefined, now: Date): boolean {
+  if (!quote) return true;
+  const age = (now.getTime() - quote.checkedAt.getTime()) / 60_000;
+  if (age < REFRESH_MINUTES) return false;
+  if (assetClass === "crypto") return true;
+  if (isDailySource(quote.source) || !usMarketOpen(now)) return age >= DAILY_REFRESH_MINUTES;
+  return true;
 }
 
 export type RefreshOutcome = { status: "fresh" } | { status: "refreshed"; commandId: string; priced: number; unpriced: number; failed: number };
 
 /**
- * Refreshes every priced symbol not asked about within REFRESH_MINUTES, as
- * one market.refreshQuotes command. Nothing due: no request and no command.
+ * Refreshes every priced symbol that's due (see isDue), as one
+ * market.refreshQuotes command. Nothing due: no request and no command.
  * Network requests happen here, before the write, so none is made while a
  * transaction is open.
  */
 export async function refreshPricesIfDue(db: Db, { now = new Date(), sources = defaultSources() }: { now?: Date; sources?: PriceSource[] } = {}): Promise<RefreshOutcome> {
   const wanted = await pricedSymbols(db);
-  const due = new Date(now.getTime() - REFRESH_MINUTES * 60_000);
   const batches = [];
   for (const source of sources) {
     const symbols = wanted.get(source.assetClass) ?? [];
     if (!symbols.length) continue;
     const checked = await db
-      .select({ symbol: quotes.symbol, checkedAt: quotes.checkedAt })
+      .select({ symbol: quotes.symbol, checkedAt: quotes.checkedAt, source: quotes.source })
       .from(quotes)
       .where(and(eq(quotes.assetClass, source.assetClass), inArray(quotes.symbol, symbols)));
-    const recent = new Set(checked.filter((q) => q.checkedAt > due).map((q) => q.symbol));
-    const stale = symbols.filter((s) => !recent.has(s));
+    const bySymbol = new Map(checked.map((q) => [q.symbol, q]));
+    const stale = symbols.filter((s) => isDue(source.assetClass, bySymbol.get(s), now));
     if (!stale.length) continue;
     const results = await source.quote(stale);
     batches.push({
