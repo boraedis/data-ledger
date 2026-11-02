@@ -1,14 +1,15 @@
 import Link from "next/link";
 import { TallyMarks } from "@/components/tally-marks";
 import { TallyMascot } from "@/components/tally-mascot";
-import { MASCOT_COLOURS } from "@/lib/tally/mascot";
+import { MASCOT_COLOURS, type MascotMood } from "@/lib/tally/mascot";
 import type { LineTone, ReceiptLine, SummaryTone, SummaryView } from "@/lib/tally/summary";
 
-// Tally's summary of the night (#214), drawn. A banner whose tint and face
-// follow how the night went (src/lib/tally/summary.ts), the note's own
-// words, and the night's figures on a printed receipt: counts as tally
-// marks, lines in the status colours, a double-ruled total. The receipt
-// opens from the banner, so the Inbox below it stays in reach.
+// Tally's summary of the night (#214), drawn. The night's figures lead, on
+// a printed receipt: counts as tally marks, lines in the status colours, a
+// double-ruled total. Under it, the full summary: a banner whose tint and
+// face follow how the night went (src/lib/tally/summary.ts), with the
+// note's own words. The receipt is always open; it's short, and it's what
+// to glance at before the triage below.
 //
 // The receipt is paper whatever the theme, like the mascot: a character
 // keeps its own colours, and a slip of paper on a dark page is the point.
@@ -36,7 +37,8 @@ const PAPER_DOTS = "rgb(82 61 45 / 0.45)";
 
 export function TallySummary({ view, written }: { view: SummaryView; written: string }) {
   return (
-    <section aria-label="Tally's summary" className="space-y-2">
+    <section aria-label="Tally's summary" className="space-y-3">
+      <Receipt lines={view.lines} needs={view.needs} mood={view.mood} written={written} />
       <div className={`flex items-center gap-4 rounded-xl border p-4 ${BANNER[view.tone]}`}>
         <TallyMascot size={72} mood={view.mood} blink />
         <div className="min-w-0 space-y-2">
@@ -60,25 +62,21 @@ export function TallySummary({ view, written }: { view: SummaryView; written: st
           ))}
         </ul>
       ) : null}
-      <details>
-        <summary className="w-fit cursor-pointer text-xs text-muted-foreground hover:text-foreground">Print the receipt</summary>
-        <Receipt lines={view.lines} needs={view.needs} written={written} className="mt-2" />
-      </details>
     </section>
   );
 }
 
-function Receipt({ lines, needs, written, className }: { lines: ReceiptLine[]; needs: number; written: string; className?: string }) {
+function Receipt({ lines, needs, mood, written }: { lines: ReceiptLine[]; needs: number; mood: MascotMood; written: string }) {
   return (
-    <div className={`w-full max-w-sm ${className ?? ""}`}>
+    <div className="w-full max-w-sm">
       <div
         className="rounded-t-md border border-b-0 px-4 pt-3 pb-2 font-mono text-xs leading-relaxed"
         style={{ background: MASCOT_COLOURS.paper, color: MASCOT_COLOURS.ink, borderColor: PAPER_EDGE }}
       >
         <p className="flex items-center gap-2">
-          <TallyMascot size={28} />
+          <TallyMascot size={28} mood={mood} />
           <span>
-            <span className="block text-[13px] font-medium">Tally&apos;s summary</span>
+            <span className="block text-[13px] font-medium">Tally&apos;s receipt</span>
             <span className="block opacity-80">Printed {written}</span>
           </span>
         </p>
