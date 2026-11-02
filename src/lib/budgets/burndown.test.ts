@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { averageShareUsed, burndown, daysOf, spendCalendar } from "./burndown";
+import { averageShareUsed, burndown, daysOf } from "./burndown";
 
 // Invented: a $1,000 target over a 30-day month.
 const september = (lines: { date: string; amountCents: number }[], availableCents = 100_000) => ({ start: "2026-09-01", end: "2026-09-30", availableCents, lines });
@@ -43,17 +43,7 @@ describe("burndown (#149)", () => {
   });
 });
 
-describe("spendCalendar (#149)", () => {
-  it("leaves a day with no spending unshaded and shades the rest against the even share", () => {
-    // $1,000 over 30 days: $33.33 a day.
-    const c = spendCalendar(september([{ date: "2026-09-02", amountCents: -1_000 }, { date: "2026-09-03", amountCents: -3_000 }, { date: "2026-09-04", amountCents: -5_000 }, { date: "2026-09-05", amountCents: -9_000 }]), "2026-09-10");
-    expect(c.share).toBe(3_333);
-    expect(c.days.slice(0, 5).map((d) => d.tone)).toEqual([null, "under", "near", "over", "far-over"]);
-    expect(c.days[0].spentCents).toBe(0);
-    // Still to come: no figure at all.
-    expect(c.days[20]).toEqual({ date: "2026-09-21", spentCents: null, tone: null });
-  });
-
+describe("daysOf", () => {
   it("covers every day of the period", () => {
     expect(daysOf("2026-02-01", "2026-02-28")).toHaveLength(28);
     expect(daysOf("2026-01-01", "2026-12-31")).toHaveLength(365);

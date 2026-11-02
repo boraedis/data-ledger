@@ -9,7 +9,7 @@ import { backdateRange, budgetDaily, budgetHistory, budgetPay, budgetStatus, yea
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { AddTarget } from "../add-target";
-import type { TargetChoice } from "../forms";
+import { RebalanceForm, type TargetChoice } from "../forms";
 import { Burndown } from "../daily";
 import { BudgetOverview } from "../overview";
 import { PayStrip } from "../pay-strip";
@@ -160,6 +160,19 @@ export default async function BudgetMonthPage(props: PageProps<"/budgets/month">
           />
         </>
       )}
+
+      {/* Moving budget between targets is for one period, so it's here with
+          the month rather than on an item's page (#206). The current month
+          only: a past period's budget is changed by backdating. */}
+      {isCurrent && status.targets.length >= 2 ? (
+        <section className="space-y-2">
+          <h2 className="text-lg font-medium">Move budget this period</h2>
+          <p className="text-xs text-muted-foreground">
+            Shifts money from one target to another for the current period only; both targets stay as they are.
+          </p>
+          <RebalanceForm targets={status.targets.map((x) => ({ categoryId: x.categoryId, name: x.name }))} />
+        </section>
+      ) : null}
 
       {/* With a buffer, its page lists what it covers (#110). */}
       {!buffer && status.unbudgeted.byCategory.length ? (

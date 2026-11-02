@@ -321,7 +321,7 @@ export function RebalanceForm({
   initialTo,
 }: {
   targets: TargetChoice[];
-  // A budget item's page (#174) starts with that target on one side.
+  // Which targets it starts with; the first two listed by default.
   initialFrom?: string | null;
   initialTo?: string | null;
 }) {

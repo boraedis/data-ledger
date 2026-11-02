@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { periodBreakdown, type Share } from "@/lib/budgets/breakdown";
-import { burndown, spendCalendar } from "@/lib/budgets/burndown";
 import { HISTORY_MONTHS } from "@/lib/budgets/engine";
 import { historyLabel, suggestedTargetCents } from "@/lib/budgets/format";
 import { budgetHref, budgetView, itemHref } from "@/lib/budgets/tabs";
@@ -9,36 +8,52 @@ import { versionSpans } from "@/lib/budgets/target-list";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
-import { backdateRange, budgetDaily, budgetHistory, budgetMonthly, budgetStatus, listTargets, targetTransactions, yearlyCharges } from "@/operations/budgets";
+import {
+  ITEM_RANGES,
+  backdateRange,
+  budgetHistory,
+  budgetStatus,
+  itemAnalysis,
+  listTargets,
+  targetTransactions,
+  yearlyCharges,
+  type ItemRange,
+} from "@/operations/budgets";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
-import { RebalanceForm } from "../forms";
-import { Burndown, SpendCalendar } from "../daily";
 import { MonthBars } from "../month-bars";
 import { BudgetTabs } from "../tabs";
 import { TargetSettings } from "./settings";
 import { ItemStatus } from "./status";
 
-// One budget item (#174): a category's target, or the buffer's, and the
-// place to analyse and change it. This period's status, spending over the
-// last 6, 12 or 24 months against the target each month had, what it
-// usually costs and a suggested amount, the target and every version of it
-// (past ones editable through the backdate review), moving budget, and the
-// period's transactions broken down. The Month view lists targets; this is
-// where each one is set up.
+// One budget item (#174): a category's target, or the buffer's, judged as
+// a whole over time (#206) rather than a month at a time. This month and
+// the year so far on top; then, over a range (the last 12 months by
+// default, or 3, or the year to date), spend against the target month by
+// month, what it usually costs, how often it went over, and its biggest
+// charges, which is what deciding an amount needs. Then the target and
+// every version of it (past ones editable through the backdate review),
+// and this period's transactions. The Month view lists targets, and holds
+// the per-period actions such as moving budget; this is where each target
+// is set up.
 //
-// /budgets/<category id> or /budgets/buffer, with the tabs' ?month= and
-// ?gross=1, and ?months= for the chart.
+// No month navigation and no day-by-day view: the Month view has both.
+// /budgets/<category id> or /budgets/buffer, with ?range=3|ytd and the
+// tabs' ?gross=1.
 
-const RANGES = [6, 12, 24] as const;
+const RANGE_LABELS: Record<ItemRange, string> = { "3": "3 months", ytd: "Year to date", "12": "12 months" };
+const isRange = (value: unknown): value is ItemRange => typeof value === "string" && (ITEM_RANGES as readonly string[]).includes(value);
 
 const monthLabel = (month: string) => new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
 const day = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 
-function shiftMonth(month: string, by: number): string {
-  const d = new Date(`${month}-01T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() + by);
-  return d.toISOString().slice(0, 7);
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-lg border px-3 py-2">
+      <dt className="text-xs text-muted-foreground">{label}</dt>
+      <dd className="font-medium tabular-nums">{value}</dd>
+    </div>
+  );
 }
 
 function Shares({ title, shares, total }: { title: string; shares: Share[]; total: number }) {
@@ -69,11 +84,12 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
   const categoryId = target === "buffer" ? null : target;
 
   const today = new Date().toISOString().slice(0, 10);
+  // Always as of today: the tabs' ?month= is for the Month and Year views,
+  // and only carried through so going back keeps it.
   const view = budgetView(sp, today);
-  const { month, thisMonth, gross } = view;
-  const isCurrent = month === thisMonth;
-  const on = isCurrent ? today : new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
-  const months = RANGES.find((r) => String(r) === sp.months) ?? 12;
+  const { gross } = view;
+  const on = today;
+  const range: ItemRange = isRange(sp.range) ? sp.range : "12";
 
   const db = getDb();
   const cats = await read(db, listCategories, {});
@@ -82,18 +98,16 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
   if (categoryId !== null && (!option || option.kind !== "expense")) notFound();
   const name = categoryId === null ? "Everything else (buffer)" : option!.label;
 
-  const [status, versions, monthly, history, netHistory, yearly, range, txns, daily] = await Promise.all([
+  const [status, versions, analysis, history, netHistory, yearly, backdate, txns] = await Promise.all([
     read(db, budgetStatus, { on, gross }),
     read(db, listTargets, {}),
-    read(db, budgetMonthly, { on, gross, months, includeEnded: true }),
+    read(db, itemAnalysis, { categoryId, range, on, gross }),
     read(db, budgetHistory, { on, gross }),
     // Suggested amounts (#106) come from net spend: targets are net.
     gross ? read(db, budgetHistory, { on, gross: false }) : null,
     read(db, yearlyCharges, { on: today }),
     read(db, backdateRange, {}),
     read(db, targetTransactions, { categoryId, on, gross }),
-    // The period day by day, and the last three before it (#149).
-    read(db, budgetDaily, { categoryId, on, gross }),
   ]);
   const t = status.targets.find((x) => x.categoryId === categoryId) ?? null;
   const spans = versionSpans(versions, categoryId);
@@ -104,18 +118,15 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
   const h = own(history);
   const net = own(netHistory) ?? h;
   const suggestion = suggestedTargetCents(net, inEffectNow?.periodMonths ?? 1);
-  const series = monthly.find((r) => r.categoryId === categoryId);
-  const bars = (series?.months ?? []).map((m) => ({ ...m, href: itemHref(categoryId, { ...view, month: m.month.slice(0, 7) }) }));
-  const targeted = bars.filter((b) => b.targetCents !== null);
+  // A month's bar opens that month in the Month view, where its day by day is.
+  const bars = analysis.months.map((m) => ({ ...m, href: budgetHref("/budgets/month", { ...view, month: m.month.slice(0, 7) }) }));
+  const thisMonth = `${today.slice(0, 7)}-01`;
   const breakdown = txns ? periodBreakdown(txns.lines) : null;
-  const through = daily ? (on < daily.end ? on : daily.end) : on;
-  const burn = daily ? burndown(daily, through, daily.past) : null;
-  const calendar = daily ? spendCalendar(daily, through) : null;
-  const href = (next: { month?: string; months?: number }) => {
-    const base = itemHref(categoryId, { ...view, month: next.month ?? month });
-    const m = next.months ?? months;
-    return m === 12 ? base : `${base}${base.includes("?") ? "&" : "?"}months=${m}`;
+  const rangeHref = (r: ItemRange) => {
+    const base = itemHref(categoryId, view);
+    return r === "12" ? base : `${base}${base.includes("?") ? "&" : "?"}range=${r}`;
   };
+  const ytd = analysis.yearToDate;
 
   return (
     <div className="space-y-6">
@@ -125,52 +136,55 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
         </Link>
         <BudgetTabs current={null} view={view} />
       </div>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-2xl font-semibold">{name}</h1>
-        <nav aria-label="Month" className="flex items-center gap-3 text-sm">
-          <Link href={href({ month: shiftMonth(month, -1) })} className="text-muted-foreground hover:text-foreground">
-            ← Earlier
-          </Link>
-          <span className="font-medium">{monthLabel(month)}</span>
-          {isCurrent ? null : (
-            <Link href={href({ month: shiftMonth(month, 1) })} className="text-muted-foreground hover:text-foreground">
-              Later →
-            </Link>
-          )}
-        </nav>
+      <h1 className="text-2xl font-semibold">{name}</h1>
+
+      {/* This period, in progress through its last day, as on the cards (#147), and the year so far. */}
+      <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        {t ? <ItemStatus t={t} inProgress /> : <p className="text-sm text-muted-foreground">No target in effect now.</p>}
+        {ytd && ytd.targetCents > 0 ? (
+          <section aria-label="Year to date" className="space-y-1 rounded-lg border p-3 text-sm">
+            <h2 className="text-xs text-muted-foreground">{ytd.year} so far</h2>
+            <p className="tabular-nums">
+              <span className="text-lg font-medium">{formatCents(ytd.spentCents)}</span>{" "}
+              <span className="text-muted-foreground">of {formatCents(ytd.targetCents)} for the year</span>
+            </p>
+            <p className={`text-xs tabular-nums ${ytd.remainingCents < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+              {ytd.remainingCents < 0 ? `${formatCents(-ytd.remainingCents)} over` : `${formatCents(ytd.remainingCents)} left`}
+            </p>
+          </section>
+        ) : null}
       </div>
 
-      {/* The current month's period is in progress through its last day, as on the cards (#147). */}
-      {t ? (
-        <ItemStatus t={t} inProgress={isCurrent} />
-      ) : (
-        <p className="text-sm text-muted-foreground">No target in effect {isCurrent ? "now" : `in ${monthLabel(month)}`}.</p>
-      )}
-
-      <section className="space-y-2" aria-label="Spending over time">
+      <section className="space-y-3" aria-label="Spending over time">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-lg font-medium">Spending, last {months} months</h2>
-          <nav aria-label="Months shown" className="flex gap-1 text-sm">
-            {RANGES.map((r) => (
+          <h2 className="text-lg font-medium">Spending, {range === "ytd" ? "this year" : `last ${RANGE_LABELS[range]}`}</h2>
+          <nav aria-label="Range" className="flex gap-1 text-sm">
+            {ITEM_RANGES.map((r) => (
               <Link
                 key={r}
-                href={href({ months: r })}
-                aria-current={r === months ? "true" : undefined}
-                className={`rounded-md px-2 py-0.5 ${r === months ? "bg-secondary font-medium" : "text-muted-foreground hover:text-foreground"}`}
+                href={rangeHref(r)}
+                aria-current={r === range ? "true" : undefined}
+                className={`rounded-md px-2 py-0.5 ${r === range ? "bg-secondary font-medium" : "text-muted-foreground hover:text-foreground"}`}
               >
-                {r}
+                {RANGE_LABELS[r]}
               </Link>
             ))}
           </nav>
         </div>
         {bars.length ? (
           <>
-            <MonthBars bars={bars} viewedMonth={`${month}-01`} partialMonth={isCurrent ? `${month}-01` : null} />
-            <p className="text-xs text-muted-foreground tabular-nums">
-              {targeted.length
-                ? `Over target in ${targeted.filter((b) => b.spentCents > b.targetCents!).length} of ${targeted.length} ${targeted.length === 1 ? "month" : "months"} with a target. `
-                : ""}
-              Tap a month to look at it here.
+            <MonthBars bars={bars} viewedMonth={thisMonth} partialMonth={thisMonth} />
+            <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
+              <Stat label="Average month" value={analysis.averageCents === null ? "—" : formatCents(analysis.averageCents)} />
+              <Stat label="Typical month" value={analysis.typicalCents === null ? "—" : formatCents(analysis.typicalCents)} />
+              <Stat label="Months over target" value={String(analysis.overMonths)} />
+              <Stat label="Months at or under" value={String(analysis.underMonths)} />
+            </dl>
+            <p className="text-xs text-muted-foreground">
+              {analysis.completeMonths
+                ? `Average and typical (the middle month) over the ${analysis.completeMonths} complete ${analysis.completeMonths === 1 ? "month" : "months"} shown; this month counts toward over only once it is.`
+                : "No complete month in this range yet: this month counts toward over only once it is."}{" "}
+              Tap a month to open it in the Month view.
             </p>
           </>
         ) : (
@@ -190,25 +204,27 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
             </p>
           ) : null}
         </div>
+        {analysis.largest.length ? (
+          <div className="space-y-1">
+            <h3 className="text-sm font-medium">Largest charges</h3>
+            <ul className="divide-y rounded-lg border text-sm">
+              {analysis.largest.map((l, i) => (
+                <li key={`${l.transactionId}-${i}`}>
+                  <Link href={`/transactions/${l.transactionId}`} className="flex items-start justify-between gap-3 px-3 py-2 hover:bg-accent">
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">{l.merchant ?? l.description}</span>
+                      <span className="block truncate text-xs text-muted-foreground">
+                        {day(l.date)} · {l.accountName} · {l.categoryName}
+                      </span>
+                    </span>
+                    <span className="shrink-0 tabular-nums">{formatCents(l.spentCents)}</span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </section>
-
-      {daily && burn && calendar ? (
-        <section className="space-y-3" aria-label="Day by day">
-          <h2 className="text-lg font-medium">Day by day</h2>
-          <Burndown
-            days={burn.days}
-            availableCents={daily.availableCents}
-            pastPeriods={burn.pastPeriods}
-            title={`What's left of ${name}'s ${formatCents(daily.availableCents)} through ${monthLabel(daily.start.slice(0, 7))}${daily.start.slice(0, 7) === daily.end.slice(0, 7) ? "" : ` – ${monthLabel(daily.end.slice(0, 7))}`}`}
-          />
-          <p className="text-xs text-muted-foreground">
-            {burn.pastPeriods
-              ? `Typical: the same days of the last ${burn.pastPeriods === 1 ? "period" : `${burn.pastPeriods} periods`}, as a share of each one's target, so a changed target still compares.`
-              : "No complete period before this one to compare with yet."}
-          </p>
-          <SpendCalendar days={calendar.days} share={calendar.share} today={isCurrent ? today : null} />
-        </section>
-      ) : null}
 
       <TargetSettings
         categoryId={categoryId}
@@ -218,23 +234,9 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
         history={h}
         netHistory={net}
         windowMonths={HISTORY_MONTHS}
-        backdate={range}
+        backdate={backdate}
         yearly={yearly.filter((y) => y.categoryId === categoryId)}
       />
-
-      {isCurrent && t && status.targets.length >= 2 ? (
-        <section className="space-y-2">
-          <h2 className="text-lg font-medium">Move budget this period</h2>
-          <p className="text-xs text-muted-foreground">
-            Shifts money into {name} from another target, or out of it, for the current period only; both targets stay as they are.
-          </p>
-          <RebalanceForm
-            targets={status.targets.map((x) => ({ categoryId: x.categoryId, name: x.name }))}
-            initialFrom={status.targets.find((x) => x.categoryId !== categoryId)?.categoryId ?? null}
-            initialTo={categoryId}
-          />
-        </section>
-      ) : null}
 
       {txns && breakdown ? (
         <section id="transactions" className="scroll-mt-4 space-y-3">
