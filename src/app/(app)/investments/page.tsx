@@ -6,6 +6,8 @@ import { getDb } from "@/lib/db";
 import { combineHoldings } from "@/lib/investments/combine";
 import { investmentsSummary, type AllocationSlice } from "@/lib/investments/summary";
 import { formatCents } from "@/lib/money";
+import { pricesNote } from "@/lib/prices/describe";
+import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 
 // Investments (#27): what's held, how it's split, and how it's done against
 // what was paid — display only. Data comes from balance and holding
@@ -158,6 +160,8 @@ function HoldingsAcross({ combined }: { combined: ReturnType<typeof combineHoldi
 
 export default async function InvestmentsPage() {
   const summary = await investmentsSummary(getDb());
+  // Values move with prices (#230): refresh them after this page is sent, if due.
+  refreshPricesAfterResponse();
   const combined = combineHoldings(summary.accounts);
 
   return (
@@ -237,6 +241,8 @@ export default async function InvestmentsPage() {
                     {a.manual && a.institution === "Manual" ? "" : ` · ${a.institution}`}
                     {a.balanceAt ? ` · balance as of ${a.balanceAt.toISOString().slice(0, 10)}` : ""}
                     {a.holdingsOn ? ` · positions as of ${a.holdingsOn}` : ""}
+                    {/* Valued live from prices (#230), or, with no positions to price, its balance. */}
+                    {a.live ? pricesNote(a.live) : " · not valued live: no positions reported"}
                   </p>
                 </div>
                 <p className="text-lg tabular-nums">{formatCents(a.valueCents)}</p>
