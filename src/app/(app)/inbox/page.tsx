@@ -1,8 +1,10 @@
+import { TallySummary } from "@/components/tally-summary";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { autoApplyThreshold } from "@/lib/categorize/pipeline";
 import { getDb } from "@/lib/db";
 import { modelIsConfigured } from "@/lib/model/client";
 import { latestDigest } from "@/lib/tally/digest";
+import { summaryView } from "@/lib/tally/summary";
 import { listAccounts } from "@/operations/accounts";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
@@ -48,15 +50,7 @@ export default async function InboxPage() {
       </div>
       {/* Tally's summary of the night's run (#214), where the triage starts.
           Only the newest shows; the nightly run rewrites it. */}
-      {digest ? (
-        <section aria-label="Tally's summary" className="space-y-1 rounded-lg border bg-muted/30 px-3 py-2">
-          <p className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground">
-            <span className="font-medium text-foreground">Tally&apos;s summary</span>
-            <span>Written {written.format(digest.createdAt)}</span>
-          </p>
-          <div className="whitespace-pre-wrap text-sm">{digest.content}</div>
-        </section>
-      ) : null}
+      {digest ? <TallySummary view={summaryView(digest.content, digest.facts)} written={written.format(digest.createdAt)} /> : null}
       {/* Above the inbox, which can run to hundreds of rows: a charge that
           may not be the owner's (#33) first, then stale alerts, since those
           wait on the owner. */}
