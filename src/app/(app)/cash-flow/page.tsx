@@ -342,7 +342,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
             isn&apos;t connected, which is fine. If it wasn&apos;t a transfer, file it as spending or income, or it&apos;s left out of both.
           </p>
           {/* The same period, so the Transactions list shows these transfers and no others. */}
-          <Link href={`/transactions?unmatched=1&from=${period.from}&to=${period.to}`} className="mt-1 inline-block text-xs underline">
+          <Link href={`/transactions?type=unmatched&from=${period.from}&to=${period.to}`} className="mt-1 inline-block text-xs underline">
             See these in Transactions
           </Link>
           <ul className="mt-2 divide-y divide-warning/30 text-foreground">

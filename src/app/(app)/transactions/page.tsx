@@ -7,7 +7,7 @@ import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { listTags } from "@/operations/tags";
 import { manualMatches } from "@/operations/manual";
-import { listTransactions } from "@/operations/transactions";
+import { listTransactions, transactionTypeCounts } from "@/operations/transactions";
 import { categoryBadge } from "./category-badge";
 import { SubmitOnChange } from "./submit-on-change";
 
@@ -21,11 +21,23 @@ function param(value: string | string[] | undefined): string | undefined {
 
 const isDay = (value: string | undefined) => (value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined);
 
+// The type filter (#208): one dropdown, one kind of row at a time, each
+// value the list operation's own filter for it.
+const TYPES = {
+  unmatched: { label: "Unmatched transfers", filter: "unmatchedTransfers" },
+  uncategorized: { label: "Uncategorized", filter: "uncategorized" },
+  paystub: { label: "Connected to a pay stub", filter: "payStubLinked" },
+} as const;
+type TypeKey = keyof typeof TYPES;
+const isType = (value: string | undefined): value is TypeKey => value !== undefined && Object.hasOwn(TYPES, value);
+
 // Every transaction, filterable. The filter is a plain GET form: no client
 // JavaScript, and every filtered view is a shareable, back-button-friendly
 // URL. Rows open the detail page, where splitting and tagging happen.
-// ?unmatched=1 lists transfers with no other half (#184); ?from= and ?to=
-// limit it to posted dates, as the Cash flow page links to its own period.
+// ?type= picks one kind of row (#208): transfers with no other half (#184),
+// uncategorized, or connected to a pay stub. ?unmatched=1, its older form,
+// still works for links saved before. ?from= and ?to= limit it to posted
+// dates, as the Cash flow page links to its own period.
 export default async function TransactionsPage(props: PageProps<"/transactions">) {
   const sp = await props.searchParams;
   const filters = {
@@ -33,23 +45,23 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
     categoryId: param(sp.category),
     tagId: param(sp.tag),
     accountId: param(sp.account),
-    unmatchedTransfers: param(sp.unmatched) === "1",
     from: isDay(param(sp.from)),
     to: isDay(param(sp.to)),
   };
+  const typeParam = param(sp.type) ?? (param(sp.unmatched) === "1" ? "unmatched" : undefined);
+  const type = isType(typeParam) ? typeParam : undefined;
   const page = Math.max(Number(param(sp.page) ?? 1) || 1, 1);
 
   const db = getDb();
-  const [rows, cats, tagList, accts, toMerge, unmatched] = await Promise.all([
-    read(db, listTransactions, { ...filters, limit: PAGE_SIZE + 1, offset: (page - 1) * PAGE_SIZE }),
+  const [rows, cats, tagList, accts, toMerge, counts] = await Promise.all([
+    read(db, listTransactions, { ...filters, ...(type ? { [TYPES[type].filter]: true } : {}), limit: PAGE_SIZE + 1, offset: (page - 1) * PAGE_SIZE }),
     read(db, listCategories, {}),
     read(db, listTags, {}),
     read(db, listAccounts, {}),
     read(db, manualMatches, {}),
-    // All of them, whatever the other filters: the count shown on the option.
-    read(db, listTransactions, { unmatchedTransfers: true, limit: 500 }),
+    // Under the other filters, so an option's count is the rows it lists.
+    read(db, transactionTypeCounts, filters),
   ]);
-  const unmatchedLabel = unmatched.length >= 500 ? "500+" : String(unmatched.length);
   const hasMore = rows.length > PAGE_SIZE;
   const visible = rows.slice(0, PAGE_SIZE);
   const options = categoryOptions(cats);
@@ -63,7 +75,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
     if (filters.categoryId) q.set("category", filters.categoryId);
     if (filters.tagId) q.set("tag", filters.tagId);
     if (filters.accountId) q.set("account", filters.accountId);
-    if (filters.unmatchedTransfers) q.set("unmatched", "1");
+    if (type) q.set("type", type);
     if (dates.from) q.set("from", dates.from);
     if (dates.to) q.set("to", dates.to);
     if (p > 1) q.set("page", String(p));
@@ -134,10 +146,13 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
             </option>
           ))}
         </select>
-        <select name="unmatched" defaultValue={filters.unmatchedTransfers ? "1" : ""} aria-label="Unmatched" className={select}>
-          <option value="">All transactions</option>
-          {/* Transfers with no other half, with how many there are (#184). */}
-          <option value="1">Unmatched transfers ({unmatchedLabel})</option>
+        <select name="type" defaultValue={type ?? ""} aria-label="Type" className={select}>
+          <option value="">All types</option>
+          {Object.entries(TYPES).map(([key, t]) => (
+            <option key={key} value={key}>
+              {t.label} ({counts[t.filter]})
+            </option>
+          ))}
         </select>
         {/* The Cash flow link carries its period; the form would drop it without these. */}
         {filters.from ? <input type="hidden" name="from" value={filters.from} /> : null}
@@ -148,15 +163,15 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
         <button type="submit" className="h-9 rounded-md border px-3 text-sm hover:bg-accent">
           Filter
         </button>
-        {Object.values(filters).some(Boolean) ? (
+        {type || Object.values(filters).some(Boolean) ? (
           <>
             <Link href="/transactions" className="text-sm text-muted-foreground underline">
               Clear
             </Link>
             {/* Everything this filter shows, filed somewhere else at once (#116). The move page reads the
-                category, tag, account and search only, so with an unmatched or dated view it would move
-                more than is shown; those views leave the link out. */}
-            {filters.unmatchedTransfers || filters.from || filters.to ? null : (
+                category, tag, account and search only, so with a type or dated view it would move more than
+                is shown; those views leave the link out. */}
+            {type || filters.from || filters.to ? null : (
               <Link href={pageHref(1).replace("/transactions", "/transactions/move")} className="text-sm text-muted-foreground underline">
                 Move these to a category
               </Link>
