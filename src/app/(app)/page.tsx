@@ -4,7 +4,7 @@ import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { isFlagKind } from "@/lib/suspicious/checks";
 import { netWorthSummary } from "@/lib/net-worth";
-import { latestDigest } from "@/lib/tally/digest";
+import { latestDigest, summaryHeadline } from "@/lib/tally/digest";
 import { budgetStatus } from "@/operations/budgets";
 import { provisionalRows } from "@/operations/provisional";
 import { listAlerts, listRecurring } from "@/operations/recurring";
@@ -16,7 +16,8 @@ import { inboxCount } from "@/operations/transactions";
 // area, each with its key figure and a link to the full page. Every figure
 // comes from what those pages already read; nothing new is computed here,
 // and nothing on this page goes to the model. Tally's note from last night
-// (#11) stays on top.
+// (#11) stays on top, as one line: the full summary is at the top of the
+// Inbox (#214), where the triage happens.
 
 const DAY_MS = 86_400_000;
 const isoDay = (date: Date) => date.toISOString().slice(0, 10);
@@ -90,11 +91,11 @@ export default async function HomePage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <Card title="Tally's note" href="/tally" cta="Ask a follow-up" wide>
+        <Card title="Tally's note" href="/inbox" cta="Read the summary" wide>
           {digest ? (
             <>
               <p className="text-xs text-muted-foreground">Written {fmtDay(digest.on)}</p>
-              <div className="whitespace-pre-wrap text-sm">{digest.content}</div>
+              <p className="text-sm">{summaryHeadline(digest.content)}</p>
             </>
           ) : (
             <Note>Tally writes a short note here each night after the bank sync: what changed, what&apos;s over, what needs you.</Note>

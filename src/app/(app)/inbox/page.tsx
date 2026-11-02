@@ -2,6 +2,7 @@ import { categoryOptions } from "@/lib/categorize/labels";
 import { autoApplyThreshold } from "@/lib/categorize/pipeline";
 import { getDb } from "@/lib/db";
 import { modelIsConfigured } from "@/lib/model/client";
+import { latestDigest } from "@/lib/tally/digest";
 import { listAccounts } from "@/operations/accounts";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
@@ -13,6 +14,7 @@ import { Inbox } from "./inbox";
 import { ProvisionalList } from "./provisional";
 
 const LIMIT = 200;
+const written = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
 // "Ask the model" may wait out a GPU cold start (~3.5 min).
 export const maxDuration = 300;
@@ -22,12 +24,13 @@ export const maxDuration = 300;
 // the assistant sees.
 export default async function InboxPage() {
   const db = getDb();
-  const [inbox, cats, accts, alerted, flags] = await Promise.all([
+  const [inbox, cats, accts, alerted, flags, digest] = await Promise.all([
     read(db, listInbox, { limit: LIMIT }),
     read(db, listCategories, {}),
     read(db, listAccounts, {}),
     read(db, listProvisional, {}),
     read(db, listFlags, {}),
+    latestDigest(db),
   ]);
   const accountName = new Map(accts.map((a) => [a.id, a.name]));
   const rows = inbox.map((r) => ({ ...r, accountName: accountName.get(r.accountId) ?? "" }));
@@ -43,6 +46,17 @@ export default async function InboxPage() {
             : `${rows.length}${rows.length === LIMIT ? "+" : ""} transactions waiting for a category. Only your rules file transactions on their own; suggestions from your history and the model wait here, pre-selected, for you to confirm one at a time or a set at once.`}
         </p>
       </div>
+      {/* Tally's summary of the night's run (#214), where the triage starts.
+          Only the newest shows; the nightly run rewrites it. */}
+      {digest ? (
+        <section aria-label="Tally's summary" className="space-y-1 rounded-lg border bg-muted/30 px-3 py-2">
+          <p className="flex flex-wrap justify-between gap-x-3 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Tally&apos;s summary</span>
+            <span>Written {written.format(digest.createdAt)}</span>
+          </p>
+          <div className="whitespace-pre-wrap text-sm">{digest.content}</div>
+        </section>
+      ) : null}
       {/* Above the inbox, which can run to hundreds of rows: a charge that
           may not be the owner's (#33) first, then stale alerts, since those
           wait on the owner. */}
