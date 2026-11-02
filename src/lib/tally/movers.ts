@@ -46,9 +46,12 @@ export function investmentMoves(before: { on: string; rows: HoldingRow[] }, afte
 
 const pct = (value: number) => `${value >= 0 ? "up" : "down"} ${Math.abs(value).toFixed(1)}%`;
 
+/** A move as the summary words it: "up 1.2%", or "about flat" under a twentieth of a percent. */
+export const moveText = (value: number) => (Math.abs(value) < 0.05 ? "about flat" : pct(value));
+
 /** The summary's investments lines. */
 export function investmentsText(moves: InvestmentMoves): string {
-  const overall = Math.abs(moves.changePct) < 0.05 ? "about flat" : pct(moves.changePct);
+  const overall = moveText(moves.changePct);
   const lines = [`- Investments since ${moves.from}: holdings ${overall}.`];
   if (moves.movers.length) lines.push(`- Big movers: ${moves.movers.slice(0, 5).map((m) => `${m.label} ${pct(m.changePct)}`).join(", ")}.`);
   return lines.join("\n");

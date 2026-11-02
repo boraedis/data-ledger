@@ -2,9 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { Fragment, useEffect, useRef, useState, useTransition } from "react";
+import { TallyMascot } from "@/components/tally-mascot";
 import { Button } from "@/components/ui/button";
 import { proposalLabel, toolLabel } from "@/lib/tally/format";
 import type { Item } from "@/lib/tally/history";
+import type { MascotMood } from "@/lib/tally/mascot";
 import { decide } from "./actions";
 
 // The chat with Tally (#11). A turn streams in as JSON lines from
@@ -51,6 +53,24 @@ function Prose({ text }: { text: string }) {
           </p>
         );
       })}
+    </div>
+  );
+}
+
+// Tally's own lines in the chat: its face beside a speech bubble whose tail
+// points at it (#73). The face follows the moment: waving at hello, asleep
+// while the model wakes, worried at an error. What the owner says stays a
+// plain bubble on the right.
+function Say({ mood = "happy", blink = false, error = false, children }: { mood?: MascotMood; blink?: boolean; error?: boolean; children: React.ReactNode }) {
+  const edge = error ? "border-destructive/40 before:border-destructive/40" : "";
+  return (
+    <div className="flex max-w-[95%] items-start gap-2.5">
+      <TallyMascot size={28} mood={mood} blink={blink} className="mt-0.5 shrink-0" />
+      <div
+        className={`relative min-w-0 rounded-lg border bg-card px-3 py-2 text-sm before:absolute before:top-3 before:-left-[5px] before:size-2 before:rotate-45 before:border-b before:border-l before:bg-card ${edge} ${error ? "text-destructive" : ""}`}
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -215,10 +235,12 @@ export function Chat({
     <div className={panel ? "flex min-h-0 flex-1 flex-col" : "flex min-h-[60vh] flex-col gap-3"}>
       <div className={panel ? "min-h-0 flex-1 space-y-3 overflow-y-auto p-4" : "flex-1 space-y-3"}>
         {items.length === 0 ? (
-          <div className="space-y-2 text-sm text-muted-foreground">
-            <p>Ask about your spending, budgets, subscriptions or what you&apos;re owed, or ask for a change. Changes come back as proposals for you to approve.</p>
-            <p>Try: &quot;How much did I spend on dining last month?&quot; · &quot;What&apos;s still in my inbox?&quot; · &quot;Make a rule for Corner Bean Cafe → Coffee&quot;</p>
-          </div>
+          <Say mood="waving">
+            <div className="space-y-2 text-muted-foreground">
+              <p>Ask about your spending, budgets, subscriptions or what you&apos;re owed, or ask for a change. Changes come back as proposals for you to approve.</p>
+              <p>Try: &quot;How much did I spend on dining last month?&quot; · &quot;What&apos;s still in my inbox?&quot; · &quot;Make a rule for Corner Bean Cafe → Coffee&quot;</p>
+            </div>
+          </Say>
         ) : null}
         {items.map((item, i) => {
           switch (item.kind) {
@@ -230,9 +252,9 @@ export function Chat({
               );
             case "assistant":
               return item.text.trim() ? (
-                <div key={i} className="max-w-[95%] text-sm">
+                <Say key={i}>
                   <Prose text={item.text} />
-                </div>
+                </Say>
               ) : null;
             case "tool":
               return (
@@ -250,21 +272,25 @@ export function Chat({
               );
             case "error":
               return (
-                <p key={i} className="text-sm text-destructive">
+                <Say key={i} mood="worried" error>
                   {item.text}
-                </p>
+                </Say>
               );
           }
         })}
         {waitingSince !== null ? (
-          <p className="text-sm text-muted-foreground" role="status">
-            Waking the model up — {Math.floor(waitedSeconds / 60)}:{String(waitedSeconds % 60).padStart(2, "0")}. It sleeps when idle and
-            takes about 3–4 minutes to start; after that, replies are quick.
-          </p>
+          <Say mood="sleepy">
+            <p className="text-muted-foreground" role="status">
+              Waking the model up — {Math.floor(waitedSeconds / 60)}:{String(waitedSeconds % 60).padStart(2, "0")}. It sleeps when idle and
+              takes about 3–4 minutes to start; after that, replies are quick.
+            </p>
+          </Say>
         ) : busy ? (
-          <p className="text-sm text-muted-foreground" role="status">
-            Thinking…
-          </p>
+          <Say blink>
+            <p className="text-muted-foreground" role="status">
+              Thinking…
+            </p>
+          </Say>
         ) : null}
         <div ref={bottom} />
       </div>

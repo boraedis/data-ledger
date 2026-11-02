@@ -1,10 +1,13 @@
 import Link from "next/link";
 import { Sparkline } from "@/components/charts/sparkline";
+import { TallyMascot } from "@/components/tally-mascot";
+import { TallySummaryNote } from "@/components/tally-summary";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { isFlagKind } from "@/lib/suspicious/checks";
 import { netWorthSummary } from "@/lib/net-worth";
-import { latestDigest, summaryHeadline } from "@/lib/tally/digest";
+import { latestDigest } from "@/lib/tally/digest";
+import { summaryView } from "@/lib/tally/summary";
 import { budgetStatus } from "@/operations/budgets";
 import { provisionalRows } from "@/operations/provisional";
 import { listAlerts, listRecurring } from "@/operations/recurring";
@@ -91,16 +94,16 @@ export default async function HomePage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <Card title="Tally's note" href="/inbox" cta="Read the summary" wide>
-          {digest ? (
-            <>
-              <p className="text-xs text-muted-foreground">Written {fmtDay(digest.on)}</p>
-              <p className="text-sm">{summaryHeadline(digest.content)}</p>
-            </>
-          ) : (
-            <Note>Tally writes a short note here each night after the bank sync: what changed, what&apos;s over, what needs you.</Note>
-          )}
-        </Card>
+        {digest ? (
+          <TallySummaryNote view={summaryView(digest.content, digest.facts)} written={fmtDay(digest.on)} />
+        ) : (
+          <Card title="Tally's note" href="/inbox" cta="Read the summary" wide>
+            <div className="flex items-center gap-3">
+              <TallyMascot size={40} mood="sleepy" />
+              <Note>Tally writes a short note here each night after the bank sync: what changed, what&apos;s over, what needs you.</Note>
+            </div>
+          </Card>
+        )}
 
         <Card title="Inbox" href="/inbox" cta="Open">
           {inbox || stale || flagged ? (
