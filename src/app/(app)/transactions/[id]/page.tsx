@@ -81,15 +81,15 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
       ) : null}
       {txn.payStub ? (
         <p className="rounded-lg border px-3 py-2 text-sm text-muted-foreground">
-          The deposit of the {txn.payStub.employer} pay stub dated {txn.payStub.payDate}: budgets and Cash flow count it as that paycheck&apos;s
-          gross pay and deductions, not this amount on its own.{" "}
+          The deposit of the {txn.payStub.employer} pay stub dated {txn.payStub.payDate}: budgets count it as this amount, and the stub&apos;s
+          deductions show on Cash flow.{" "}
           <Link href="/pay" className="underline">
             See it on Pay
           </Link>
         </p>
       ) : txn.paycheckWithoutStub ? (
         <p className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm text-warning">
-          Looks like a paycheck, but no pay stub is linked to it, so it counts as this deposit only, without its taxes and deductions.{" "}
+          Looks like a paycheck, but no pay stub is linked to it, so Cash flow counts it as this deposit only, without its taxes and deductions.{" "}
           <Link href="/pay" className="underline">
             Add or link its pay stub on Pay
           </Link>

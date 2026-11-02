@@ -669,9 +669,9 @@ export const payStubs = pgTable(
 
 // The bank deposits of a stub's net pay (#91): usually one, several when
 // pay is split across accounts (a fixed amount to savings, the rest to
-// checking). Linked, they add up to the net exactly, and budgets count the
-// paycheck as gross income less each deduction, never the net twice
-// (transactions.spendingLines). A deposit is one stub's at most. If the
+// checking). Linked, they add up to the net exactly, and budgets count each
+// deposit as it arrived (transactions.spendingLines), never the stub's gross.
+// A deposit is one stub's at most. If the
 // bank removes one (a pending row replaced), its link goes and the stub
 // counts as unlinked until it's linked again.
 export const payStubDeposits = pgTable(

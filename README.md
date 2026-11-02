@@ -259,7 +259,7 @@ the owner's own (see below).
   - **A typical month** (#142) is what every figure is measured against: the recent regular paycheck (the last three, so a raise shows quickly and a bonus never sets it) × paychecks a year (52, 26, 24 or 12 from the usual gap between pay dates) ÷ 12. A past month uses the pay of the time. So a month that gets a third biweekly paycheck doesn't look like a raise, and two months with different paychecks have the same expected saving. Beside it, the strip shows what landed: "+$X extra this month" (a third paycheck, a bonus) or "$X short". Without regular stubs, what landed is used as before.
   - **This month** also adds the paychecks still to come at the usual cadence, at the recent pace from the last three regular stubs (as the tax estimate does), and says so. A past month without stubs reads "No pay recorded", never $0.
   - **Targets** count at their monthly share: a twelfth of an annual one.
-  - **Spending** is expense lines in budget accounts. Transfers (savings included) and pay never count. A linked paycheck's deduction lines are left out too: they left the gross before net pay landed, so against net pay they'd count twice.
+  - **Spending** is expense lines in budget accounts. Transfers (savings included) and pay never count, so a linked paycheck is counted once, as the net deposit it was.
   - **Uncategorized money out** isn't in spending. The strip says how much there is.
 - **Backdating** (#130): the target form's "Applies from" month gives a target an earlier start (`budgets.backdateTarget`). It's for after backfilling transactions, when earlier months have spending and nothing to measure it against.
   - It runs from that month until the target's next version, which keeps its amount. With no later version, it becomes the current target.
@@ -355,11 +355,11 @@ mustn't look like income (#8).
 ### Pay stubs
 
 Each pay stub is recorded as structured income (#60, `payStubs.*`), so a paycheck is its gross pay and every deduction, not just the deposit. The Pay page lists them and shows the year's totals.
-- **What's stored:** an employer label, the period, the pay date, gross, each deduction and net. Each deduction has a kind, the stub's own label, positive cents and an optional category. Kinds are grouped into tax, insurance, retirement and savings, and other (`src/lib/pay/stubs.ts`). Amounts and labels only: an SSN, employer ID or address is never entered or stored.
+- **What's stored:** an employer label, the period, the pay date, gross, each deduction and net. Each deduction has a kind, the stub's own label and positive cents. Kinds are grouped into tax, insurance, retirement and savings, and other (`src/lib/pay/stubs.ts`). Amounts and labels only: an SSN, employer ID or address is never entered or stored.
 - **Checked on save:** gross minus the deductions must equal net exactly.
 - **Faster entry:** a new stub starts from the last one, moved on one period.
 - **Linked to the deposit:** the deposit of exactly the net amount near the pay date is linked when there's only one candidate, both on save and nightly as `matcher`. Otherwise you pick it. Only posted deposits can be linked.
-- **Counted as gross:** a linked deposit counts in budgets as gross pay in the deposit's category, plus a negative line per deduction in that deduction's category (`transactions.spendingLines`). A deduction without a category is taken off the gross instead. The parts always add up to the deposit, so the net is never counted twice. Use a transfer category for a 401(k): it's savings, not spending.
+- **Counted as the deposit:** a linked deposit counts in budgets as the deposit it was, in its own category (`transactions.spendingLines`). Deductions never move money between categories, so budgets don't change when a stub is linked. The gross and deductions show on the Pay page and in Cash flow.
 
 **Tax estimate** (#61, Wealth → Taxes, `/pay/taxes`): the year's position from these stubs. It's an estimate from your own numbers, not tax advice.
 - **Withholding:** per tax so far, with the stub count, and projected to year end at the pace of the last three stubs. The cadence comes from the pay dates. Insurance and retirement deductions are shown separately, since they aren't taxes.

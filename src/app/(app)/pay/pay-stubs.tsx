@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import type { CategoryOption } from "@/lib/categorize/labels";
 import { formatCents } from "@/lib/money";
 import { GROUP_LABELS, employerKindLabel, kindLabel, type EmployerPayKind, type PayLineGroup, type PayLineKind } from "@/lib/pay/stubs";
 import { deleteStub } from "./actions";
@@ -13,7 +12,7 @@ type Stub = Omit<FormStub, "lines"> & {
   id: string;
   deposits: { id: string; postedOn: string; amountCents: number; accountName: string }[];
   totals: Record<PayLineGroup, number>;
-  lines: (FormStub["lines"][number] & { group: PayLineGroup; categoryLabel: string | null })[];
+  lines: (FormStub["lines"][number] & { group: PayLineGroup })[];
 };
 
 const GROUPS: PayLineGroup[] = ["tax", "insurance", "retirement", "other"];
@@ -22,12 +21,12 @@ const GROUPS: PayLineGroup[] = ["tax", "insurance", "retirement", "other"];
 const employerPaid = (stub: { employerLines: { kind: string; amountCents: number }[] }) =>
   stub.employerLines.filter((l) => l.kind !== "imputed_income").reduce((sum, l) => sum + l.amountCents, 0);
 
-function StubCard({ stub, options }: { stub: Stub; options: CategoryOption[] }) {
+function StubCard({ stub }: { stub: Stub }) {
   const [editing, setEditing] = useState(false);
   const [open, setOpen] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  if (editing) return <StubForm initial={stub} payStubId={stub.id} options={options} onDone={() => setEditing(false)} />;
+  if (editing) return <StubForm initial={stub} payStubId={stub.id} onDone={() => setEditing(false)} />;
 
   return (
     <li className="space-y-2 px-3 py-2 text-sm">
@@ -87,7 +86,7 @@ function StubCard({ stub, options }: { stub: Stub; options: CategoryOption[] }) 
                     {l.label}
                     <span className="block text-muted-foreground">{kindLabel(l.kind as PayLineKind)}</span>
                   </td>
-                  <td className="py-1 pr-2 text-muted-foreground">{l.categoryLabel ?? "off the gross"}</td>
+                  <td />
                   <td className="py-1 text-right tabular-nums">{formatCents(l.amountCents)}</td>
                 </tr>
               ))}
@@ -136,7 +135,7 @@ function StubCard({ stub, options }: { stub: Stub; options: CategoryOption[] }) 
   );
 }
 
-export function PayStubs({ stubs, next, options }: { stubs: Stub[]; next: FormStub; options: CategoryOption[] }) {
+export function PayStubs({ stubs, next }: { stubs: Stub[]; next: FormStub }) {
   const [adding, setAdding] = useState(false);
   return (
     <section className="space-y-2">
@@ -144,11 +143,11 @@ export function PayStubs({ stubs, next, options }: { stubs: Stub[]; next: FormSt
         <h2 className="text-lg font-medium">Pay stubs</h2>
         {!adding ? <Button onClick={() => setAdding(true)}>Add pay stub</Button> : null}
       </div>
-      {adding ? <StubForm initial={next} options={options} onDone={() => setAdding(false)} /> : null}
+      {adding ? <StubForm initial={next} onDone={() => setAdding(false)} /> : null}
       {stubs.length ? (
         <ul className="divide-y rounded-lg border">
           {stubs.map((s) => (
-            <StubCard key={s.id} stub={s} options={options} />
+            <StubCard key={s.id} stub={s} />
           ))}
         </ul>
       ) : !adding ? (

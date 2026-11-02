@@ -2,20 +2,19 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import type { CategoryOption } from "@/lib/categorize/labels";
 import { formatCents, parseAmountCents } from "@/lib/money";
 import { EMPLOYER_PAY_KINDS, PAY_LINE_KINDS } from "@/lib/pay/stubs";
 import { createStub, findDeposits, updateStub, type DepositMatch, type StubFields } from "./actions";
 
 // Adding or editing a pay stub (#60). Pay stubs repeat, so a new one starts
-// from the last one: the same deductions and categories, dates moved on by
-// one period. Usually only the amounts that changed need typing.
+// from the last one: the same deductions, dates moved on by one period.
+// Usually only the amounts that changed need typing.
 //
 // Only amounts and labels: there's nowhere to put an SSN or an address,
 // on purpose.
 
-type Line = { kind: string; label: string; amount: string; categoryId: string };
-export type FormStub = Omit<StubFields, "lines" | "depositTransactionIds"> & { lines: { kind: string; label: string; amountCents: number; categoryId: string | null }[] };
+type Line = { kind: string; label: string; amount: string };
+export type FormStub = Omit<StubFields, "lines" | "depositTransactionIds"> & { lines: { kind: string; label: string; amountCents: number }[] };
 type EmployerLine = { kind: string; label: string; amount: string };
 
 const input = "h-9 min-w-0 rounded-md border bg-background px-2 text-sm";
@@ -39,12 +38,10 @@ function centsOf(text: string): number | null {
 export function StubForm({
   initial,
   payStubId,
-  options,
   onDone,
 }: {
   initial: FormStub;
   payStubId?: string;
-  options: CategoryOption[];
   onDone: () => void;
 }) {
   const [employer, setEmployer] = useState(initial.employer);
@@ -54,7 +51,7 @@ export function StubForm({
   const [gross, setGross] = useState(initial.grossCents ? dollars(initial.grossCents) : "");
   const [net, setNet] = useState(initial.netCents ? dollars(initial.netCents) : "");
   const [lines, setLines] = useState<Line[]>(
-    initial.lines.map((l) => ({ kind: l.kind, label: l.label, amount: dollars(l.amountCents), categoryId: l.categoryId ?? "" })),
+    initial.lines.map((l) => ({ kind: l.kind, label: l.label, amount: dollars(l.amountCents) })),
   );
   const [employerLines, setEmployerLines] = useState<EmployerLine[]>(initial.employerLines.map((l) => ({ kind: l.kind, label: l.label, amount: dollars(l.amountCents) })));
   const [oneTime, setOneTime] = useState(initial.oneTime ?? false);
@@ -99,7 +96,7 @@ export function StubForm({
         payDate,
         grossCents: grossCents!,
         netCents: netCents!,
-        lines: lines.map((l, i) => ({ kind: l.kind, label: l.label, amountCents: lineCents[i]!, categoryId: l.categoryId || null })),
+        lines: lines.map((l, i) => ({ kind: l.kind, label: l.label, amountCents: lineCents[i]! })),
         employerLines: employerLines.map((l, i) => ({ kind: l.kind, label: l.label.trim(), amountCents: employerCents[i]! })),
         oneTime,
         ...(deposit === "auto" ? {} : { depositTransactionIds: deposit === "none" ? null : deposit.split(",") }),
@@ -136,8 +133,7 @@ export function StubForm({
 
       <div className="space-y-2">
         <p className="text-xs text-muted-foreground">
-          Deductions, as on the stub. The category is where each counts in budgets (a transfer category for a 401(k), since it isn&apos;t spending);
-          leave it empty to just take it off the gross.
+          Deductions, as on the stub. They&apos;re here so the stub adds up to the net; budgets count the net deposit itself.
         </p>
         {lines.map((l, i) => (
           <div key={i} className="flex flex-wrap gap-2 rounded-md border border-dashed p-2 sm:flex-nowrap sm:border-0 sm:p-0">
@@ -157,14 +153,6 @@ export function StubForm({
               aria-label="Amount"
               className={`${input} w-24 text-right tabular-nums`}
             />
-            <select value={l.categoryId} onChange={(e) => setLine(i, { categoryId: e.target.value })} aria-label="Category" className={`${input} w-full sm:w-44`}>
-              <option value="">No category</option>
-              {options.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {o.label}
-                </option>
-              ))}
-            </select>
             <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={() => setLines(lines.filter((_, j) => j !== i))} aria-label="Remove deduction">
               ×
             </Button>
@@ -173,7 +161,7 @@ export function StubForm({
         <Button
           size="sm"
           variant="outline"
-          onClick={() => setLines([...lines, { kind: "federal_income_tax", label: "", amount: "", categoryId: "" }])}
+          onClick={() => setLines([...lines, { kind: "federal_income_tax", label: "", amount: "" }])}
         >
           Add deduction
         </Button>
