@@ -14,9 +14,10 @@ import type { WriteContext } from "@/operations/tracked";
 //               provisional transactions meeting their synced version (#30)
 //   alert     — a near-real-time purchase alert (#31 email, #32 Apple Pay)
 //               creating a provisional transaction
-export type Actor = "user" | "tally" | "import" | "memory" | "model" | "matcher" | "alert" | `rule:${string}`;
+//   market    — refreshing market prices (#229)
+export type Actor = "user" | "tally" | "import" | "memory" | "model" | "matcher" | "alert" | "market" | `rule:${string}`;
 
-const NAMED_ACTORS = new Set(["user", "tally", "import", "memory", "model", "matcher", "alert"]);
+const NAMED_ACTORS = new Set(["user", "tally", "import", "memory", "model", "matcher", "alert", "market"]);
 
 export function isActor(value: string): value is Actor {
   return NAMED_ACTORS.has(value) || /^rule:[\w-]+$/.test(value);

@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { accounts as accountsTable } from "@/db/schema";
 import { getDb } from "@/lib/db";
+import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
+import { latestQuotes } from "@/lib/prices/refresh";
 import { listManualPositions } from "@/operations/holdings";
 import { AccountRow } from "./account-row";
 import { AddManualAccount } from "./manual-account";
@@ -10,7 +12,14 @@ import { AddManualAccount } from "./manual-account";
 // each one is in Activity and can be undone there.
 export default async function AccountsPage() {
   const db = getDb();
-  const [rows, positions] = await Promise.all([db.select().from(accountsTable).orderBy(accountsTable.institution, accountsTable.name), listManualPositions(db)]);
+  const [rows, positions, quotes] = await Promise.all([
+    db.select().from(accountsTable).orderBy(accountsTable.institution, accountsTable.name),
+    listManualPositions(db),
+    latestQuotes(db, "crypto"),
+  ]);
+  // Hand-entered positions show their market price (#229); refresh it after
+  // the page is sent, if it's due.
+  if (positions.length) refreshPricesAfterResponse();
   // Manual accounts get their own section rather than mixing into an
   // institution's list: nothing syncs them, and that should be obvious.
   const manual = rows.filter((r) => r.source === "manual");
@@ -28,7 +37,12 @@ export default async function AccountsPage() {
     currency: a.currency,
     manual: a.source === "manual",
     balanceAt: a.balanceAt?.toISOString() ?? null,
-    positions: positions.filter((p) => p.accountId === a.id),
+    positions: positions
+      .filter((p) => p.accountId === a.id)
+      .map((p) => {
+        const q = quotes.get(p.symbol.toUpperCase());
+        return { ...p, market: q ? { price: q.price, asOf: q.asOf?.toISOString() ?? null, stale: q.stale } : null };
+      }),
   });
 
   return (

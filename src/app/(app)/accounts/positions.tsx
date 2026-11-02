@@ -43,7 +43,25 @@ function parseCost(text: string): number | null | undefined {
   }
 }
 
-export function Positions({ account, positions }: { account: { id: string; name: string }; positions: ManualPosition[] }) {
+// The market price from the price cache (#229), when the symbol has been
+// looked up: null price means the provider has none. Shown beside the
+// owner's own price; until live valuing (#230), the value still uses theirs.
+export type PositionWithMarket = ManualPosition & { market: { price: string | null; asOf: string | null; stale: boolean } | null };
+
+const shortTime = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+function MarketPrice({ symbol, market }: { symbol: string; market: PositionWithMarket["market"] }) {
+  if (!market) return null;
+  if (market.price === null) return <span>No market price for {symbol}</span>;
+  const when = market.asOf ? shortTime.format(new Date(market.asOf)) : "";
+  return (
+    <span className={market.stale ? "text-warning" : undefined}>
+      Market {formatPrice(market.price)} · {market.stale ? `stale, from ${when}` : when}
+    </span>
+  );
+}
+
+export function Positions({ account, positions }: { account: { id: string; name: string }; positions: PositionWithMarket[] }) {
   const [adding, setAdding] = useState(false);
   return (
     <div className="space-y-2">
@@ -65,7 +83,7 @@ export function Positions({ account, positions }: { account: { id: string; name:
   );
 }
 
-function PositionRow({ position: p }: { position: ManualPosition }) {
+function PositionRow({ position: p }: { position: PositionWithMarket }) {
   const [editing, setEditing] = useState(false);
   const [quantity, setQuantity] = useState(p.quantity);
   const [price, setPrice] = useState(p.unitPrice);
@@ -108,6 +126,8 @@ function PositionRow({ position: p }: { position: ManualPosition }) {
         <span className="tabular-nums">{formatCents(p.valueCents)}</span>
       </div>
       <p className="text-xs text-muted-foreground">
+        <MarketPrice symbol={p.symbol} market={p.market} />
+        {p.market ? " · " : ""}
         Your price, as of {p.priceOn}
         {p.costBasisCents !== null ? ` · cost ${formatCents(p.costBasisCents)}` : ""} ·{" "}
         <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setEditing((v) => !v)}>

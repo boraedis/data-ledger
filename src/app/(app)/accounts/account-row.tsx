@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { ACCOUNT_KINDS, KIND_LABELS, countsTowardBudgetsByDefault, type AccountKind } from "@/lib/account-kinds";
 import { formatCents } from "@/lib/money";
 import { updateAccount } from "./actions";
-import type { ManualPosition } from "@/operations/holdings";
+import type { PositionWithMarket } from "./positions";
 import { ManualValueControls } from "./manual-account";
 import { Positions } from "./positions";
 
@@ -22,7 +22,7 @@ export type AccountRowData = {
   manual: boolean;
   balanceAt: string | null;
   // Positions kept by hand in a manual asset account (#231).
-  positions?: ManualPosition[];
+  positions?: PositionWithMarket[];
 };
 
 export function AccountRow({ account }: { account: AccountRowData }) {

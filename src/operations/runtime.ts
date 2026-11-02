@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, notInArray } from "drizzle-orm";
 import { commandLog, type RowChange } from "@/db/schema";
 import type { Db } from "@/db/types";
 import type { z } from "zod";
@@ -207,6 +207,11 @@ export async function undoCommand(db: Db, commandId: string, { actor = "user", r
   });
 }
 
-export async function listCommands(db: Db, { limit = 50 }: { limit?: number } = {}) {
-  return db.select().from(commandLog).orderBy(desc(commandLog.createdAt)).limit(limit);
+export async function listCommands(db: Db, { limit = 50, excludeActors = [] }: { limit?: number; excludeActors?: Actor[] } = {}) {
+  return db
+    .select()
+    .from(commandLog)
+    .where(excludeActors.length ? notInArray(commandLog.actor, excludeActors) : undefined)
+    .orderBy(desc(commandLog.createdAt))
+    .limit(limit);
 }

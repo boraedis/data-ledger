@@ -2,6 +2,7 @@ import { timingSafeEqual } from "crypto";
 import { withTransactionalDb } from "@/lib/db";
 import { chainUrl, triggerClassify } from "@/lib/categorize/classify-chain";
 import { modelIsConfigured } from "@/lib/model/client";
+import { refreshPricesIfDue } from "@/lib/prices/refresh";
 import { notifyNewAlerts } from "@/lib/push/alerts";
 import { syncAllConnections } from "@/lib/sync/run";
 import { execute } from "@/operations/runtime";
@@ -46,6 +47,13 @@ export async function GET(request: Request) {
     if (result.status === "applied") flagsRaised = (result.output as { raised: number }).raised;
   } catch (error) {
     console.error("Suspicious-charge check failed", error);
+  }
+  // Market prices (#229), so the morning's values are fresh even if no page
+  // was opened overnight. Same rule: never fails the sync.
+  try {
+    await withTransactionalDb((db) => refreshPricesIfDue(db));
+  } catch (error) {
+    console.error("Price refresh failed", error instanceof Error ? error.message.slice(0, 120) : "unknown");
   }
   // New alerts to the owner's phone (#29). Same rule: a push problem never
   // fails the sync, and Home still shows every alert.
