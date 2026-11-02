@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { accounts as accountsTable } from "@/db/schema";
 import { getDb } from "@/lib/db";
+import { listManualPositions } from "@/operations/holdings";
 import { AccountRow } from "./account-row";
 import { AddManualAccount } from "./manual-account";
 
@@ -8,7 +9,8 @@ import { AddManualAccount } from "./manual-account";
 // counts as spending. Edits go through the accounts.update operation, so
 // each one is in Activity and can be undone there.
 export default async function AccountsPage() {
-  const rows = await getDb().select().from(accountsTable).orderBy(accountsTable.institution, accountsTable.name);
+  const db = getDb();
+  const [rows, positions] = await Promise.all([db.select().from(accountsTable).orderBy(accountsTable.institution, accountsTable.name), listManualPositions(db)]);
   // Manual accounts get their own section rather than mixing into an
   // institution's list: nothing syncs them, and that should be obvious.
   const manual = rows.filter((r) => r.source === "manual");
@@ -26,6 +28,7 @@ export default async function AccountsPage() {
     currency: a.currency,
     manual: a.source === "manual",
     balanceAt: a.balanceAt?.toISOString() ?? null,
+    positions: positions.filter((p) => p.accountId === a.id),
   });
 
   return (

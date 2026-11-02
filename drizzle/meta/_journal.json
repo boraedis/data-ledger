@@ -232,6 +232,13 @@
       "when": 1793485424785,
       "tag": "0032_suspicious_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1793642715435,
+      "tag": "0033_manual_positions",
+      "breakpoints": true
     }
   ]
 }

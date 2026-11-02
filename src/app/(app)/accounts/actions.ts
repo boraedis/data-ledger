@@ -40,3 +40,20 @@ export async function setManualValue(accountId: string, name: string, valueCents
 export async function deleteManualAccount(accountId: string, name: string): Result {
   return run("accounts.deleteManual", { accountId }, `Removed manual account "${name}"`, "Couldn't remove the account");
 }
+
+// Positions kept by hand (#231). Reasons name the symbol, never a quantity or price.
+export async function addPosition(input: { accountId: string; symbol: string; quantity: string; unitPrice: string; priceOn: string; costBasisCents: number | null }, accountName: string): Result {
+  return run("holdings.addManual", input, `Added ${input.symbol.toUpperCase()} to "${accountName}"`, "Couldn't add the position");
+}
+
+export async function setPositionQuantity(positionId: string, symbol: string, quantity: string): Result {
+  return run("holdings.setQuantity", { positionId, quantity }, `Changed how much ${symbol} is held`, "Couldn't change the quantity");
+}
+
+export async function setPositionPrice(positionId: string, symbol: string, unitPrice: string, priceOn: string): Result {
+  return run("holdings.setPrice", { positionId, unitPrice, priceOn }, `Updated the price of ${symbol} as of ${priceOn}`, "Couldn't update the price");
+}
+
+export async function removePosition(positionId: string, symbol: string): Result {
+  return run("holdings.remove", { positionId }, `Removed ${symbol}`, "Couldn't remove the position");
+}

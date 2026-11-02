@@ -297,6 +297,37 @@ export const holdingSnapshots = pgTable(
   ],
 );
 
+// Positions the owner keeps up by hand in a manual account (#231): crypto
+// that no connection covers yet, say. The account's value is the sum of
+// quantity × unit price over these, written as its dated balance by every
+// change (src/operations/holdings.ts), so net worth and its history read it
+// like any manual account's. The current state only; history is in the
+// account's balance snapshots. Never transactions, never in budgets, and
+// never sent to a model.
+export const manualPositions = pgTable(
+  "manual_positions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // Restrict: accounts.deleteManual removes positions through tracked
+    // removes first, so undo can bring them back.
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "restrict" }),
+    // As the owner writes it ("BTC"); unique per account, ignoring case.
+    symbol: text("symbol").notNull(),
+    // Exact decimals: crypto quantities and prices run to many places.
+    quantity: numeric("quantity").notNull(),
+    // The owner's price per unit, and the day it's from. Until live prices
+    // (#229), this is what values the position; the page shows its date.
+    unitPrice: numeric("unit_price").notNull(),
+    priceOn: date("price_on").notNull(),
+    // What was paid in total, if the owner wants to record it.
+    costBasisCents: bigint("cost_basis_cents", { mode: "number" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("manual_positions_account_symbol_idx").on(t.accountId, sql`upper(${t.symbol})`)],
+);
+
 export const categoryKind = pgEnum("category_kind", ["expense", "income", "transfer"]);
 
 // The owner's own category tree (#6) — nothing is inherited from a bank.

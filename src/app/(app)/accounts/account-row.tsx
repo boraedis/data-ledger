@@ -5,7 +5,9 @@ import { Input } from "@/components/ui/input";
 import { ACCOUNT_KINDS, KIND_LABELS, countsTowardBudgetsByDefault, type AccountKind } from "@/lib/account-kinds";
 import { formatCents } from "@/lib/money";
 import { updateAccount } from "./actions";
+import type { ManualPosition } from "@/operations/holdings";
 import { ManualValueControls } from "./manual-account";
+import { Positions } from "./positions";
 
 export type AccountRowData = {
   id: string;
@@ -19,6 +21,8 @@ export type AccountRowData = {
   // instead of a bank name, and no budget flag (nothing posts to it).
   manual: boolean;
   balanceAt: string | null;
+  // Positions kept by hand in a manual asset account (#231).
+  positions?: ManualPosition[];
 };
 
 export function AccountRow({ account }: { account: AccountRowData }) {
@@ -105,7 +109,11 @@ export function AccountRow({ account }: { account: AccountRowData }) {
       {account.manual ? (
         <ManualValueControls
           account={{ id: account.id, name: account.displayName ?? account.name, kind: account.kind, balanceAt: account.balanceAt }}
+          valuedFromPositions={Boolean(account.positions?.length)}
         />
+      ) : null}
+      {account.manual && account.kind !== "loan" && account.kind !== "credit" ? (
+        <Positions account={{ id: account.id, name: account.displayName ?? account.name }} positions={account.positions ?? []} />
       ) : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </li>

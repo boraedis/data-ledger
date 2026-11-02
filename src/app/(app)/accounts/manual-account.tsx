@@ -118,8 +118,11 @@ export function AddManualAccount() {
 
 export function ManualValueControls({
   account,
+  valuedFromPositions = false,
 }: {
   account: { id: string; name: string; kind: AccountKind; balanceAt: string | null };
+  // Its value is the total of its positions (#231), so there's no value to type.
+  valuedFromPositions?: boolean;
 }) {
   const [value, setValue] = useState("");
   const [on, setOn] = useState(localToday);
@@ -145,27 +148,33 @@ export function ManualValueControls({
   return (
     <div className="space-y-1">
       <form onSubmit={save} className="flex flex-wrap items-center gap-2">
-        <Input
-          aria-label={`New ${valueLabel(account.kind).toLowerCase()}`}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          inputMode="decimal"
-          placeholder={`New ${valueLabel(account.kind).toLowerCase()}`}
-          className="h-8 w-36"
-          disabled={pending}
-        />
-        <Input
-          aria-label="As of"
-          type="date"
-          value={on}
-          max={localToday()}
-          onChange={(e) => setOn(e.target.value)}
-          className="h-8 w-40"
-          disabled={pending}
-        />
-        <Button type="submit" size="sm" variant="outline" disabled={pending || !value}>
-          Update value
-        </Button>
+        {valuedFromPositions ? (
+          <span className="text-xs text-muted-foreground">Valued from its positions below.</span>
+        ) : (
+          <>
+            <Input
+              aria-label={`New ${valueLabel(account.kind).toLowerCase()}`}
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              inputMode="decimal"
+              placeholder={`New ${valueLabel(account.kind).toLowerCase()}`}
+              className="h-8 w-36"
+              disabled={pending}
+            />
+            <Input
+              aria-label="As of"
+              type="date"
+              value={on}
+              max={localToday()}
+              onChange={(e) => setOn(e.target.value)}
+              className="h-8 w-40"
+              disabled={pending}
+            />
+            <Button type="submit" size="sm" variant="outline" disabled={pending || !value}>
+              Update value
+            </Button>
+          </>
+        )}
         <Button type="button" size="sm" variant="ghost" onClick={remove} disabled={pending} className="text-muted-foreground">
           Remove
         </Button>
