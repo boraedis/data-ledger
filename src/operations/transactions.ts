@@ -1,7 +1,8 @@
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
 import {
   accounts,
+  alerts,
   categories,
   categorySuggestions,
   payStubDeposits,
@@ -16,6 +17,7 @@ import {
 } from "@/db/schema";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { merchantMemory } from "@/lib/categorize/match";
+import { FLAG_KINDS } from "@/lib/suspicious/checks";
 import { isInvestmentKind, investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
 import { TRANSFER_PASSES, findTransferPairs } from "@/lib/investments/transfers";
 import { DAYS_AFTER as MANUAL_DAYS_AFTER, DAYS_BEFORE as MANUAL_DAYS_BEFORE } from "@/lib/manual/match";
@@ -53,6 +55,23 @@ const notFullyReimbursed = sql`not exists (
   having sum(${reimbursementMatches.amountCents}) >= ${transactions.amountCents}
 )`;
 
+// Flagged (#210): a suspicious-charge alert (#33) on it that's waiting for
+// a verdict, or that the owner called suspicious; calling it fine clears
+// it. A suspicious one stays flagged with no end date, unlike the Inbox's
+// 30 days: it's a charge being disputed, and the list is where to find it
+// again. The tag and the filter both read this, so they always agree.
+//
+// An `in (subquery)` built by drizzle rather than a hand-written `exists`:
+// in a select list drizzle writes columns without their table, so a
+// correlated `transactions.id` there would silently mean the alert's id.
+function flaggedSql(db: Db): SQL<boolean> {
+  const flaggedIds = db
+    .select({ id: alerts.transactionId })
+    .from(alerts)
+    .where(and(isNotNull(alerts.transactionId), inArray(alerts.kind, FLAG_KINDS), or(isNull(alerts.dismissedAt), eq(alerts.verdict, "suspicious"))));
+  return sql<boolean>`${transactions.id} in ${flaggedIds}`;
+}
+
 export type TransactionFilter = {
   from?: string;
   to?: string;
@@ -64,6 +83,7 @@ export type TransactionFilter = {
   budgetOnly?: boolean;
   unmatchedTransfers?: boolean;
   payStubLinked?: boolean;
+  flagged?: boolean;
 };
 
 /**
@@ -93,6 +113,7 @@ export function transactionFilters(db: Db, input: TransactionFilter): SQL[] {
   // `payStub` badge.
   if (input.payStubLinked)
     filters.push(inArray(transactions.id, db.select({ id: payStubDeposits.transactionId }).from(payStubDeposits)));
+  if (input.flagged) filters.push(flaggedSql(db));
   if (input.budgetOnly) filters.push(inArray(transactions.accountId, budgetAccountIds(db)));
   if (input.categoryId) {
     const viaSplit = db
@@ -124,7 +145,8 @@ export const listTransactions = defineRead({
     "Filter by date range (inclusive, YYYY-MM-DD, on posted date), account, category (matches split parts " +
     "too), tag, text search on merchant/description, uncategorized only (no category and no transfer or " +
     "reimbursement that explains it), unmatchedTransfers (transfers with no other half) or payStubLinked " +
-    "(paycheck deposits linked to a pay stub). budgetOnly limits to accounts " +
+    "(paycheck deposits linked to a pay stub) or flagged (a suspicious-charge alert waiting for a verdict or " +
+    "marked suspicious). budgetOnly limits to accounts " +
     "that count toward budgets (excludes investment, retirement, loan and asset accounts) — use it for " +
     "anything about spending. Page with offset. `transfer` is set when the transaction is one side of a " +
     "transfer between the owner's accounts (never spending or income); `investmentActivity` classifies " +
@@ -132,6 +154,7 @@ export const listTransactions = defineRead({
     "`transferUnmatched` is true for one filed under a transfer category whose other side wasn't found. " +
     "`payStub` is set on a paycheck deposit linked to its pay stub (pay date, employer); `paycheckWithoutStub` " +
     "is true for money in that looks like a paycheck (the category or payer of linked ones) but has none. " +
+    "`flagged` is true while a suspicious-charge alert on it waits for a verdict or was marked suspicious. " +
     "`provisionalSource` is set on a provisional transaction: one from a purchase alert that the bank hasn't " +
     "reported yet (see transactions.provisional). `manual` is true for one the owner added by hand.",
   input: z.object({
@@ -145,6 +168,7 @@ export const listTransactions = defineRead({
     budgetOnly: z.boolean().optional(),
     unmatchedTransfers: z.boolean().optional(),
     payStubLinked: z.boolean().optional(),
+    flagged: z.boolean().optional(),
     limit: z.number().int().min(1).max(500).default(100),
     offset: z.number().int().min(0).default(0),
   }),
@@ -167,6 +191,7 @@ export const listTransactions = defineRead({
         categoryId: transactions.categoryId,
         isSplit: transactions.isSplit,
         transferPairId: transactions.transferPairId,
+        flagged: flaggedSql(db),
       })
       .from(transactions)
       .where(and(...filters))
@@ -303,22 +328,23 @@ export const transactionTypeCounts = defineRead({
   name: "transactions.typeCounts",
   description:
     "Counts for the Transactions list's type filter, under the same date, account, category, tag and search " +
-    "filters as transactions.list: unmatchedTransfers, uncategorized and payStubLinked.",
+    "filters as transactions.list: unmatchedTransfers, uncategorized, payStubLinked and flagged.",
   input: z.object(listFilterInput),
   run: async (db, input) => {
-    const countOf = async (type: Pick<TransactionFilter, "unmatchedTransfers" | "uncategorized" | "payStubLinked">) => {
+    const countOf = async (type: Pick<TransactionFilter, "unmatchedTransfers" | "uncategorized" | "payStubLinked" | "flagged">) => {
       const [{ n }] = await db
         .select({ n: count() })
         .from(transactions)
         .where(and(...transactionFilters(db, { ...input, ...type })));
       return n;
     };
-    const [unmatchedTransfers, uncategorized, payStubLinked] = await Promise.all([
+    const [unmatchedTransfers, uncategorized, payStubLinked, flagged] = await Promise.all([
       countOf({ unmatchedTransfers: true }),
       countOf({ uncategorized: true }),
       countOf({ payStubLinked: true }),
+      countOf({ flagged: true }),
     ]);
-    return { unmatchedTransfers, uncategorized, payStubLinked };
+    return { unmatchedTransfers, uncategorized, payStubLinked, flagged };
   },
 });
 

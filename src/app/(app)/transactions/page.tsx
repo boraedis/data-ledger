@@ -27,6 +27,7 @@ const TYPES = {
   unmatched: { label: "Unmatched transfers", filter: "unmatchedTransfers" },
   uncategorized: { label: "Uncategorized", filter: "uncategorized" },
   paystub: { label: "Connected to a pay stub", filter: "payStubLinked" },
+  flagged: { label: "Flagged", filter: "flagged" },
 } as const;
 type TypeKey = keyof typeof TYPES;
 const isType = (value: string | undefined): value is TypeKey => value !== undefined && Object.hasOwn(TYPES, value);
@@ -35,7 +36,7 @@ const isType = (value: string | undefined): value is TypeKey => value !== undefi
 // JavaScript, and every filtered view is a shareable, back-button-friendly
 // URL. Rows open the detail page, where splitting and tagging happen.
 // ?type= picks one kind of row (#208): transfers with no other half (#184),
-// uncategorized, or connected to a pay stub. ?unmatched=1, its older form,
+// uncategorized, connected to a pay stub, or flagged (#210). ?unmatched=1, its older form,
 // still works for links saved before. ?from= and ?to= limit it to posted
 // dates, as the Cash flow page links to its own period.
 export default async function TransactionsPage(props: PageProps<"/transactions">) {
@@ -210,6 +211,8 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                   </span>
                   <span className="mt-0.5 flex flex-wrap gap-1 text-xs">
                     {t.pending ? <span className="rounded border border-dashed px-1.5">Pending</span> : null}
+                    {/* A suspicious-charge flag (#210), until it's called fine. */}
+                    {t.flagged ? <span className="rounded bg-destructive/15 px-1.5 text-destructive">Flagged</span> : null}
                     <Badge badge={categoryBadge(t, (id) => labelOf.get(id))} />
                     {/* What it's connected to, so nothing reads as counted twice:
                         the other side of a transfer, a paycheck's pay stub. */}
