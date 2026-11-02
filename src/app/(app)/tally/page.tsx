@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { TallyMascot } from "@/components/tally-mascot";
 import { getDb } from "@/lib/db";
 import { modelIsConfigured } from "@/lib/model/client";
 import { listConversations } from "@/lib/tally/agent";
@@ -37,7 +38,10 @@ export default async function TallyPage(props: PageProps<"/tally">) {
         </ul>
       </aside>
       <section className="min-w-0 space-y-3">
-        <h1 className="text-2xl font-semibold">Tally</h1>
+        <h1 className="flex items-center gap-2 text-2xl font-semibold">
+          <TallyMascot size={36} blink />
+          Tally
+        </h1>
         {modelIsConfigured() ? (
           // Keyed by conversation, so switching threads starts fresh state.
           <Chat key={selected ?? "new"} conversationId={selected} initial={initial} />

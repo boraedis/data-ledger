@@ -191,7 +191,29 @@
   }
 }
 
+/* Tally's blink (#73): a quick close every few seconds, eyes squashing
+   toward their middle. Off for anyone who asked for reduced motion. */
+@keyframes tally-blink {
+  0%,
+  92%,
+  100% {
+    transform: scaleY(1);
+  }
+  96% {
+    transform: scaleY(0.1);
+  }
+}
+
 @layer utilities {
+  .tally-blink {
+    transform-box: fill-box;
+    transform-origin: center;
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .tally-blink {
+      animation: tally-blink 5s ease-in-out infinite;
+    }
+  }
   /* A ledger's double rule, under the top bar. */
   .rule-double {
     border-bottom: 3px double var(--border);
