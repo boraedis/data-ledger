@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { depositMatches, expandDeposit, groupOf, stubMismatch, type DepositCandidate } from "@/lib/pay/stubs";
+import { depositMatches, groupOf, stubMismatch, type DepositCandidate } from "@/lib/pay/stubs";
 
 describe("stubMismatch", () => {
   it("passes a stub that adds up, and says by how much one doesn't", () => {
@@ -53,29 +53,5 @@ describe("depositMatches", () => {
       ["c1", "s1"],
       ["c2", "s2"],
     ]);
-  });
-});
-
-describe("expandDeposit", () => {
-  const deposit = { categoryId: "paycheck", amountCents: 245_000 };
-  it("counts gross pay and each placed deduction, adding up to the deposit", () => {
-    const parts = expandDeposit(deposit, {
-      grossCents: 300_000,
-      lines: [
-        { amountCents: 40_000, categoryId: "taxes" },
-        { amountCents: 10_000, categoryId: "insurance" },
-        { amountCents: 5_000, categoryId: null },
-      ],
-    });
-    expect(parts).toEqual([
-      { categoryId: "paycheck", amountCents: 295_000 },
-      { categoryId: "taxes", amountCents: -40_000 },
-      { categoryId: "insurance", amountCents: -10_000 },
-    ]);
-    expect(parts.reduce((s, p) => s + p.amountCents, 0)).toBe(245_000);
-  });
-
-  it("falls back to the deposit alone when the stub no longer matches it", () => {
-    expect(expandDeposit(deposit, { grossCents: 300_000, lines: [{ amountCents: 1, categoryId: "taxes" }] })).toEqual([deposit]);
   });
 });

@@ -28,10 +28,10 @@ const run = (operation: string, input: Record<string, unknown>) => execute(db, {
 /** A synthetic stub whose net is the given deposit. */
 function stubFor(deposit: { postedOn: string; amountCents: number }, extra: Record<string, unknown> = {}) {
   const lines = [
-    { kind: "federal_income_tax", label: "Fed W/H", amountCents: 41_000, categoryId: cat.Utilities },
+    { kind: "federal_income_tax", label: "Fed W/H", amountCents: 41_000 },
     { kind: "social_security", label: "OASDI", amountCents: 18_600 },
     { kind: "medicare", label: "Medicare", amountCents: 4_350 },
-    { kind: "health_insurance", label: "Medical", amountCents: 6_050, categoryId: cat.Fitness },
+    { kind: "health_insurance", label: "Medical", amountCents: 6_050 },
   ];
   const withheld = lines.reduce((s, l) => s + l.amountCents, 0);
   return {
@@ -47,21 +47,14 @@ function stubFor(deposit: { postedOn: string; amountCents: number }, extra: Reco
 }
 
 describe("payStubs", () => {
-  it("links the deposit, and budgets count gross pay plus each deduction instead of the net", async () => {
+  it("links the deposit, and budgets count it as the net it is, with the deductions left out of every category", async () => {
     const result = await run("payStubs.create", stubFor(paycheck));
     expect((result as { output: { depositTransactionIds: string[] } }).output.depositTransactionIds).toEqual([paycheck.id]);
 
     const lines = (await spendingLines.run(db, { from: paycheck.postedOn, to: paycheck.postedOn, budgetOnly: true, gross: false })).filter(
       (l) => l.transactionId === paycheck.id,
     );
-    const stub = stubFor(paycheck);
-    // Social Security and Medicare have no category: netted against gross.
-    expect(lines.map((l) => [l.categoryId, l.amountCents])).toEqual([
-      [cat.Paycheck, stub.grossCents - 18_600 - 4_350],
-      [cat.Utilities, -41_000],
-      [cat.Fitness, -6_050],
-    ]);
-    expect(lines.reduce((s, l) => s + l.amountCents, 0)).toBe(paycheck.amountCents);
+    expect(lines.map((l) => [l.categoryId, l.amountCents])).toEqual([[cat.Paycheck, paycheck.amountCents]]);
   });
 
   it("refuses a stub that doesn't add up, or a deposit that isn't the net", async () => {
@@ -99,7 +92,7 @@ describe("payStubs", () => {
     expect((await mine()).employerLines).toEqual(employerLines);
     expect((await mine()).totals).toEqual({ tax: 41_000 + 18_600 + 4_350, insurance: 6_050, retirement: 0, other: 0 });
 
-    // Budgets never count them: the deposit still expands to exactly itself.
+    // Budgets never count them: the deposit is still one line, as itself.
     const lines = (await spendingLines.run(db, { from: paycheck.postedOn, to: paycheck.postedOn, budgetOnly: true, gross: false })).filter((l) => l.transactionId === paycheck.id);
     expect(lines.reduce((s, l) => s + l.amountCents, 0)).toBe(paycheck.amountCents);
 
@@ -125,7 +118,7 @@ describe("payStubs", () => {
     expect(await db.select().from(payStubDeposits).where(and(eq(payStubDeposits.payStubId, stub.id), eq(payStubDeposits.transactionId, deposit.id)))).toHaveLength(1);
   });
 
-  it("links pay split across two accounts, and budgets still count gross pay plus deductions (#91)", async () => {
+  it("links pay split across two accounts, and budgets count each deposit as it is (#91)", async () => {
     const payday = { postedOn: "2026-07-10", amountCents: 245_123 };
     const { output } = (await run("payStubs.create", stubFor(payday))) as { output: { payStubId: string } };
     const [savings] = await db.select().from(accounts).where(eq(accounts.type, "savings"));
@@ -144,18 +137,12 @@ describe("payStubs", () => {
       [toSavings.id, 50_000],
     ]);
 
-    // Gross and deductions expand onto the larger deposit, less the other,
-    // which counts as itself: together, exactly both deposits.
+    // Each deposit counts as itself, so together they're exactly the net.
     const lines = (await spendingLines.run(db, { from: "2026-07-10", to: "2026-07-10", budgetOnly: false, gross: false })).filter(
       (l) => l.transactionId === toChecking.id || l.transactionId === toSavings.id,
     );
-    const stub = stubFor(payday);
-    expect(lines.filter((l) => l.transactionId === toChecking.id).map((l) => [l.categoryId, l.amountCents])).toEqual([
-      [cat.Paycheck, stub.grossCents - 50_000 - 18_600 - 4_350],
-      [cat.Utilities, -41_000],
-      [cat.Fitness, -6_050],
-    ]);
-    expect(lines.filter((l) => l.transactionId === toSavings.id).map((l) => l.amountCents)).toEqual([50_000]);
+    expect(lines.filter((l) => l.transactionId === toChecking.id).map((l) => [l.categoryId, l.amountCents])).toEqual([[cat.Paycheck, 195_123]]);
+    expect(lines.filter((l) => l.transactionId === toSavings.id).map((l) => [l.categoryId, l.amountCents])).toEqual([[cat.Paycheck, 50_000]]);
     expect(lines.reduce((s, l) => s + l.amountCents, 0)).toBe(245_123);
   });
 

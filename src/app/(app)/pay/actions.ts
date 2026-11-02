@@ -10,7 +10,7 @@ import { executeAsOwner } from "@/operations/server";
 
 // Pay stubs (#60), as the owner: logged and undoable.
 
-export type StubLine = { kind: string; label: string; amountCents: number; categoryId: string | null };
+export type StubLine = { kind: string; label: string; amountCents: number };
 export type StubFields = {
   employer: string;
   periodStart: string;

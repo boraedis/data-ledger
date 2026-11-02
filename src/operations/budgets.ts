@@ -319,10 +319,9 @@ async function loadPayInputs(db: Db, { from, to, gross }: { from: string; to: st
     db.select({ transactionId: payStubDeposits.transactionId }).from(payStubDeposits),
     labels(db),
   ]);
-  // Spending: expense lines only (transfers and pay never are). A linked
-  // paycheck's deduction lines (health insurance under an expense
-  // category, say) left the gross before net pay landed, so against net
-  // pay they'd count twice.
+  // Spending: expense lines only (transfers and pay never are), and never a
+  // linked paycheck's deposit: net pay is what the pay figures already count,
+  // so it can't count again here.
   const expense = new Set(rows.filter((r) => r.kind === "expense").map((r) => r.id));
   const paycheck = new Set(deposits.map((d) => d.transactionId));
   const spending = lines.filter((l) => expense.has(l.categoryId) && !paycheck.has(l.transactionId));

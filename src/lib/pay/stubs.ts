@@ -112,30 +112,6 @@ export function depositMatches(
 }
 
 /**
- * What a linked deposit counts as in budgets: gross pay in the deposit's
- * own category, and each deduction that has a category as its own line,
- * negative (money that left the gross before it reached the bank). A
- * deduction without a category is netted against gross instead. Either
- * way the parts add up to the deposit exactly, so nothing is counted
- * twice and nothing goes missing.
- */
-export function expandDeposit(
-  deposit: { categoryId: string; amountCents: number },
-  stub: { grossCents: number; lines: { amountCents: number; categoryId: string | null }[] },
-): { categoryId: string; amountCents: number }[] {
-  const placed = stub.lines.filter((l): l is { amountCents: number; categoryId: string } => l.categoryId !== null);
-  const unplaced = stub.lines.filter((l) => l.categoryId === null).reduce((sum, l) => sum + l.amountCents, 0);
-  const parts = [
-    { categoryId: deposit.categoryId, amountCents: stub.grossCents - unplaced },
-    ...placed.map((l) => ({ categoryId: l.categoryId, amountCents: -l.amountCents })),
-  ];
-  // A stub that no longer matches its deposit (edited since) counts as
-  // the deposit alone rather than as numbers that don't add up.
-  const total = parts.reduce((sum, p) => sum + p.amountCents, 0);
-  return total === deposit.amountCents ? parts.filter((p) => p.amountCents !== 0) : [deposit];
-}
-
-/**
  * A new stub's starting point: the last one moved on by one pay period
  * (its own length), with the same deductions and amounts. Most paychecks
  * repeat, so usually only what changed needs typing.

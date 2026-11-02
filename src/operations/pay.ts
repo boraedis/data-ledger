@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, categories, employerPayKind, payLineKind, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, transactions } from "@/db/schema";
+import { accounts, employerPayKind, payLineKind, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { DEPOSIT_DAYS_AFTER, DEPOSIT_DAYS_BEFORE, depositMatches, groupOf, stubMismatch, type PayLineGroup } from "@/lib/pay/stubs";
 import { defineRead, defineWrite } from "@/operations/define";
@@ -16,7 +16,6 @@ const line = z.object({
   kind: z.enum(payLineKind.enumValues),
   label: z.string().trim().min(1).max(60),
   amountCents: z.number().int().min(1),
-  categoryId: z.uuid().nullable().optional(),
 });
 
 // Paid by the employer on top (#92): from the stub's memo box, never part
@@ -114,11 +113,6 @@ async function validate(ctx: WriteContext, input: z.infer<typeof stubFields>) {
   if (input.periodEnd < input.periodStart) throw new Error("The pay period ends before it starts");
   const mismatch = stubMismatch(input.grossCents, input.lines, input.netCents);
   if (mismatch) throw new Error(mismatch);
-  const categoryIds = [...new Set(input.lines.map((l) => l.categoryId).filter((id): id is string => Boolean(id)))];
-  if (categoryIds.length) {
-    const found = await ctx.db.select({ id: categories.id }).from(categories).where(inArray(categories.id, categoryIds));
-    if (found.length !== categoryIds.length) throw new NotFoundError("Category not found");
-  }
 }
 
 async function resolveDeposits(ctx: WriteContext, input: z.infer<typeof stubFields>, exceptStubId?: string): Promise<string[]> {
@@ -145,7 +139,7 @@ const stubColumns = (input: z.infer<typeof stubFields>) => ({
 
 async function writeLines(ctx: WriteContext, payStubId: string, lines: z.infer<typeof line>[], employerLines: z.infer<typeof employerLine>[]) {
   for (const [position, l] of lines.entries()) {
-    await ctx.insert(payStubLines, { payStubId, kind: l.kind, label: l.label, amountCents: l.amountCents, categoryId: l.categoryId ?? null, position });
+    await ctx.insert(payStubLines, { payStubId, kind: l.kind, label: l.label, amountCents: l.amountCents, position });
   }
   for (const [position, l] of employerLines.entries()) {
     await ctx.insert(payStubEmployerLines, { payStubId, kind: l.kind, label: l.label, amountCents: l.amountCents, position });
@@ -166,12 +160,12 @@ export const createPayStub = defineWrite({
   name: "payStubs.create",
   description:
     "Record a pay stub: employer label, pay period, pay date, gross pay, each deduction (kind, the stub's label, " +
-    "positive cents, optionally the category it counts under in budgets), net pay, and optionally what the employer " +
+    "positive cents), net pay, and optionally what the employer " +
     "paid on top (401(k) match, HSA, life insurance, imputed income; never part of gross or net), and oneTime for a bonus " +
     "or other one-off pay (counted in the year to date, left out of the tax estimate's pace). Gross minus deductions must " +
     "equal net exactly. The net-pay deposits are linked automatically when exactly one way fits: one deposit of the " +
-    "net, or pay split across accounts (two or three deposits from the same payer adding up to it); then budgets " +
-    "count gross pay and each deduction instead of the net.",
+    "net, or pay split across accounts (two or three deposits from the same payer adding up to it). Budgets count " +
+    "the deposits as they are: deductions never move money between categories.",
   input: stubFields,
   apply: async (ctx, input) => {
     await validate(ctx, input);
@@ -248,7 +242,7 @@ export const listPayStubs = defineRead({
   description:
     "Pay stubs, newest pay date first, optionally for one calendar year: employer label, period, pay date, gross, " +
     "net, oneTime (a bonus or other one-off, left out of the tax estimate's pace), each deduction (kind, group: tax / " +
-    "insurance / retirement / other, label, amount, category), totals per " +
+    "insurance / retirement / other, label, amount), totals per " +
     "group, what the employer paid on top (employerLines: 401(k) match, HSA, life insurance, imputed income), " +
     "and the linked net-pay deposits if any (more than one when pay is split across accounts: each with its " +
     "date, amount and account name). Amounts are integer cents.",
@@ -295,7 +289,7 @@ export const listPayStubs = defineRead({
         deposits: deposits
           .filter((d) => d.payStubId === s.id)
           .map((d) => ({ id: d.id, postedOn: d.postedOn, amountCents: d.amountCents, accountId: d.accountId, accountName: d.accountName })),
-        lines: own.map((l) => ({ kind: l.kind, group: groupOf(l.kind), label: l.label, amountCents: l.amountCents, categoryId: l.categoryId })),
+        lines: own.map((l) => ({ kind: l.kind, group: groupOf(l.kind), label: l.label, amountCents: l.amountCents })),
         employerLines: employerLines.filter((l) => l.payStubId === s.id).map((l) => ({ kind: l.kind, label: l.label, amountCents: l.amountCents })),
         totals,
       };

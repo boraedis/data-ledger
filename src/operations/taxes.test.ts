@@ -55,7 +55,7 @@ it("says so when a year has no stubs", async () => {
 });
 
 it("leaves a stub flagged one-time out of the pace, keeps the flag on an edit that omits it, and shows it (#113)", async () => {
-  type Stub = { id: string; employer: string; periodStart: string; periodEnd: string; payDate: string; grossCents: number; netCents: number; oneTime: boolean; lines: { kind: string; label: string; amountCents: number; categoryId: string | null }[]; employerLines: { kind: string; label: string; amountCents: number }[] };
+  type Stub = { id: string; employer: string; periodStart: string; periodEnd: string; payDate: string; grossCents: number; netCents: number; oneTime: boolean; lines: { kind: string; label: string; amountCents: number }[]; employerLines: { kind: string; label: string; amountCents: number }[] };
   const list = async () => (await read(db, listPayStubs, { year: 2026 })) as unknown as Stub[];
   const [latest] = await list();
   expect(latest.oneTime).toBe(false);
