@@ -2,6 +2,7 @@ import { asc } from "drizzle-orm";
 import { accounts, balanceSnapshots } from "@/db/schema";
 import type { Db } from "@/db/types";
 import type { AccountKind } from "@/lib/account-kinds";
+import { liveValues, type LiveValue } from "@/lib/prices/live-value";
 
 // Net worth = assets − liabilities, from account balances (#25).
 //
@@ -130,7 +131,9 @@ export type NetWorthSummary = {
   liabilitiesCents: number;
   netCents: number;
   byKind: { kind: AccountKind; cents: number; accounts: number }[];
-  accounts: (NetWorthAccount & { contributionCents: number | null })[];
+  // `live` is set for an account valued from its positions at market prices
+  // (#230): when those prices are from, and what's still at its last value.
+  accounts: (NetWorthAccount & { contributionCents: number | null; live?: LiveValue })[];
   // Accounts left out of the totals, and why.
   excluded: { account: NetWorthAccount; reason: "currency" | "no balance" }[];
   series: NetWorthPoint[];
@@ -139,7 +142,7 @@ export type NetWorthSummary = {
 };
 
 export async function netWorthSummary(db: Db, { today = new Date() }: { today?: Date } = {}): Promise<NetWorthSummary> {
-  const [rows, snapshots] = await Promise.all([
+  const [rows, snapshots, live] = await Promise.all([
     db
       .select({
         id: accounts.id,
@@ -157,6 +160,7 @@ export async function netWorthSummary(db: Db, { today = new Date() }: { today?: 
       .select({ accountId: balanceSnapshots.accountId, on: balanceSnapshots.on, balanceCents: balanceSnapshots.balanceCents })
       .from(balanceSnapshots)
       .orderBy(asc(balanceSnapshots.on)),
+    liveValues(db, { now: today }),
   ]);
 
   const all: NetWorthAccount[] = rows.map(({ displayName, name, source, ...rest }) => ({
@@ -165,11 +169,15 @@ export async function netWorthSummary(db: Db, { today = new Date() }: { today?: 
     manual: source === "manual",
   }));
   const excluded: NetWorthSummary["excluded"] = [];
-  const counted: (NetWorthAccount & { contributionCents: number | null })[] = [];
+  const counted: (NetWorthAccount & { contributionCents: number | null; live?: LiveValue })[] = [];
   for (const account of all) {
     if (account.currency !== NET_WORTH_CURRENCY) excluded.push({ account, reason: "currency" });
     else if (account.balanceCents === null) excluded.push({ account, reason: "no balance" });
-    else counted.push({ ...account, contributionCents: netWorthContribution(account.kind, account.balanceCents) });
+    else {
+      // Positions move with prices between syncs (#230); a debt has none.
+      const value = !isLiability(account.kind) ? live.get(account.id) : undefined;
+      counted.push({ ...account, contributionCents: netWorthContribution(account.kind, value?.valueCents ?? account.balanceCents), live: value });
+    }
   }
 
   let assetsCents = 0;
@@ -184,6 +192,21 @@ export async function netWorthSummary(db: Db, { today = new Date() }: { today?: 
   }
 
   const kinds = new Map(counted.map((a) => [a.id, a.kind]));
+  const through = today.toISOString().slice(0, 10);
+  const series = netWorthSeries(kinds, snapshots, through);
+  const daily = dailyContributions(kinds, snapshots, through);
+  // Today's point is today's live value, so the chart ends where the
+  // headline is; every earlier day is what was recorded then.
+  const moved = counted.filter((a) => a.live);
+  if (moved.length && series.at(-1)?.on === through) {
+    const last = series.at(-1)!;
+    const delta = moved.reduce((s, a) => s + a.live!.valueCents - a.balanceCents!, 0);
+    series[series.length - 1] = { ...last, assetsCents: last.assetsCents + delta, netCents: last.netCents + delta };
+    for (const a of moved) {
+      const values = daily.byAccount[a.id];
+      if (values && daily.days.at(-1) === through) values[values.length - 1] = a.contributionCents;
+    }
+  }
   return {
     currency: NET_WORTH_CURRENCY,
     assetsCents,
@@ -192,7 +215,7 @@ export async function netWorthSummary(db: Db, { today = new Date() }: { today?: 
     byKind: [...byKind].map(([kind, v]) => ({ kind, ...v })).sort((a, b) => b.cents - a.cents),
     accounts: counted.sort((a, b) => (b.contributionCents ?? 0) - (a.contributionCents ?? 0)),
     excluded,
-    series: netWorthSeries(kinds, snapshots, today.toISOString().slice(0, 10)),
-    daily: dailyContributions(kinds, snapshots, today.toISOString().slice(0, 10)),
+    series,
+    daily,
   };
 }

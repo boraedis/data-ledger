@@ -2,7 +2,7 @@ import Link from "next/link";
 import { accounts as accountsTable } from "@/db/schema";
 import { getDb } from "@/lib/db";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
-import { latestQuotes } from "@/lib/prices/refresh";
+import { latestQuotes } from "@/lib/prices/quotes";
 import { listManualPositions } from "@/operations/holdings";
 import { AccountRow } from "./account-row";
 import { AddManualAccount } from "./manual-account";

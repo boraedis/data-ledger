@@ -14,6 +14,7 @@ import { listAlerts, listRecurring } from "@/operations/recurring";
 import { owedToMe } from "@/operations/reimbursements";
 import { read } from "@/operations/runtime";
 import { inboxCount } from "@/operations/transactions";
+import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 
 // Home is the dashboard (#71): where things stand today, one card per
 // area, each with its key figure and a link to the full page. Every figure
@@ -52,6 +53,8 @@ export default async function HomePage() {
   const db = getDb();
   const today = new Date();
   const on = isoDay(today);
+  // The net worth card moves with prices (#230): refresh them after Home is sent, if due.
+  refreshPricesAfterResponse();
   const [digest, allAlerts, inbox, budgets, owed, alerted, recurring, worth] = await Promise.all([
     latestDigest(db),
     read(db, listAlerts, {}),

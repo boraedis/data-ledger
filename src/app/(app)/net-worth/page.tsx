@@ -8,6 +8,8 @@ import { read } from "@/operations/runtime";
 import { ManualBadge } from "../accounts/account-row";
 import { CASH_KINDS, INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { NetWorthHistory } from "./history";
+import { pricesNote } from "@/lib/prices/describe";
+import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 
 // Net worth today and over time (#25). Read-only: balances come from syncs,
 // and how each kind counts is explained in src/lib/net-worth.ts.
@@ -17,6 +19,8 @@ export default async function NetWorthPage() {
   const now = new Date();
   const yearAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1)).toISOString().slice(0, 10);
   const [summary, income] = await Promise.all([netWorthSummary(db), read(db, investmentIncome, { from: yearAgo })]);
+  // Values move with prices (#230): refresh them after this page is sent, if due.
+  refreshPricesAfterResponse();
   const largest = Math.max(1, ...summary.byKind.map((k) => Math.abs(k.cents)));
   const historyStart = summary.series[0]?.on;
 
@@ -124,7 +128,8 @@ export default async function NetWorthPage() {
                 <span className="block truncate text-xs text-muted-foreground">
                   {KIND_LABELS[a.kind]}
                   {a.manual && a.institution === "Manual" ? "" : ` · ${a.institution}`}
-                  {a.balanceAt ? ` · as of ${a.balanceAt.toISOString().slice(0, 10)}` : ""}
+                  {a.balanceAt ? ` · ${a.live ? "balance " : ""}as of ${a.balanceAt.toISOString().slice(0, 10)}` : ""}
+                  {pricesNote(a.live)}
                 </span>
               </span>
               <span className="shrink-0 tabular-nums">{formatCents(a.contributionCents!)}</span>
