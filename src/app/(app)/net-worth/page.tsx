@@ -9,11 +9,16 @@ import { ManualBadge } from "../accounts/account-row";
 import { CASH_KINDS, INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { NetWorthHistory } from "./history";
 import { pricesNote } from "@/lib/prices/describe";
+import { ValueChart } from "@/components/charts/value-chart";
+import { GROUP_LABELS, forecast, forecastStart, parseAssumptions, type ForecastGroup } from "@/lib/forecast";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 
-// Net worth today and over time (#25). Read-only: balances come from syncs,
-// and how each kind counts is explained in src/lib/net-worth.ts.
-export default async function NetWorthPage() {
+// Net worth today and over time (#25), and a forecast on the owner's own
+// assumptions (#233). Read-only: balances come from syncs, how each kind
+// counts is explained in src/lib/net-worth.ts, and the forecast's
+// assumptions are only in the URL.
+export default async function NetWorthPage(props: PageProps<"/net-worth">) {
+  const assumptions = parseAssumptions(await props.searchParams);
   const db = getDb();
   // The trailing twelve months, from the first of the month eleven months ago.
   const now = new Date();
@@ -51,6 +56,8 @@ export default async function NetWorthPage() {
           </p>
         )}
       </section>
+
+      {summary.accounts.length ? <Forecast accounts={summary.accounts} assumptions={assumptions} /> : null}
 
       {summary.accounts.length ? <Split accounts={summary.accounts} /> : null}
 
@@ -205,6 +212,78 @@ function Split({ accounts }: { accounts: { kind: AccountKind; contributionCents:
           </div>
         );
       })}
+    </section>
+  );
+}
+
+// The forecast (#233): today's live net worth, by group, carried forward on
+// the assumptions in the URL. A plain GET form, so each scenario is a link
+// and trying one writes nothing.
+function Forecast({
+  accounts,
+  assumptions,
+}: {
+  accounts: Parameters<typeof forecastStart>[0];
+  assumptions: ReturnType<typeof parseAssumptions>;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const points = forecast(forecastStart(accounts), assumptions, today);
+  const end = points.at(-1)!;
+  const groups: [ForecastGroup, string][] = [
+    ["cash", "cash"],
+    ["investments", "inv"],
+    ["other", "other"],
+  ];
+  const field = "h-8 w-20 rounded-md border bg-background px-2 text-sm tabular-nums";
+  return (
+    <section className="space-y-3" aria-label="Forecast">
+      <div className="space-y-1">
+        <h2 className="text-lg font-medium">Forecast</h2>
+        <p className="text-sm text-muted-foreground">
+          A scenario on your own assumptions, not a prediction or advice. Each group grows at its yearly rate, compounded monthly;
+          the monthly amount goes into investments; debts stay as they are.
+        </p>
+      </div>
+      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_14rem]">
+        <ValueChart
+          label="Forecast net worth"
+          height={200}
+          ranges={false}
+          series={points.map((p) => ({
+            on: p.on,
+            cents: p.cents,
+            detail: `Cash ${formatCents(p.groups.cash)} · Investments ${formatCents(p.groups.investments)} · Other ${formatCents(p.groups.other)}${p.groups.debts ? ` · Debts ${formatCents(p.groups.debts)}` : ""}`,
+          }))}
+        />
+        {/* The assumptions beside the curve, editable in place. */}
+        <form action="/net-worth" className="space-y-2 rounded-lg border p-3 text-sm">
+          <p className="font-medium">Assumptions</p>
+          {groups.map(([group, name]) => (
+            <label key={group} className="flex items-center justify-between gap-2">
+              <span className="text-muted-foreground">{GROUP_LABELS[group]}, per year</span>
+              <span className="flex items-center gap-1">
+                <input name={name} type="number" step="0.1" min={-50} max={50} defaultValue={assumptions.ratesPct[group]} className={field} />%
+              </span>
+            </label>
+          ))}
+          <label className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">Added monthly</span>
+            <span className="flex items-center gap-1">
+              $<input name="add" type="number" step="1" min={0} defaultValue={assumptions.monthlyCents / 100} className={field} />
+            </span>
+          </label>
+          <label className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground">Years</span>
+            <input name="years" type="number" step="1" min={1} max={40} defaultValue={assumptions.years} className={field} />
+          </label>
+          <button type="submit" className="h-8 w-full rounded-md border px-3 hover:bg-accent">
+            Update
+          </button>
+          <p className="border-t pt-2 text-xs text-muted-foreground tabular-nums">
+            In {assumptions.years} {assumptions.years === 1 ? "year" : "years"}: <span className="font-medium text-foreground">{formatCents(end.cents)}</span>
+          </p>
+        </form>
+      </div>
     </section>
   );
 }
