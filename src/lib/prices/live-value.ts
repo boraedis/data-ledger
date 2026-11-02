@@ -20,8 +20,8 @@ import type { AssetClass } from "@/lib/prices/source";
 // Two kinds of account have positions: a manual one with positions entered
 // by hand (#231), whose last value is quantity × the owner's price, priced
 // as crypto; and a synced brokerage or retirement account, whose last value
-// is its newest holdings snapshot, priced as equities (none yet, until an
-// equity source is chosen, so those keep their balance).
+// is its newest holdings snapshot, priced as equities (Tiingo, once its key
+// is set; until then those keep their balance).
 
 export type LivePosition = { symbol: string; quantity: string; lastValueCents: number };
 
