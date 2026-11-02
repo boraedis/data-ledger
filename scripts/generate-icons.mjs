@@ -1,9 +1,9 @@
 // Generates the app's icons from Tally's mascot (#73), a thermal receipt
 // with a face: the full receipt on the app's green for the home-screen icons
-// (#29), and the simpler mark as the browser tab's icon. Run with
-// `node scripts/generate-icons.mjs` after changing the mascot
-// (src/lib/tally/mascot.ts); the files are committed. Needs Node 22.18 or
-// later, which loads that TypeScript file directly.
+// (#29), and the simpler mark as the browser tab's icon. Run `npm run icons`
+// after changing the mascot (src/lib/tally/mascot.ts); the files are
+// committed. That runs it through tsx, which loads the TypeScript shapes on
+// any supported Node (plain `node` only can from 22.18).
 import { writeFile } from "node:fs/promises";
 import sharp from "sharp";
 import { mascotSvg } from "../src/lib/tally/mascot.ts";

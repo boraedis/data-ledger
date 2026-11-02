@@ -15,6 +15,7 @@
     "db:seed": "tsx scripts/seed.ts",
     "db:studio": "drizzle-kit studio",
     "db:local": "pglite-server --db=.pglite --port=54329",
+    "icons": "tsx scripts/generate-icons.mjs",
     "model:eval": "tsx scripts/model-eval.ts"
   },
   "dependencies": {
