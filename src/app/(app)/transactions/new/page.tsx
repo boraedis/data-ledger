@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { categoryOptions } from "@/lib/categorize/labels";
 import { getDb } from "@/lib/db";
-import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { listAccounts } from "@/operations/accounts";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
@@ -9,14 +8,15 @@ import { AddForm } from "./add-form";
 
 // Adding a transaction by hand (#64): money the bank feed doesn't show, such
 // as a payment-app payment or cash. Into the accounts the money moves
-// through: not manual accounts (balance only) or investment accounts.
+// through: not manual accounts (balance only). Investment accounts take them
+// too, for history the brokerage feed can't reach.
 export default async function NewTransactionPage() {
   const db = getDb();
   const [accts, cats] = await Promise.all([read(db, listAccounts, {}), read(db, listCategories, {})]);
   // Everyday accounts first, checking at the top: where most of these go.
   const order = ["checking", "payment_app", "credit", "savings", "loan"];
   const accounts = accts
-    .filter((a) => !a.manual && !INVESTMENT_KINDS.includes(a.kind))
+    .filter((a) => !a.manual)
     .sort((a, b) => (order.indexOf(a.kind) + 1 || 99) - (order.indexOf(b.kind) + 1 || 99) || a.name.localeCompare(b.name));
   const today = new Date().toISOString().slice(0, 10);
 

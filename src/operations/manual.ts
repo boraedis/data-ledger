@@ -3,7 +3,6 @@ import { z } from "zod";
 import { accounts, alerts, categories, categorySuggestions, reimbursementMatches, reimbursements, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
-import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { DAYS_AFTER, DAYS_BEFORE, candidates } from "@/lib/manual/match";
 import { defineRead, defineWrite } from "@/operations/define";
 import { handOver } from "@/operations/provisional";
@@ -19,8 +18,11 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 //
 // Into a synced account only. Manual accounts (#26) are balance-only: their
 // value is what the owner enters, and transactions there would be a second
-// truth that never adds up to it. Not investment accounts either: their
-// activity comes from the brokerage, and holdings follow from it.
+// truth that never adds up to it. Investment accounts do take them, for
+// history the brokerage feed can't reach (it stops at about 90 days), so an
+// older transfer in or an employer plan credit can be matched. Their balance
+// still comes from the bank, so these rows feed history and matching only,
+// never net worth.
 
 const today = () => new Date().toISOString().slice(0, 10);
 const shift = (on: string, days: number) => new Date(Date.parse(on) + days * 86_400_000).toISOString().slice(0, 10);
@@ -38,7 +40,6 @@ async function assertTakesManual(db: Db, accountId: string) {
   const [account] = await db.select({ type: accounts.type, source: accounts.source }).from(accounts).where(eq(accounts.id, accountId));
   if (!account) throw new NotFoundError("Account not found");
   if (account.source === "manual") throw new Error("Manual accounts keep a balance only; add it to the account the money moved through");
-  if (INVESTMENT_KINDS.includes(account.type)) throw new Error("Investment accounts take their activity from the brokerage");
 }
 
 async function manualRow(ctx: WriteContext, transactionId: string) {
