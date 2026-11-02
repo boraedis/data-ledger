@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { listCommands } from "@/operations/runtime";
 import { CommandActions } from "./command-actions";
@@ -13,11 +14,19 @@ const statusStyle: Record<string, string> = {
 
 // Every write to the ledger, newest first: who did it, why, and what it
 // touched. Proposals wait here for approval; applied writes can be undone.
-export default async function ActivityPage() {
-  const commands = await listCommands(getDb(), { limit: 100 });
+// Market price refreshes (#229) are left out unless asked for (?prices=1):
+// one an hour would bury everything else.
+export default async function ActivityPage(props: PageProps<"/activity">) {
+  const showPrices = (await props.searchParams).prices === "1";
+  const commands = await listCommands(getDb(), { limit: 100, excludeActors: showPrices ? [] : ["market"] });
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold">Activity</h1>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h1 className="text-2xl font-semibold">Activity</h1>
+        <Link href={showPrices ? "/activity" : "/activity?prices=1"} className="text-sm text-muted-foreground underline">
+          {showPrices ? "Hide price refreshes" : "Show price refreshes"}
+        </Link>
+      </div>
       {commands.length === 0 ? (
         <p className="text-muted-foreground">No changes yet.</p>
       ) : (

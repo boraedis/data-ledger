@@ -30,7 +30,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, reapplyPreview, reapplyRule, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, quotes, dailyPrices, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -53,6 +53,7 @@ import {
 } from "@/operations/transactions";
 import { moveToCategory, moveToCategoryPreview } from "@/operations/recategorize";
 import { addManualPosition, removeManualPosition, setManualPrice, setManualQuantity } from "@/operations/holdings";
+import { refreshQuotes } from "@/operations/market";
 
 // The one list of everything that can be done to the ledger. The UI calls
 // these, Tally gets them as tools (#11), and the nightly pipeline runs them. Adding a capability means adding it
@@ -104,6 +105,7 @@ export const operations: Operation[] = [
   setManualQuantity,
   setManualPrice,
   removeManualPosition,
+  refreshQuotes,
   endTarget,
   endTargetPreview,
   itemAnalysis,
@@ -211,6 +213,8 @@ export const trackedTables = {
   reimbursement_matches: reimbursementMatches,
   holding_snapshots: holdingSnapshots,
   manual_positions: manualPositions,
+  quotes,
+  daily_prices: dailyPrices,
   categories,
   rules,
   transactions,

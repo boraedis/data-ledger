@@ -239,6 +239,13 @@
       "when": 1793642715435,
       "tag": "0033_manual_positions",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1793643813046,
+      "tag": "0034_price_cache",
+      "breakpoints": true
     }
   ]
 }

@@ -328,6 +328,46 @@ export const manualPositions = pgTable(
   (t) => [uniqueIndex("manual_positions_account_symbol_idx").on(t.accountId, sql`upper(${t.symbol})`)],
 );
 
+// Market prices (#229): the latest quote per symbol, and one price per
+// symbol per day for history (#232). Public prices, refreshed at most once
+// an hour when a page that shows values is opened, and by the nightly sync
+// (src/lib/prices/refresh.ts). What's asked of a provider is a symbol and
+// nothing else; quantities and accounts never leave the app.
+export const assetClass = pgEnum("asset_class", ["crypto", "equity"]);
+
+export const quotes = pgTable(
+  "quotes",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    assetClass: assetClass("asset_class").notNull(),
+    symbol: text("symbol").notNull(),
+    // Exact decimal, in USD, as the provider sent it. Null when the provider
+    // has no price for the symbol: the page says "no price", never zero.
+    price: numeric("price"),
+    // When the provider's price is from, and when it was last asked. A
+    // failed request moves checkedAt but not the price, which then shows
+    // as stale with its time rather than being retried on every page view.
+    asOf: timestamp("as_of", { withTimezone: true }),
+    checkedAt: timestamp("checked_at", { withTimezone: true }).notNull(),
+    source: text("source").notNull(),
+  },
+  (t) => [uniqueIndex("quotes_class_symbol_idx").on(t.assetClass, t.symbol)],
+);
+
+export const dailyPrices = pgTable(
+  "daily_prices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    assetClass: assetClass("asset_class").notNull(),
+    symbol: text("symbol").notNull(),
+    // UTC day; a later refresh the same day replaces the day's price.
+    on: date("on").notNull(),
+    price: numeric("price").notNull(),
+    source: text("source").notNull(),
+  },
+  (t) => [uniqueIndex("daily_prices_class_symbol_on_idx").on(t.assetClass, t.symbol, t.on)],
+);
+
 export const categoryKind = pgEnum("category_kind", ["expense", "income", "transfer"]);
 
 // The owner's own category tree (#6) — nothing is inherited from a bank.
