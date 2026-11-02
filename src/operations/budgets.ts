@@ -919,6 +919,81 @@ export const removeTarget = defineWrite({
   },
 });
 
+// --- Ending a target on a month (#204) -------------------------------------------
+//
+// A category that stops mattering ends instead of getting a $0 target: an
+// ended version (amount null) from that month, which the engine already
+// reads as no target, so its spending falls to the buffer. Months before
+// keep the target they had, and a later version still starts as it was;
+// a new target afterwards starts a fresh version, as any target does.
+// Ending from a past month changes those months' budgets, so the page
+// shows endTargetPreview's month-by-month review before saving, as it does
+// for a backdate.
+
+const endInput = z.object({
+  categoryId: targetCategory,
+  endMonth: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  today: isoDate.optional(),
+});
+
+/** The ended version an end would write, after the same checks the write makes; throws with the reason otherwise. */
+async function plannedEnd(db: Db, input: z.infer<typeof endInput>) {
+  const on = input.today ?? today();
+  const effectiveFrom = `${input.endMonth}-01`;
+  const versions = await loadVersions(db);
+  const own = versions.filter((v) => v.categoryId === input.categoryId).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  const inForce = currentVersion(versions, input.categoryId, effectiveFrom);
+  if (!inForce || inForce.amountCents === null) throw new Error("There's no target in effect that month to end");
+  // Ending there would replace the version that starts that month, and an
+  // end changes no other version: deleting that version is the way.
+  if (inForce.effectiveFrom === effectiveFrom) throw new Error("A version of this target starts that month: delete that version instead, or end it from a later month");
+  const version: TargetVersion = { ...inForce, effectiveFrom, amountCents: null };
+  // A multi-month target is one budget for its whole period, so it ends at a period's start.
+  assertWholePeriod(versions, version);
+  const next = own.find((v) => v.effectiveFrom > effectiveFrom) ?? null;
+  return { on, version, versions, until: next ? next.effectiveFrom : null };
+}
+
+export const endTargetPreview = defineRead({
+  name: "budgets.endTargetPreview",
+  description:
+    "What budgets.endTarget would change, without changing anything (#204): each month from endMonth until the target's " +
+    "next version (or this month) that has a target now and wouldn't after. Empty for an end in a future month. " +
+    "Refuses what endTarget would refuse.",
+  input: endInput,
+  run: async (db, input) => {
+    const { on, version, versions, until } = await plannedEnd(db, input);
+    const key = input.categoryId;
+    const targetIn = (all: TargetVersion[], month: number) => {
+      const s = computeStatus({ on: lastOfMonth(month), versions: all, lines: [], categories: [], adjustments: [] });
+      const t = s.targets.find((x) => x.key === (key ?? BUFFER));
+      return t ? { targetCents: t.targetCents, periodMonths: t.periodMonths, start: t.start, end: t.end } : null;
+    };
+    const last = until ? monthIndex(until) - 1 : monthIndex(on);
+    const months = [];
+    for (let m = monthIndex(version.effectiveFrom); m <= last; m++) {
+      months.push({ month: firstOfMonth(m).slice(0, 7), before: targetIn(versions, m), after: targetIn([...versions, version], m) });
+    }
+    return { months, until };
+  },
+});
+
+export const endTarget = defineWrite({
+  name: "budgets.endTarget",
+  description:
+    "End a budget target (categoryId null = the buffer) from endMonth (YYYY-MM) on: no target from then until its next " +
+    "version, if any, and the category's spending falls to the buffer. Earlier months keep theirs, and no other version " +
+    "changes. A past month changes those months' budgets: budgets.endTargetPreview lists them first. Refused with no " +
+    "target in effect that month, when a version starts that month (delete it instead), or inside a multi-month period.",
+  input: endInput,
+  apply: async (ctx, input) => {
+    await assertExpenseCategory(ctx, input.categoryId);
+    const { version, until } = await plannedEnd(ctx.db, input);
+    await writeVersion(ctx, version);
+    return { effectiveFrom: version.effectiveFrom, until };
+  },
+});
+
 export const rebalance = defineWrite({
   name: "budgets.rebalance",
   description:

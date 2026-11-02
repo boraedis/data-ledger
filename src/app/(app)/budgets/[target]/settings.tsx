@@ -5,16 +5,17 @@ import { Button } from "@/components/ui/button";
 import { scheduleLabel, type HistorySummary } from "@/lib/budgets/format";
 import { versionEditFrom, type VersionSpan } from "@/lib/budgets/target-list";
 import { formatCents } from "@/lib/money";
-import { deleteVersion, previewDeleteVersion, type BackdateMonth } from "../actions";
+import { deleteVersion, endTarget, previewDeleteVersion, previewEndTarget, type BackdateMonth } from "../actions";
 import { BackdateWarning, TargetForm, type YearlySuggestion } from "../forms";
 
 // A budget item's target and its history of versions (#174). The target in
 // effect is changed from now on (the current period); any version, past ones
 // included, can be changed across the months it covered, which goes through
 // the backdate review (#137, #143): every month it changes, old and new,
-// before anything is saved. Removing the target ends it from the current
-// period, after a confirm; its history stays, so past months keep the target
-// they had, and it's undoable in Activity like any change.
+// before anything is saved. Ending the target (#204) picks the month it
+// stops from; its history stays, so earlier months keep the target they
+// had. An end in a past month shows that same review first, and every
+// change is undoable in Activity.
 
 const month = (date: string) => new Date(`${date.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 
@@ -33,6 +34,10 @@ export function TargetSettings({ current, spans, ...c }: Common & { current: Ver
   // The version being deleted, with the months it changes, shown before it's deleted (#181).
   const [deleting, setDeleting] = useState<{ key: string; months: BackdateMonth[]; until: string | null } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Ending the target (#204): the month picked, then its review once asked for.
+  const [endMonth, setEndMonth] = useState<string | null>(null);
+  const [endReview, setEndReview] = useState<{ months: BackdateMonth[]; until: string | null } | null>(null);
+  const [endError, setEndError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const histories = c.history ? { [c.categoryId ?? ""]: c.history } : {};
   const suggestFrom = c.netHistory ? { [c.categoryId ?? ""]: c.netHistory } : {};
@@ -57,9 +62,93 @@ export function TargetSettings({ current, spans, ...c }: Common & { current: Ver
             <Button size="sm" variant="outline" onClick={() => setEditing("now")}>
               Change target
             </Button>
+            {endMonth === null ? (
+              <Button size="sm" variant="outline" onClick={() => setEndMonth(currentMonth)}>
+                End target
+              </Button>
+            ) : null}
           </span>
         ) : null}
       </div>
+      {current && endMonth !== null ? (
+        <div className="space-y-2 rounded-lg border p-3 text-sm">
+          <p className="text-xs text-muted-foreground">
+            From the month you pick there&apos;s no {c.name} target, and its spending counts toward the buffer. Earlier months keep
+            the target they had, and a new target later starts fresh.
+          </p>
+          <label className="flex flex-wrap items-center gap-2">
+            <span>Ends from</span>
+            <input
+              type="month"
+              value={endMonth}
+              min={c.backdate?.earliestMonth ?? undefined}
+              onChange={(e) => {
+                setEndMonth(e.target.value);
+                setEndReview(null);
+                setEndError(null);
+              }}
+              className="h-9 rounded-md border bg-background px-2"
+            />
+          </label>
+          {endReview ? (
+            endReview.months.length ? (
+              <BackdateWarning months={endReview.months} until={endReview.until} />
+            ) : (
+              <p className="text-xs text-muted-foreground">No month so far changes: the target stops from {month(`${endMonth}-01`)}.</p>
+            )
+          ) : null}
+          {endError ? <p className="text-xs text-destructive">{endError}</p> : null}
+          <div className="flex gap-2">
+            {endReview ? (
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={pending}
+                onClick={() =>
+                  startTransition(async () => {
+                    const result = await endTarget(c.categoryId, endMonth, c.name);
+                    if (result?.error) return setEndError(result.error);
+                    setEndMonth(null);
+                    setEndReview(null);
+                    setEndError(null);
+                  })
+                }
+              >
+                End from {month(`${endMonth}-01`)}
+              </Button>
+            ) : (
+              // Always reviewed first: for a past month it lists the months that lose their target.
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending || !endMonth}
+                onClick={() =>
+                  startTransition(async () => {
+                    setEndError(null);
+                    const preview = await previewEndTarget(c.categoryId, endMonth);
+                    if ("error" in preview) return setEndError(preview.error);
+                    setEndReview(preview);
+                  })
+                }
+              >
+                Review
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={pending}
+              onClick={() => {
+                setEndMonth(null);
+                setEndReview(null);
+                setEndError(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {/* Removing a whole target is only offered once it has no versions left (#181): each version is deleted on its own. */}
 
       {!current ? (
