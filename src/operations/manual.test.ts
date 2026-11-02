@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
 import { accounts, categories, reimbursements, transactionTags, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
+import { matchTransfersStep } from "@/lib/categorize/pipeline";
 import { candidates } from "@/lib/manual/match";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
@@ -76,18 +77,82 @@ describe("adding, changing and deleting", () => {
     expect(await db.select().from(transactionTags).where(eq(transactionTags.transactionId, added.id))).toHaveLength(1);
   });
 
-  it("refuses zero, the future, manual and investment accounts, and changing or deleting the bank's", async () => {
+  it("refuses zero, the future, manual accounts, and changing or deleting the bank's", async () => {
     await expect(add({ amountCents: 0 })).rejects.toThrow(/amount/);
     await expect(add({ postedOn: "2999-01-01" })).rejects.toThrow(/future/);
     await expect(add({ amountCents: -42.5 })).rejects.toThrow();
-    const [brokerage] = await db.select().from(accounts).where(eq(accounts.type, "brokerage"));
-    await expect(add({ accountId: brokerage.id })).rejects.toThrow(/Investment/);
     const house = await run("accounts.createManual", { name: "Example House", kind: "other_asset", valueCents: 1_000_00, on: "2026-06-01" });
     await expect(add({ accountId: (house.output as { id: string }).id })).rejects.toThrow(/balance only/);
     const [bank] = await db.select().from(transactions).where(eq(transactions.accountId, checking)).limit(1);
     await expect(run("transactions.updateManual", { transactionId: bank.id, description: "x" })).rejects.toThrow(/by hand/);
     await expect(run("transactions.deleteManual", { transactionId: bank.id })).rejects.toThrow(/by hand/);
     await expect(run("transactions.createManual", { accountId: p2p, postedOn: "2026-06-20", amountCents: -100, description: "x" }, "import")).rejects.toThrow(/may not run/);
+  });
+
+  it("takes history into a brokerage, and pairs a cash transfer with it", async () => {
+    const [brokerage] = await db.select().from(accounts).where(eq(accounts.type, "brokerage"));
+    const cashIn = (await db.insert(transactions).values({ accountId: checking, postedOn: "2026-01-10", amountCents: -123_45, description: "Example transfer out", externalId: "transfer-out" }).returning())[0];
+    const brokerageIn = await add({ accountId: brokerage.id, postedOn: "2026-01-11", amountCents: 123_45, description: "Example transfer in" });
+    expect(await row(brokerageIn.id)).toMatchObject({ source: "manual", accountId: brokerage.id });
+    // The budgets never count a brokerage's rows, hand-entered or not.
+    expect((await read(db, spendingLines, { from: "2026-01-01", to: "2026-01-31" })).filter((l) => l.transactionId === brokerageIn.id)).toEqual([]);
+
+    await matchTransfersStep(db);
+    expect(await row(cashIn.id)).toMatchObject({ transferPairId: brokerageIn.id });
+    expect(await row(brokerageIn.id)).toMatchObject({ transferPairId: cashIn.id });
+  });
+
+  it("adds the other half of an unmatched transfer, pre-filled and paired, as one undoable command", async () => {
+    const [brokerage] = await db.select().from(accounts).where(eq(accounts.type, "brokerage"));
+    const [transferCategory] = await db.select().from(categories).where(eq(categories.kind, "transfer"));
+    const source = (
+      await db
+        .insert(transactions)
+        .values({ accountId: checking, postedOn: "2026-01-10", amountCents: -200_00, description: "Example brokerage funding", externalId: "unmatched-out", categoryId: transferCategory.id })
+        .returning()
+    )[0];
+
+    const added = await run("transactions.addOtherHalf", { transactionId: source.id, accountId: brokerage.id });
+    const other = (added.output as { transactionId: string }).transactionId;
+    expect(await row(other)).toMatchObject({
+      source: "manual",
+      accountId: brokerage.id,
+      postedOn: "2026-01-10",
+      amountCents: 200_00,
+      description: "Example brokerage funding",
+      categoryId: transferCategory.id,
+      transferPairId: source.id,
+    });
+    expect(await row(source.id)).toMatchObject({ transferPairId: other });
+
+    await undoCommand(db, added.commandId);
+    expect(await row(other)).toBeUndefined();
+    expect(await row(source.id)).toMatchObject({ transferPairId: null });
+  });
+
+  it("refuses the same account, a manual account, an account the matcher wouldn't pair, and a second pairing", async () => {
+    const [brokerage] = await db.select().from(accounts).where(eq(accounts.type, "brokerage"));
+    const [transferCategory] = await db.select().from(categories).where(eq(categories.kind, "transfer"));
+    const source = (
+      await db
+        .insert(transactions)
+        .values({ accountId: checking, postedOn: "2026-01-10", amountCents: -200_00, description: "Example transfer", externalId: "unmatched-refuse", categoryId: transferCategory.id })
+        .returning()
+    )[0];
+    await expect(run("transactions.addOtherHalf", { transactionId: source.id, accountId: checking })).rejects.toThrow(/same account/);
+    const house = await run("accounts.createManual", { name: "Example House", kind: "other_asset", valueCents: 1_000_00, on: "2026-06-01" });
+    await expect(run("transactions.addOtherHalf", { transactionId: source.id, accountId: (house.output as { id: string }).id })).rejects.toThrow(/balance only/);
+    // A brokerage pairs with cash, never with a card: the matcher has no such pass.
+    const [brokerageOut] = await db
+      .insert(transactions)
+      .values({ accountId: brokerage.id, postedOn: "2026-01-10", amountCents: -50_00, description: "Example fund buy", externalId: "unmatched-brokerage", categoryId: transferCategory.id })
+      .returning();
+    const [card] = await db.select().from(accounts).where(eq(accounts.type, "credit"));
+    await expect(run("transactions.addOtherHalf", { transactionId: brokerageOut.id, accountId: card.id })).rejects.toThrow(/pairs a cash account/);
+
+    const added = await run("transactions.addOtherHalf", { transactionId: source.id, accountId: brokerage.id });
+    expect(added.status).toBe("applied");
+    await expect(run("transactions.addOtherHalf", { transactionId: source.id, accountId: brokerage.id })).rejects.toThrow(/already has its other half/);
   });
 
   it("splits and shares like any other, and won't change the amount under them", async () => {

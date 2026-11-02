@@ -3,7 +3,7 @@ import { z } from "zod";
 import { accounts, alerts, categories, categorySuggestions, reimbursementMatches, reimbursements, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
-import { INVESTMENT_KINDS } from "@/lib/investments/activity";
+import { TRANSFER_WINDOW_DAYS, canPairKinds } from "@/lib/investments/transfers";
 import { DAYS_AFTER, DAYS_BEFORE, candidates } from "@/lib/manual/match";
 import { defineRead, defineWrite } from "@/operations/define";
 import { handOver } from "@/operations/provisional";
@@ -19,8 +19,11 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 //
 // Into a synced account only. Manual accounts (#26) are balance-only: their
 // value is what the owner enters, and transactions there would be a second
-// truth that never adds up to it. Not investment accounts either: their
-// activity comes from the brokerage, and holdings follow from it.
+// truth that never adds up to it. Investment accounts do take them, for
+// history the brokerage feed can't reach (it stops at about 90 days), so an
+// older transfer in or an employer plan credit can be matched. Their balance
+// still comes from the bank, so these rows feed history and matching only,
+// never net worth.
 
 const today = () => new Date().toISOString().slice(0, 10);
 const shift = (on: string, days: number) => new Date(Date.parse(on) + days * 86_400_000).toISOString().slice(0, 10);
@@ -38,7 +41,6 @@ async function assertTakesManual(db: Db, accountId: string) {
   const [account] = await db.select({ type: accounts.type, source: accounts.source }).from(accounts).where(eq(accounts.id, accountId));
   if (!account) throw new NotFoundError("Account not found");
   if (account.source === "manual") throw new Error("Manual accounts keep a balance only; add it to the account the money moved through");
-  if (INVESTMENT_KINDS.includes(account.type)) throw new Error("Investment accounts take their activity from the brokerage");
 }
 
 async function manualRow(ctx: WriteContext, transactionId: string) {
@@ -70,6 +72,73 @@ export const createManual = defineWrite({
       categoryId: input.categoryId ?? null,
       source: "manual",
     });
+    return { transactionId: row.id };
+  },
+});
+
+// The other half of a transfer the owner has filed but the matcher couldn't
+// pair: its account isn't connected, or its history is older than the sync
+// (#24). The date, the opposite amount, the description and the transfer
+// category all come from the transfer already in front of the owner, so the
+// only choice left is the account. Both sides are paired in one undoable
+// command, and the new row is marked by hand like any other.
+export const addOtherHalf = defineWrite({
+  name: "transactions.addOtherHalf",
+  description:
+    "Add the other half of a transfer that's filed but unpaired, by hand, in the account it went to or came from. " +
+    "Its date, exactly opposite amount, description and transfer category come from the transfer (the date may move " +
+    "within the matcher's window, and the description may change). Both sides are paired in one undoable command.",
+  allowedActors: ["user", "tally"],
+  input: z.object({ transactionId: z.uuid(), accountId: z.uuid(), postedOn: postedOn.optional(), description: description.optional() }),
+  apply: async (ctx, input) => {
+    const [source] = await ctx.db
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        postedOn: transactions.postedOn,
+        amountCents: transactions.amountCents,
+        description: transactions.description,
+        categoryId: transactions.categoryId,
+        pending: transactions.pending,
+        provisionalSource: transactions.provisionalSource,
+        transferPairId: transactions.transferPairId,
+        accountType: accounts.type,
+      })
+      .from(transactions)
+      .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+      .where(eq(transactions.id, input.transactionId));
+    if (!source) throw new NotFoundError("Transaction not found");
+    if (source.transferPairId) throw new Error("It already has its other half");
+    if (source.pending || source.provisionalSource) throw new Error("Wait until the bank reports it before adding its other half");
+    if (!source.categoryId) throw new Error("File it as a transfer first; only a transfer has an other half to add");
+    const [category] = await ctx.db.select({ kind: categories.kind }).from(categories).where(eq(categories.id, source.categoryId));
+    if (category?.kind !== "transfer") throw new Error("File it as a transfer first; only a transfer has an other half to add");
+    if (input.accountId === source.accountId) throw new Error("Both sides of a transfer can't be in the same account");
+    if (source.amountCents === 0) throw new Error("A transaction has an amount");
+
+    const [target] = await ctx.db.select({ type: accounts.type, source: accounts.source }).from(accounts).where(eq(accounts.id, input.accountId));
+    if (!target) throw new NotFoundError("Account not found");
+    if (target.source === "manual") throw new Error("Manual accounts keep a balance only; add it to the account the money moved through");
+    if (!canPairKinds(source.accountType, target.type)) {
+      throw new Error("A transfer pairs a cash account with a card, loan, brokerage, retirement account or another cash account");
+    }
+
+    const on = input.postedOn ?? source.postedOn;
+    if (on < shift(source.postedOn, -TRANSFER_WINDOW_DAYS) || on > shift(source.postedOn, TRANSFER_WINDOW_DAYS)) {
+      throw new Error(`The other half has to post within ${TRANSFER_WINDOW_DAYS} days of this one`);
+    }
+    const description = input.description ?? source.description;
+    const row = await ctx.insert(transactions, {
+      accountId: input.accountId,
+      postedOn: on,
+      amountCents: -source.amountCents,
+      description,
+      merchant: normalizeMerchant(description, null),
+      categoryId: source.categoryId,
+      source: "manual",
+    });
+    await ctx.update(transactions, source.id, { transferPairId: row.id });
+    await ctx.update(transactions, row.id, { transferPairId: source.id });
     return { transactionId: row.id };
   },
 });

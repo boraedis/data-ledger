@@ -9,7 +9,9 @@ import { listTags } from "@/operations/tags";
 import { getTransaction } from "@/operations/transactions";
 import { NotFoundError } from "@/operations/tracked";
 import { ACTIVITY_LABELS } from "@/lib/investments/activity";
+import { canPairKinds } from "@/lib/investments/transfers";
 import { listAccounts } from "@/operations/accounts";
+import { AddOtherHalf } from "./add-other-half";
 import { TransactionEditor } from "./editor";
 import { listPeople, transactionReimbursements } from "@/operations/reimbursements";
 import { SharePanel } from "./share-panel";
@@ -37,6 +39,12 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
     txn.manual ? read(db, manualMatches, { transactionId: txn.id }) : Promise.resolve([]),
   ]);
   const otherAccount = txn.transfer ? accts.find((a) => a.id === txn.transfer!.accountId)?.name ?? "another account" : null;
+  // Where an unpaired transfer's other half could be: accounts the matcher would pair it with.
+  const sourceKind = accts.find((a) => a.id === txn.accountId)?.kind;
+  const otherHalfAccounts =
+    txn.transferUnmatched && sourceKind
+      ? accts.filter((a) => !a.manual && a.id !== txn.accountId && canPairKinds(sourceKind, a.kind)).map((a) => ({ id: a.id, name: a.name }))
+      : [];
 
   return (
     <div className="space-y-4">
@@ -78,6 +86,9 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
           accounts within 5 days. That&apos;s fine if the other account isn&apos;t connected. If it wasn&apos;t a transfer, file it as spending or
           income below, or it counts as neither.
         </p>
+      ) : null}
+      {otherHalfAccounts.length > 0 ? (
+        <AddOtherHalf transactionId={txn.id} accounts={otherHalfAccounts} description={txn.description} />
       ) : null}
       {txn.payStub ? (
         <p className="rounded-lg border px-3 py-2 text-sm text-muted-foreground">

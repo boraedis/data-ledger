@@ -102,6 +102,13 @@ never overwrites a category that's already set:
    flagged on Cash flow and Spending (#102, `transactions.misfiledTransfers`),
    to settle as a transfer (both lose their category and are paired) or as
    not one.
+   A transfer that's filed but unpaired (its other side isn't connected, or
+   is older than the sync) can get its other half added by hand: the
+   transaction page offers the accounts the matcher would pair it with, and
+   "Add and pair" creates the opposite row (same date, amount and transfer
+   category, description editable) and pairs both sides as one undoable
+   command (`transactions.addOtherHalf`). The new row is marked added by hand,
+   so if the bank later reports it, the usual merge prompt applies.
 1. **Rules** — the owner's own, in priority order: merchant or description
    equals / contains / starts with a pattern, optionally limited to one
    account or an amount range. No regex (a user pattern run over every
@@ -425,7 +432,7 @@ Near-real-time purchase alerts (#28: bank emails #31, Apple Pay #32) can't wait 
 
 For money the feed doesn't show, such as a payment-app payment or cash (#64). From **Transactions → Add transaction**: date (today or earlier), money out or in, exact cents, description, account, and optionally a category (otherwise your rules run, then the inbox). Marked `transactions.source = 'manual'` and shown as "added by hand" in the list, the inbox and the transaction page; after that it's categorized, split, tagged, shared and matched like any other.
 - **Operations:** `transactions.createManual`, `updateManual` (date, amount, description) and `deleteManual`, as `user` (Tally may propose them). Each is logged and undoable. The bank's own transactions can't be changed or deleted.
-- **Where:** accounts the money moves through. Not manual accounts (#26), which keep a balance only, and not investment accounts, whose activity comes from the brokerage.
+- **Where:** accounts the money moves through. Not manual accounts (#26), which keep a balance only. Investment accounts do take them, for history the brokerage feed can't reach (it stops at about 90 days): an older transfer in, or a plan credit. They're labelled by activity like the synced rows, never count toward budgets, and never change the account's balance, which still comes from the bank.
 - **When the bank reports it too** (`src/lib/manual/match.ts`): a bank transaction in the same account, for the exact amount, from 3 days before to 7 after, could be the same purchase. Until you decide, only the bank's counts (`countsAsSpending()`), so nothing is counted twice. The Transactions page and the transaction itself ask: **merge** (`transactions.mergeManual`: your category or split, experience date, tags and shares move to the bank's row, as for an alert) or **keep both** (`transactions.keepManual`, `transactions.not_duplicate`: both count, and it isn't asked again). Nothing merges on its own: two identical $20 payments in a week are as likely as one.
 
 ### AI: one self-hosted model

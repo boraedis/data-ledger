@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { matchTransfersAround } from "@/lib/categorize/pipeline";
 import { asOwner, executeAsOwner } from "@/operations/server";
 
@@ -65,6 +66,32 @@ export async function setExperienceDate(transactionId: string, experiencedOn: st
 
 export async function notATransfer(transactionId: string) {
   return run(transactionId, "transactions.unmatchTransfer", {}, "Marked as not a transfer");
+}
+
+// Adding the other half of an unpaired transfer creates a row, so it can't
+// go through run(): on success the page moves to the new row, which is where
+// the owner can see both sides paired.
+export async function addOtherHalf(transactionId: string, accountId: string, description: string): Promise<ActionResult> {
+  let addedId: string;
+  try {
+    const result = await executeAsOwner({
+      operation: "transactions.addOtherHalf",
+      input: { transactionId, accountId, description },
+      reason: "Added the other half of a transfer",
+    });
+    // The owner's own writes apply at once; only Tally's come back as proposals.
+    if (!("output" in result)) throw new Error("The other half wasn't added");
+    addedId = (result.output as { transactionId: string }).transactionId;
+  } catch (error) {
+    if (error && typeof error === "object" && "issues" in error) {
+      const issues = (error as { issues: { message: string }[] }).issues;
+      return { error: issues.map((i) => i.message).join("; ") };
+    }
+    return { error: error instanceof Error ? error.message : "Something went wrong" };
+  }
+  revalidatePath(`/transactions/${transactionId}`);
+  revalidatePath("/transactions");
+  redirect(`/transactions/${addedId}`);
 }
 
 export async function discardProvisional(transactionId: string) {
