@@ -17,6 +17,7 @@ import {
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { merchantMemory } from "@/lib/categorize/match";
 import { FLAG_KINDS } from "@/lib/suspicious/checks";
+import { searchTerms } from "@/lib/transactions/search";
 import { isInvestmentKind, investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
 import { TRANSFER_PASSES, findTransferPairs } from "@/lib/investments/transfers";
 import { DAYS_AFTER as MANUAL_DAYS_AFTER, DAYS_BEFORE as MANUAL_DAYS_BEFORE } from "@/lib/manual/match";
@@ -131,7 +132,14 @@ export function transactionFilters(db: Db, input: TransactionFilter): SQL[] {
   if (input.search) {
     // Escape LIKE wildcards so a search for "100%" means the text "100%".
     const pattern = `%${input.search.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-    filters.push(sql`(${transactions.merchant} ilike ${pattern} or ${transactions.description} ilike ${pattern})`);
+    const matches: SQL[] = [sql`${transactions.merchant} ilike ${pattern}`, sql`${transactions.description} ilike ${pattern}`];
+    // A date or an amount matches as the row shows it, too (#213): the
+    // posted date or the "for" date, and the amount exactly.
+    const { amount, date } = searchTerms(input.search);
+    if (date) matches.push(eq(transactions.postedOn, date), eq(transactions.experiencedOn, date));
+    if (amount)
+      matches.push(amount.signed ? eq(transactions.amountCents, amount.cents) : inArray(transactions.amountCents, [amount.cents, -amount.cents]));
+    filters.push(or(...matches)!);
   }
   return filters;
 }
@@ -141,7 +149,8 @@ export const listTransactions = defineRead({
   description:
     "List transactions, newest first. Amounts are integer cents; negative means money left the account. " +
     "Filter by date range (inclusive, YYYY-MM-DD, on posted date), account, category (matches split parts " +
-    "too), tag, text search on merchant/description, uncategorized only (no category and no transfer or " +
+    "too), tag, search (merchant/description text, or a date YYYY-MM-DD, or an amount like 42.50, where -42.50 " +
+    "is money out only), uncategorized only (no category and no transfer or " +
     "reimbursement that explains it), unmatchedTransfers (transfers with no other half) or payStubLinked " +
     "(paycheck deposits linked to a pay stub) or flagged (a suspicious-charge alert waiting for a verdict or " +
     "marked suspicious). budgetOnly limits to accounts " +
