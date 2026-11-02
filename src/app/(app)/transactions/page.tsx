@@ -10,48 +10,28 @@ import { manualMatches } from "@/operations/manual";
 import { listTransactions, transactionTypeCounts } from "@/operations/transactions";
 import { categoryBadge } from "./category-badge";
 import { SubmitOnChange } from "./submit-on-change";
+import { MORE_FILTERS, SOURCE_LABELS, TYPES, datePresets, dollars, parseView, viewHref } from "./view";
 
 const PAGE_SIZE = 100;
 const select = "h-9 rounded-md border bg-background px-2 text-sm";
-
-function param(value: string | string[] | undefined): string | undefined {
-  const v = Array.isArray(value) ? value[0] : value;
-  return v && v.trim() ? v.trim() : undefined;
-}
-
-const isDay = (value: string | undefined) => (value && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined);
-
-// The type filter (#208): one dropdown, one kind of row at a time, each
-// value the list operation's own filter for it.
-const TYPES = {
-  unmatched: { label: "Unmatched transfers", filter: "unmatchedTransfers" },
-  uncategorized: { label: "Uncategorized", filter: "uncategorized" },
-  paystub: { label: "Connected to a pay stub", filter: "payStubLinked" },
-  flagged: { label: "Flagged", filter: "flagged" },
-} as const;
-type TypeKey = keyof typeof TYPES;
-const isType = (value: string | undefined): value is TypeKey => value !== undefined && Object.hasOwn(TYPES, value);
 
 // Every transaction, filterable. The filter is a plain GET form: no client
 // JavaScript, and every filtered view is a shareable, back-button-friendly
 // URL. Rows open the detail page, where splitting and tagging happen.
 // ?type= picks one kind of row (#208): transfers with no other half (#184),
-// uncategorized, connected to a pay stub, or flagged (#210). ?unmatched=1, its older form,
-// still works for links saved before. ?from= and ?to= limit it to posted
-// dates, as the Cash flow page links to its own period.
+// uncategorized, connected to a pay stub, or flagged (#210). The More
+// filters panel (#211) holds the rest: dates (?from= and ?to=, as the Cash
+// flow page links to its own period), amounts, transfers with one account,
+// and what a row has or where it came from. view.ts reads and writes them.
 export default async function TransactionsPage(props: PageProps<"/transactions">) {
   const sp = await props.searchParams;
-  const filters = {
-    search: param(sp.q),
-    categoryId: param(sp.category),
-    tagId: param(sp.tag),
-    accountId: param(sp.account),
-    from: isDay(param(sp.from)),
-    to: isDay(param(sp.to)),
-  };
-  const typeParam = param(sp.type) ?? (param(sp.unmatched) === "1" ? "unmatched" : undefined);
-  const type = isType(typeParam) ? typeParam : undefined;
-  const page = Math.max(Number(param(sp.page) ?? 1) || 1, 1);
+  const view = parseView(sp);
+  const { filters, type } = view;
+  const page = Math.max(Number(Array.isArray(sp.page) ? sp.page[0] : sp.page) || 1, 1);
+  const moreActive = MORE_FILTERS.filter((key) => filters[key] !== undefined).length;
+  // from and to are one filter to a person: a date range.
+  const moreCount = moreActive - (filters.from !== undefined && filters.to !== undefined ? 1 : 0);
+  const anyFilter = type !== undefined || Object.values(filters).some((v) => v !== undefined);
 
   const db = getDb();
   const [rows, cats, tagList, accts, toMerge, counts] = await Promise.all([
@@ -69,20 +49,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
   const labelOf = new Map(options.map((o) => [o.id, o.label]));
   const accountName = new Map(accts.map((a) => [a.id, a.name]));
 
-  // Dates default to the view's own; pass {} to drop them.
-  const pageHref = (p: number, dates: { from?: string; to?: string } = filters) => {
-    const q = new URLSearchParams();
-    if (filters.search) q.set("q", filters.search);
-    if (filters.categoryId) q.set("category", filters.categoryId);
-    if (filters.tagId) q.set("tag", filters.tagId);
-    if (filters.accountId) q.set("account", filters.accountId);
-    if (type) q.set("type", type);
-    if (dates.from) q.set("from", dates.from);
-    if (dates.to) q.set("to", dates.to);
-    if (p > 1) q.set("page", String(p));
-    const s = q.toString();
-    return s ? `/transactions?${s}` : "/transactions";
-  };
+  const today = new Date().toISOString().slice(0, 10);
 
   return (
     <div className="space-y-4">
@@ -155,39 +122,119 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
             </option>
           ))}
         </select>
-        {/* The Cash flow link carries its period; the form would drop it without these. */}
-        {filters.from ? <input type="hidden" name="from" value={filters.from} /> : null}
-        {filters.to ? <input type="hidden" name="to" value={filters.to} /> : null}
-        {/* Applies a dropdown as soon as it changes (#207); the button is for
-            the search box, and for when scripts are off. */}
+        {/* Applies a dropdown or checkbox as soon as it changes (#207); the
+            button is for typed fields, and for when scripts are off. */}
         <SubmitOnChange />
         <button type="submit" className="h-9 rounded-md border px-3 text-sm hover:bg-accent">
           Filter
         </button>
-        {type || Object.values(filters).some(Boolean) ? (
+        {anyFilter ? (
           <>
             <Link href="/transactions" className="text-sm text-muted-foreground underline">
               Clear
             </Link>
             {/* Everything this filter shows, filed somewhere else at once (#116). The move page reads the
-                category, tag, account and search only, so with a type or dated view it would move more than
-                is shown; those views leave the link out. */}
-            {type || filters.from || filters.to ? null : (
-              <Link href={pageHref(1).replace("/transactions", "/transactions/move")} className="text-sm text-muted-foreground underline">
+                category, tag, account and search only, so with a type or anything from More filters it would
+                move more than is shown; those views leave the link out. */}
+            {type || moreActive ? null : (
+              <Link href={viewHref(view, {}, "/transactions/move")} className="text-sm text-muted-foreground underline">
                 Move these to a category
               </Link>
             )}
           </>
         ) : null}
+        {/* The rest of the filters (#211), in the same GET form so they
+            combine with the bar's and land in the URL. A <details>, so it
+            opens without scripts; it starts open while any of it applies,
+            so a filter in effect is never hidden. */}
+        <details className="w-full rounded-lg border px-3 py-2 text-sm" open={moreActive > 0}>
+          <summary className="cursor-pointer select-none">More filters{moreCount ? ` (${moreCount})` : ""}</summary>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <fieldset className="space-y-2">
+              <legend className="font-medium">Posted</legend>
+              <div className="flex flex-wrap items-center gap-2">
+                <input type="date" name="from" defaultValue={filters.from} aria-label="From" className={select} />
+                <span className="text-muted-foreground">to</span>
+                <input type="date" name="to" defaultValue={filters.to} aria-label="To" className={select} />
+              </div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                {datePresets(today).map((p) => (
+                  <Link key={p.label} href={viewHref(view, { from: p.from, to: p.to })} className="text-muted-foreground underline">
+                    {p.label}
+                  </Link>
+                ))}
+              </div>
+            </fieldset>
+            <fieldset className="space-y-2">
+              <legend className="font-medium">Amount</legend>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  name="min"
+                  inputMode="decimal"
+                  defaultValue={filters.amountMinCents === undefined ? undefined : dollars(filters.amountMinCents)}
+                  placeholder="Min"
+                  aria-label="Minimum amount"
+                  className={`${select} w-24`}
+                />
+                <span className="text-muted-foreground">to</span>
+                <input
+                  name="max"
+                  inputMode="decimal"
+                  defaultValue={filters.amountMaxCents === undefined ? undefined : dollars(filters.amountMaxCents)}
+                  placeholder="Max"
+                  aria-label="Maximum amount"
+                  className={`${select} w-24`}
+                />
+              </div>
+              {/* Off, the range is on the amount's size: $10 to $50 finds
+                  charges and refunds alike. On, money out is negative, as
+                  the list shows it, so -50 to -10 is charges only. */}
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <input type="checkbox" name="signed" value="1" defaultChecked={filters.amountSigned} />
+                Signed: money out is negative
+              </label>
+            </fieldset>
+            <label className="space-y-2">
+              <span className="block font-medium">Transfers with</span>
+              <select name="xfer" defaultValue={filters.transferAccountId ?? ""} className={select}>
+                <option value="">Any account</option>
+                {accts.filter((a) => !a.manual).map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="space-y-2">
+              <span className="block font-medium">Source</span>
+              <select name="source" defaultValue={filters.source ?? ""} className={select}>
+                <option value="">Any source</option>
+                {Object.entries(SOURCE_LABELS).map(([key, label]) => (
+                  <option key={key} value={key}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <fieldset className="flex flex-wrap gap-x-4 gap-y-2 sm:col-span-2">
+              <legend className="mb-2 font-medium">Has</legend>
+              {(
+                [
+                  ["stub", "A pay stub", filters.payStubLinked],
+                  ["tags", "Tags", filters.hasTags],
+                  ["split", "A split", filters.split],
+                  ["pending", "Pending", filters.pending],
+                ] as const
+              ).map(([name, label, checked]) => (
+                <label key={name} className="flex items-center gap-2">
+                  <input type="checkbox" name={name} value="1" defaultChecked={checked} />
+                  {label}
+                </label>
+              ))}
+            </fieldset>
+          </div>
+        </details>
       </form>
-      {filters.from || filters.to ? (
-        <p className="text-sm text-muted-foreground">
-          Posted {filters.from ?? "any day"} to {filters.to ?? "now"}.{" "}
-          <Link href={pageHref(1, {})} className="underline">
-            Show all dates
-          </Link>
-        </p>
-      ) : null}
 
       {visible.length === 0 ? (
         <p className="text-muted-foreground">No transactions match.</p>
@@ -257,8 +304,8 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
       )}
 
       <div className="flex justify-between text-sm">
-        {page > 1 ? <Link href={pageHref(page - 1)} className="underline">← Newer</Link> : <span />}
-        {hasMore ? <Link href={pageHref(page + 1)} className="underline">Older →</Link> : null}
+        {page > 1 ? <Link href={viewHref(view, { page: page - 1 })} className="underline">← Newer</Link> : <span />}
+        {hasMore ? <Link href={viewHref(view, { page: page + 1 })} className="underline">Older →</Link> : null}
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import {
   accounts,
@@ -83,7 +84,20 @@ export type TransactionFilter = {
   unmatchedTransfers?: boolean;
   payStubLinked?: boolean;
   flagged?: boolean;
+  // The More filters panel (#211).
+  amountMinCents?: number;
+  amountMaxCents?: number;
+  // Compare the signed amount (money out is negative) rather than its size.
+  amountSigned?: boolean;
+  transferAccountId?: string;
+  hasTags?: boolean;
+  split?: boolean;
+  pending?: boolean;
+  source?: TransactionSource;
 };
+
+export const TRANSACTION_SOURCES = ["bank", "manual", "provisional"] as const;
+export type TransactionSource = (typeof TRANSACTION_SOURCES)[number];
 
 /**
  * The list's filters as SQL, shared with anything acting on "everything
@@ -113,6 +127,26 @@ export function transactionFilters(db: Db, input: TransactionFilter): SQL[] {
   if (input.payStubLinked)
     filters.push(inArray(transactions.id, db.select({ id: payStubDeposits.transactionId }).from(payStubDeposits)));
   if (input.flagged) filters.push(flaggedSql(db));
+  // An amount range is on the size of the amount unless it's signed, so
+  // "$10 to $50" finds charges and refunds alike, as the search does.
+  const amount = input.amountSigned ? sql`${transactions.amountCents}` : sql`abs(${transactions.amountCents})`;
+  if (input.amountMinCents !== undefined) filters.push(gte(amount, input.amountMinCents));
+  if (input.amountMaxCents !== undefined) filters.push(lte(amount, input.amountMaxCents));
+  // Paired transfers whose other side is in that account: "all transfers to
+  // or from savings". Unpaired ones have no other side to know.
+  if (input.transferAccountId) {
+    const other = alias(transactions, "other_side");
+    filters.push(inArray(transactions.transferPairId, db.select({ id: other.id }).from(other).where(eq(other.accountId, input.transferAccountId))));
+  }
+  if (input.hasTags) filters.push(inArray(transactions.id, db.select({ id: transactionTags.transactionId }).from(transactionTags)));
+  if (input.split) filters.push(eq(transactions.isSplit, true));
+  if (input.pending) filters.push(eq(transactions.pending, true));
+  // Where it came from: a provisional row is from a purchase alert (#30)
+  // until the bank's copy replaces it; manual is added by hand (#64); the
+  // bank is everything else, imported history included.
+  if (input.source === "provisional") filters.push(isNotNull(transactions.provisionalSource));
+  if (input.source === "manual") filters.push(eq(transactions.source, "manual"));
+  if (input.source === "bank") filters.push(isNull(transactions.provisionalSource), sql`${transactions.source} is distinct from 'manual'`);
   if (input.budgetOnly) filters.push(inArray(transactions.accountId, budgetAccountIds(db)));
   if (input.categoryId) {
     const viaSplit = db
@@ -144,6 +178,26 @@ export function transactionFilters(db: Db, input: TransactionFilter): SQL[] {
   return filters;
 }
 
+// The filters the list and its type counts share, so a count is always
+// taken under exactly the filters the list applies.
+const listFilterInput = {
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  accountId: z.uuid().optional(),
+  categoryId: z.uuid().optional(),
+  tagId: z.uuid().optional(),
+  search: z.string().trim().min(1).max(100).optional(),
+  payStubLinked: z.boolean().optional(),
+  amountMinCents: z.number().int().optional(),
+  amountMaxCents: z.number().int().optional(),
+  amountSigned: z.boolean().optional(),
+  transferAccountId: z.uuid().optional(),
+  hasTags: z.boolean().optional(),
+  split: z.boolean().optional(),
+  pending: z.boolean().optional(),
+  source: z.enum(TRANSACTION_SOURCES).optional(),
+};
+
 export const listTransactions = defineRead({
   name: "transactions.list",
   description:
@@ -153,7 +207,9 @@ export const listTransactions = defineRead({
     "is money out only), uncategorized only (no category and no transfer or " +
     "reimbursement that explains it), unmatchedTransfers (transfers with no other half) or payStubLinked " +
     "(paycheck deposits linked to a pay stub) or flagged (a suspicious-charge alert waiting for a verdict or " +
-    "marked suspicious). budgetOnly limits to accounts " +
+    "marked suspicious). Also: amountMinCents/amountMaxCents (on the amount's size, or signed with " +
+    "amountSigned), transferAccountId (paired transfers whose other side is that account), hasTags, split, " +
+    "pending, and source (bank, manual or provisional). budgetOnly limits to accounts " +
     "that count toward budgets (excludes investment, retirement, loan and asset accounts) — use it for " +
     "anything about spending. Page with offset. `transfer` is set when the transaction is one side of a " +
     "transfer between the owner's accounts (never spending or income); `investmentActivity` classifies " +
@@ -165,16 +221,10 @@ export const listTransactions = defineRead({
     "`provisionalSource` is set on a provisional transaction: one from a purchase alert that the bank hasn't " +
     "reported yet (see transactions.provisional). `manual` is true for one the owner added by hand.",
   input: z.object({
-    from: isoDate.optional(),
-    to: isoDate.optional(),
-    accountId: z.uuid().optional(),
-    categoryId: z.uuid().optional(),
-    tagId: z.uuid().optional(),
-    search: z.string().trim().min(1).max(100).optional(),
+    ...listFilterInput,
     uncategorized: z.boolean().optional(),
     budgetOnly: z.boolean().optional(),
     unmatchedTransfers: z.boolean().optional(),
-    payStubLinked: z.boolean().optional(),
     flagged: z.boolean().optional(),
     limit: z.number().int().min(1).max(500).default(100),
     offset: z.number().int().min(0).default(0),
@@ -317,15 +367,6 @@ export async function removeSplits(ctx: WriteContext, transactionId: string) {
   for (const part of parts) await ctx.remove(transactionSplits, part.id);
 }
 
-const listFilterInput = {
-  from: isoDate.optional(),
-  to: isoDate.optional(),
-  accountId: z.uuid().optional(),
-  categoryId: z.uuid().optional(),
-  tagId: z.uuid().optional(),
-  search: z.string().trim().min(1).max(100).optional(),
-};
-
 /**
  * How many rows each of the list's type filters would show (#208), under
  * the other filters in effect, so the number on an option is the number
@@ -334,8 +375,8 @@ const listFilterInput = {
 export const transactionTypeCounts = defineRead({
   name: "transactions.typeCounts",
   description:
-    "Counts for the Transactions list's type filter, under the same date, account, category, tag and search " +
-    "filters as transactions.list: unmatchedTransfers, uncategorized, payStubLinked and flagged.",
+    "Counts for the Transactions list's type filter, under the same filters as transactions.list: " +
+    "unmatchedTransfers, uncategorized, payStubLinked and flagged.",
   input: z.object(listFilterInput),
   run: async (db, input) => {
     const countOf = async (type: Pick<TransactionFilter, "unmatchedTransfers" | "uncategorized" | "payStubLinked" | "flagged">) => {
