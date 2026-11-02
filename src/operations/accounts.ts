@@ -1,8 +1,9 @@
 import { and, count, desc, eq, ne, sql } from "drizzle-orm";
 import { z } from "zod";
-import { ACCOUNT_KINDS, accounts, balanceSnapshots, countsTowardBudgetsByDefault, transactions } from "@/db/schema";
+import { ACCOUNT_KINDS, accounts, balanceSnapshots, countsTowardBudgetsByDefault, manualPositions, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { defineRead, defineWrite } from "@/operations/define";
+import type { WriteContext } from "@/operations/tracked";
 
 export const listAccounts = defineRead({
   name: "accounts.list",
@@ -55,6 +56,12 @@ export const updateAccount = defineWrite({
   apply: async (ctx, { accountId, kind, displayName, countsTowardBudgets, walletCardName }) => {
     const set: Partial<typeof accounts.$inferInsert> = {};
     if (kind !== undefined) {
+      // Positions (#231) are assets; as a loan or card their value would
+      // count as a debt.
+      if (kind === "loan" || kind === "credit") {
+        const [held] = await ctx.db.select({ id: manualPositions.id }).from(manualPositions).where(eq(manualPositions.accountId, accountId)).limit(1);
+        if (held) throw new Error("This account holds positions, so it stays an asset");
+      }
       set.type = kind;
       // Reclassifying an account as brokerage should take it out of budgets
       // without a second step; an explicit flag in the same call wins.
@@ -116,9 +123,9 @@ function asOf(on: string): Date {
 }
 
 const manualValue = z.number().int().min(0).max(1_000_000_000_00);
-const valueDate = z.iso.date().refine((on) => on <= new Date().toISOString().slice(0, 10), "Can't record a value in the future");
+export const valueDate = z.iso.date().refine((on) => on <= new Date().toISOString().slice(0, 10), "Can't record a value in the future");
 
-async function manualAccount(db: Db, accountId: string) {
+export async function manualAccount(db: Db, accountId: string) {
   const [account] = await db.select().from(accounts).where(eq(accounts.id, accountId));
   if (!account) throw new Error("Account not found");
   if (account.source !== "manual") throw new Error("Only manual accounts take hand-entered values; this one comes from a bank sync");
@@ -166,6 +173,20 @@ export const setManualValue = defineWrite({
   input: z.object({ accountId: z.uuid(), valueCents: manualValue, on: valueDate }),
   apply: async (ctx, { accountId, valueCents, on }) => {
     await manualAccount(ctx.db, accountId);
+    // An account with positions (#231) is valued from them; a value typed
+    // over it would be undone by the next position change.
+    const [held] = await ctx.db.select({ id: manualPositions.id }).from(manualPositions).where(eq(manualPositions.accountId, accountId)).limit(1);
+    if (held) throw new Error("This account is valued from its positions; change a position's quantity or price instead");
+    return recordManualValue(ctx, accountId, valueCents, on);
+  },
+});
+
+/**
+ * A manual account's value on a date, as setManualValue records it: the
+ * day's balance snapshot, and the account's current value when it's the
+ * latest. Shared with positions (#231), which value the account the same way.
+ */
+export async function recordManualValue(ctx: WriteContext, accountId: string, valueCents: number, on: string) {
     // One value per day, like synced balances: a second entry for the same
     // date corrects the first.
     const [sameDay] = await ctx.db
@@ -185,8 +206,7 @@ export const setManualValue = defineWrite({
       .limit(1);
     if (latest.on === on) await ctx.update(accounts, accountId, { balanceCents: valueCents, balanceAt: asOf(on) });
     return { accountId, on };
-  },
-});
+}
 
 export const deleteManualAccount = defineWrite({
   name: "accounts.deleteManual",
@@ -200,6 +220,8 @@ export const deleteManualAccount = defineWrite({
       .from(transactions)
       .where(eq(transactions.accountId, accountId));
     if (txns > 0) throw new Error("This account has transactions; it can't be removed");
+    const positions = await ctx.db.select({ id: manualPositions.id }).from(manualPositions).where(eq(manualPositions.accountId, accountId));
+    for (const { id } of positions) await ctx.remove(manualPositions, id);
     // History first, through tracked removes: the FK cascade would delete it
     // invisibly, and undo couldn't bring it back.
     const history = await ctx.db.select({ id: balanceSnapshots.id }).from(balanceSnapshots).where(eq(balanceSnapshots.accountId, accountId));
