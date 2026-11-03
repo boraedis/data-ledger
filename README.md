@@ -109,6 +109,12 @@ never overwrites a category that's already set:
    category, description editable) and pairs both sides as one undoable
    command (`transactions.addOtherHalf`). The new row is marked added by hand,
    so if the bank later reports it, the usual merge prompt applies.
+   When the other half already exists, the same panel lists the rows that
+   could be it (exact opposite amount, a compatible other account, within the
+   pairing window, unpaired, split or pending rows left out) and "Pair" joins
+   them through `transactions.pairAsTransfer`. Rows "Not a transfer" rejected
+   are offered too, so a mistaken click or a wrong match is fixable by hand
+   (#252).
 1. **Rules** — the owner's own, in priority order: merchant or description
    equals / contains / starts with a pattern, optionally limited to one
    account or an amount range. No regex (a user pattern run over every
