@@ -1,13 +1,16 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
+import { enoughForChart, payPoints } from "@/lib/pay/chart";
 import { GROUP_LABELS, nextPeriod, type PayLineGroup } from "@/lib/pay/stubs";
 import { listPayStubs } from "@/operations/pay";
 import { read } from "@/operations/runtime";
+import { PayChart } from "./pay-chart";
 import { PayStubs } from "./pay-stubs";
 
 // Pay stubs (#60): what each paycheck really was, gross to net. This
-// year's totals on top; the tax estimate (#61) builds on the same records.
+// year's totals on top, then each paycheck over time against its typical
+// (#272); the tax estimate (#61) builds on the same records.
 
 const GROUPS: PayLineGroup[] = ["tax", "insurance", "retirement", "other"];
 
@@ -24,6 +27,7 @@ export default async function PayPage() {
   const employerPaid = sum(employerOf(["retirement_match", "hsa", "life_insurance", "other"]));
   const match = sum(employerOf(["retirement_match"]));
 
+  const points = payPoints(stubs);
   const last = stubs[0];
   const blank = {
     employer: "",
@@ -93,6 +97,12 @@ export default async function PayPage() {
             Year-end tax estimate →
           </Link>
         </section>
+      ) : null}
+
+      {enoughForChart(points) ? (
+        <PayChart points={points} today={today} />
+      ) : stubs.length ? (
+        <p className="text-sm text-muted-foreground">A chart of your paychecks appears once there are three regular ones.</p>
       ) : null}
 
       <PayStubs stubs={stubs} next={next} />
