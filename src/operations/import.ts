@@ -10,7 +10,7 @@ import {
   transactions,
   type AccountKind,
 } from "@/db/schema";
-import { normalizeMerchant } from "@/lib/categorize/merchant";
+import { merchantFields } from "@/operations/merchants";
 import { defineWrite } from "@/operations/define";
 
 // Applies one connector snapshot to the ledger. Runs only as actor
@@ -248,7 +248,7 @@ export const applySnapshot = defineWrite({
         payee: raw.payee,
         memo: raw.memo,
         pending: raw.pending,
-        merchant: normalizeMerchant(raw.description, raw.payee),
+        ...(await merchantFields(ctx, raw.description, raw.payee)),
       };
       const existing = existingByKey.get(key);
       if (!existing) {
@@ -262,7 +262,8 @@ export const applySnapshot = defineWrite({
         existing.payee !== values.payee ||
         existing.memo !== values.memo ||
         existing.pending !== values.pending ||
-        existing.merchant !== values.merchant
+        existing.merchant !== values.merchant ||
+        existing.merchantId !== values.merchantId
       ) {
         // Fields from the bank only; categoryId and anything else the owner
         // set is left alone.

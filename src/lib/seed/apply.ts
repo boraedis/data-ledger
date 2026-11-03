@@ -1,4 +1,4 @@
-import { count, eq, inArray, ne } from "drizzle-orm";
+import { count, eq, inArray, ne, sql } from "drizzle-orm";
 import * as schema from "@/db/schema";
 import type { Db } from "@/db/types";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
@@ -7,6 +7,25 @@ import { generateSeed } from "@/lib/seed/generate";
 const { accounts, balanceSnapshots, categories, holdingSnapshots, payStubDeposits, payStubLines, payStubs, transactions } = schema;
 
 export class RealDataPresentError extends Error {}
+
+// The seed's merchants as rows (#285), the way the merchants migration
+// backfills a real database: one per cleaned name, each name its alias, and
+// every transaction linked. Plain SQL, like the rest of the seed: it isn't
+// an operation and isn't logged.
+async function linkSeedMerchants(tx: Pick<Db, "execute">) {
+  await tx.execute(sql`
+    insert into merchants (name)
+    select mode() within group (order by merchant) from transactions where merchant is not null and merchant <> '' group by lower(merchant)
+    on conflict do nothing`);
+  await tx.execute(sql`
+    insert into merchant_aliases (alias, merchant_id)
+    select distinct t.merchant, m.id from transactions t join merchants m on lower(m.name) = lower(t.merchant)
+    where t.merchant is not null and t.merchant <> ''
+    on conflict do nothing`);
+  await tx.execute(sql`
+    update transactions t set merchant_id = a.merchant_id from merchant_aliases a
+    where a.alias = t.merchant and t.merchant_id is null`);
+}
 
 /**
  * Replaces the synthetic data in `db` with a fresh copy. Refuses outright if
@@ -76,6 +95,7 @@ export async function applySeed(db: Db, { endDate = new Date() }: { endDate?: Da
     for (let i = 0; i < rows.length; i += 500) {
       await tx.insert(transactions).values(rows.slice(i, i + 500));
     }
+    await linkSeedMerchants(tx);
 
     const depositIds = new Map(
       (await tx.select({ id: transactions.id, externalId: transactions.externalId }).from(transactions).where(inArray(transactions.externalId, data.payStubs.map((p) => p.depositExternalId)))).map((t) => [t.externalId, t.id]),

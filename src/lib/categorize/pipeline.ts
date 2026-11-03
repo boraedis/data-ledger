@@ -15,6 +15,7 @@ import type { AccountKind } from "@/lib/account-kinds";
 import { CASH_KINDS, DEBT_KINDS, INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { TRANSFER_PASSES, TRANSFER_WINDOW_DAYS, findTransferPairs } from "@/lib/investments/transfers";
 import { findMatches } from "@/lib/provisional/match";
+import { misLinked } from "@/operations/merchants";
 import { openDeposits } from "@/operations/pay";
 import { execute } from "@/operations/runtime";
 import { awaitingCategory } from "@/operations/transactions";
@@ -431,9 +432,16 @@ async function modelStep(
   return { seen: results.length, pending: unasked.length - results.length, ...(error ? { error } : {}) };
 }
 
-/** Fills in merchant names for older transactions, if any lack one. Logged only when there's work. */
+/**
+ * Fills in merchant names for older transactions, if any lack one, and links
+ * any whose merchant doesn't agree with their name's alias (#285). Logged
+ * only when there's work.
+ */
 export async function backfillMerchantsIfNeeded(db: Db): Promise<number> {
-  const [{ value }] = await db.select({ value: count() }).from(transactions).where(isNull(transactions.merchant));
+  const [{ value }] = await db
+    .select({ value: count() })
+    .from(transactions)
+    .where(or(isNull(transactions.merchant), misLinked));
   if (value === 0) return 0;
   const result = await execute(db, {
     operation: "transactions.backfillMerchants",
