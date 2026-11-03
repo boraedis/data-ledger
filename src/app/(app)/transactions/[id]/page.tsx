@@ -68,8 +68,9 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
           {formatCents(txn.amountCents)}
         </p>
       </div>
-      {txn.manual ? (
+      {txn.manual || txn.imported ? (
         <ManualNote
+          imported={txn.imported}
           txn={{ id: txn.id, postedOn: txn.postedOn, amountCents: txn.amountCents, description: txn.description }}
           candidates={merge[0]?.candidates ?? []}
           today={new Date().toISOString().slice(0, 10)}

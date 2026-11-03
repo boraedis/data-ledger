@@ -80,7 +80,11 @@ A preview shows what would be added, what was imported before (each row has
 a stable ID, so the same file twice adds nothing), and what looks like it's
 already here from the sync (same amount within 3 days), which is skipped
 unless the owner ticks it. Applied as one `import` command, undone as a
-whole; imported rows are marked `source = 'import'`. Investment accounts
+whole; imported rows are marked `source = 'import'`. They're the owner's own
+file, not the bank's feed, so one can be corrected or deleted from its page
+like a row added by hand (`transactions.updateManual` / `deleteManual`); it
+keeps its `import` source and its ID, and is not offered for merging. Deleting
+it and importing the same file again brings it back. Investment accounts
 and OFX/QFX are out of scope for now.
 
 ### Categorization pipeline

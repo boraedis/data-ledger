@@ -19,10 +19,13 @@ export function ManualNote({
   txn,
   candidates,
   today,
+  imported = false,
 }: {
   txn: { id: string; postedOn: string; amountCents: number; description: string };
   candidates: Candidate[];
   today: string;
+  // From a CSV export (#35) rather than added by hand: the same edit and delete.
+  imported?: boolean;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -67,7 +70,8 @@ export function ManualNote({
 
       <div className="space-y-2 rounded-lg border border-dashed p-3 text-sm">
         <p>
-          <span className="font-medium">Added by hand.</span> The bank&apos;s transactions stay as reported; this one you can change or delete.
+          <span className="font-medium">{imported ? "Imported from a CSV export." : "Added by hand."}</span> The bank&apos;s synced transactions stay as
+          reported; this one you can change or delete.
         </p>
         {editing ? (
           <form
