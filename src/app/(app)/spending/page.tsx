@@ -1,6 +1,7 @@
 import { inArray } from "drizzle-orm";
 import Link from "next/link";
 import { transactions } from "@/db/schema";
+import { KIND_LABELS } from "@/lib/account-kinds";
 import { firstRecordedDay } from "@/lib/cashflow/data";
 import { TYPICAL_PERIODS } from "@/lib/cashflow/typical";
 import { getDb } from "@/lib/db";
@@ -15,12 +16,14 @@ import {
   type PeriodParams,
   type Row,
 } from "@/lib/spending/analyze";
+import { donut, donutRows } from "@/lib/spending/donut";
 import { monthPace, spendDays, yearPace, type PacePoint } from "@/lib/spending/pace";
 import { listAccounts } from "@/operations/accounts";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { misfiledTransfers, spendingLines, uncategorizedSpend } from "@/operations/transactions";
 import { MisfiledTransfers } from "../cash-flow/misfiled-transfers";
+import { DonutModal } from "./donut-modal";
 import { PaceChart } from "./pace-chart";
 import { SplitChart } from "./split-chart";
 
@@ -33,7 +36,7 @@ import { SplitChart } from "./split-chart";
 //
 // Above the table, the period's pace against the typical (#264): see
 // lib/spending/pace.ts. Then the split, this period against the last
-// (#265), from the table's own rows.
+// (#265), from the table's own rows, and a donut of it in a modal (#266).
 
 const GROUPINGS: { id: Grouping; label: string }[] = [
   { id: "category", label: "Category" },
@@ -310,7 +313,20 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
       )}
 
       {rows.length === 0 ? null : (
-        <SplitChart rows={rows} label={period.label} prevLabel={period.prev.label} hrefFor={(key) => href({ sel: key }, "#behind")} />
+        <div className="space-y-2">
+          <SplitChart rows={rows} label={period.label} prevLabel={period.prev.label} hrefFor={(key) => href({ sel: key }, "#behind")} />
+          <DonutModal
+            donut={donut(
+              donutRows(rows, by, (id) => {
+                const kind = accts.find((a) => a.id === id)?.kind;
+                return kind ? KIND_LABELS[kind] : "Other";
+              }),
+              by,
+            )}
+            title={`Spending in ${period.label} by ${by === "account" ? "kind of account and account" : by === "category" ? "category and subcategory" : "merchant"}`}
+            groupLabel={GROUPINGS.find((g) => g.id === by)!.label}
+          />
+        </div>
       )}
 
       {rows.length === 0 ? null : (
