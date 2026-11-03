@@ -1,6 +1,8 @@
 import { inArray } from "drizzle-orm";
 import Link from "next/link";
 import { transactions } from "@/db/schema";
+import { firstRecordedDay } from "@/lib/cashflow/data";
+import { TYPICAL_PERIODS } from "@/lib/cashflow/typical";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import {
@@ -13,11 +15,13 @@ import {
   type PeriodParams,
   type Row,
 } from "@/lib/spending/analyze";
+import { monthPace, spendDays, yearPace, type PacePoint } from "@/lib/spending/pace";
 import { listAccounts } from "@/operations/accounts";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { misfiledTransfers, spendingLines, uncategorizedSpend } from "@/operations/transactions";
 import { MisfiledTransfers } from "../cash-flow/misfiled-transfers";
+import { PaceChart } from "./pace-chart";
 
 // Spending (#66): where the money went over a period, by category, merchant
 // or account, each against the period before. The lines are
@@ -25,6 +29,9 @@ import { MisfiledTransfers } from "../cash-flow/misfiled-transfers";
 // Everything is in the URL (period, grouping, selection, what's expanded),
 // so any view can be linked to and the page works without JavaScript.
 // Account rows show names only: never balances or account numbers.
+//
+// Above the table, the period's pace against the typical (#264): see
+// lib/spending/pace.ts.
 
 const GROUPINGS: { id: Grouping; label: string }[] = [
   { id: "category", label: "Category" },
@@ -77,6 +84,38 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
     accountNames: new Map(accts.map((a) => [a.id, a.name])),
   };
   const { rows, totalCents, prevTotalCents } = spendingRows(lines, prevLines, by, lookup);
+
+  // The pace chart's typical reads the periods before with the same lines
+  // and toggle; a custom range has none, so it's the actual alone.
+  const pace = await (async (): Promise<{ points: PacePoint[]; unit: "day" | "month"; typicalLabel: string | null }> => {
+    const days = spendDays(lines, lookup, period.from, period.to);
+    const earlier = (from: string, to: string) => read(db, spendingLines, { from, to, budgetOnly: true, gross });
+    if (period.kind === "year") {
+      const y = Number(period.from.slice(0, 4));
+      const [from, to] = [`${y - TYPICAL_PERIODS}-01-01`, `${y - 1}-12-31`];
+      const [firstDay, before] = await Promise.all([firstRecordedDay(db), earlier(from, to)]);
+      return {
+        points: yearPace(String(y), days, spendDays(before, lookup, from, to), { firstDay, today }),
+        unit: "month",
+        typicalLabel: `Typical: the same months, averaged over up to the ${TYPICAL_PERIODS} years before`,
+      };
+    }
+    if (period.kind === "month") {
+      // The three months before, each whole, inside recorded history and over.
+      const [y, m] = [Number(period.from.slice(0, 4)), Number(period.from.slice(5, 7)) - 1];
+      const months = Array.from({ length: TYPICAL_PERIODS }, (_, k) => ({
+        from: new Date(Date.UTC(y, m - k - 1, 1)).toISOString().slice(0, 10),
+        to: new Date(Date.UTC(y, m - k, 0)).toISOString().slice(0, 10),
+      }));
+      const firstDay = await firstRecordedDay(db);
+      if (firstDay && months.every((p) => p.from >= firstDay && p.to < today)) {
+        const before = await earlier(months.at(-1)!.from, months[0].to);
+        const priors = months.map((p) => spendDays(before, lookup, p.from, p.to));
+        return { points: monthPace(days, priors, today), unit: "day", typicalLabel: `Typical pace: average of the ${TYPICAL_PERIODS} months before` };
+      }
+    }
+    return { points: monthPace(days, null, today), unit: "day", typicalLabel: null };
+  })();
   const shown = rows.slice(0, MAX_ROWS);
   const rest = rows.slice(MAX_ROWS);
 
@@ -260,6 +299,15 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
       {rows.length === 0 ? (
         <p className="text-muted-foreground">No spending in {period.label}.</p>
       ) : (
+        <PaceChart
+          points={pace.points}
+          unit={pace.unit}
+          typicalLabel={pace.typicalLabel}
+          title={`Spending so far in ${period.label}${pace.typicalLabel ? ", against the typical" : ""}`}
+        />
+      )}
+
+      {rows.length === 0 ? null : (
         <table className="w-full table-fixed text-sm">
           <caption className="sr-only">
             Spending by {by} in {period.label}, with each one&apos;s share of the total and the change against {period.prev.label}.
