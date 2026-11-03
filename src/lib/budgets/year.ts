@@ -9,6 +9,8 @@
 // add up across targets as well as across months. Nothing is counted twice:
 // each spending line counts toward exactly one target.
 
+import type { BurndownDay } from "@/lib/budgets/burndown";
+
 export type YearCell = { spentCents: number; targetCents: number | null };
 export type YearTotal = { spentCents: number; targetCents: number; months: number };
 
@@ -98,41 +100,73 @@ export function segmentFigures(s: Segment<SegmentCell>): { spentCents: number; t
 
 // --- Progress across the months (#268) ----------------------------------------
 //
-// The Year view's chart, to match the Month view's burndown: what's left of
-// the months' targets at the end of each month, against what the targets
-// had used up by then (the "line": not straight, since a month without a
-// target adds nothing), and the twelve months before at the same point, as
-// a share of their own targets. From the same cells as the totals, so the
-// last point is the year's Under (or Over).
+// The Year view's chart, to match the Month view's burndown, a point a day
+// across the twelve months: what's left of the months' targets by the end of
+// each day, against what the targets had used up by then (the "line": not
+// straight, since a month without a target adds nothing, and each month's
+// target is spread evenly over its days), and the twelve months before at
+// the same point, as a share of their own targets. From the same cells as
+// the totals, so the last day is the year's Under (or Over), and the days
+// still to come have no "left", as on the Month view.
 
-type MonthCell = YearCell & { month: string };
+// dailyCents is there when the read was asked for it (budgets.monthly's `daily`).
+type DayCell = YearCell & { month: string; dailyCents?: number[] };
 
-export type ProgressMonth = { date: string; leftCents: number | null; idealCents: number; typicalCents: number | null; spentCents: number };
+const daysIn = (month: string) => new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate();
 
-export function yearProgress(rows: { months: MonthCell[] }[], before: { months: YearCell[] }[] | null): { months: ProgressMonth[]; availableCents: number; typical: boolean } | null {
+/** What a month spent on each of its days across the rows that had a target then. */
+function spentByDay(rows: { months: YearCell[] }[], i: number, length: number): number[] {
+  const out = new Array<number>(length).fill(0);
+  for (const r of rows) {
+    const cell = r.months[i] as DayCell | undefined;
+    if (cell?.targetCents == null) continue;
+    cell.dailyCents?.forEach((c, d) => (out[d] += c));
+  }
+  return out;
+}
+
+export function yearProgress(
+  rows: { months: DayCell[] }[],
+  before: { months: DayCell[] }[] | null,
+  through: string,
+): { days: BurndownDay[]; availableCents: number; typical: boolean } | null {
   const total = sumCells(rows.flatMap((r) => r.months));
   if (!total) return null;
   const columns = rows[0].months.length;
-  // The months before, as the share of their targets used by the end of each month.
+  // The months before: the share of their targets used by the end of each of their days.
   const prior = before ? sumCells(before.flatMap((r) => r.months)) : null;
-  let used = 0;
-  const priorShare =
+  const priorShare: number[][] | null =
     before && prior && prior.targetCents > 0
-      ? Array.from({ length: columns }, (_, i) => (used += sumCells(before.flatMap((r) => r.months[i] ?? []))?.spentCents ?? 0) / prior.targetCents)
+      ? (() => {
+          let used = 0;
+          return Array.from({ length: columns }, (_, i) =>
+            spentByDay(before, i, daysIn(before[0].months[i].month)).map((c) => (used += c) / prior.targetCents),
+          );
+        })()
       : null;
+
   let target = 0;
   let spent = 0;
-  const months = Array.from({ length: columns }, (_, i) => {
-    const column = sumCells(rows.map((r) => r.months[i]));
-    target += column?.targetCents ?? 0;
-    spent += column?.spentCents ?? 0;
-    return {
-      date: rows[0].months[i].month,
-      leftCents: total.targetCents - spent,
-      idealCents: total.targetCents - target,
-      typicalCents: priorShare ? Math.round(total.targetCents * (1 - priorShare[i])) : null,
-      spentCents: column?.spentCents ?? 0,
-    };
-  });
-  return { months, availableCents: total.targetCents, typical: priorShare !== null };
+  const days: BurndownDay[] = [];
+  for (let i = 0; i < columns; i++) {
+    const month = rows[0].months[i].month.slice(0, 7);
+    const length = daysIn(month);
+    const monthTarget = sumCells(rows.map((r) => r.months[i]))?.targetCents ?? 0;
+    const daily = spentByDay(rows, i, length);
+    for (let d = 0; d < length; d++) {
+      spent += daily[d];
+      const date = `${month}-${String(d + 1).padStart(2, "0")}`;
+      // A shorter month before (February under a 31-day one) stands at its last day.
+      const share = priorShare?.[i][Math.min(d, priorShare[i].length - 1)];
+      days.push({
+        date,
+        leftCents: date <= through ? total.targetCents - spent : null,
+        idealCents: Math.round(total.targetCents - target - (monthTarget * (d + 1)) / length),
+        typicalCents: share === undefined ? null : Math.round(total.targetCents * (1 - share)),
+        spentCents: daily[d],
+      });
+    }
+    target += monthTarget;
+  }
+  return { days, availableCents: total.targetCents, typical: priorShare !== null };
 }

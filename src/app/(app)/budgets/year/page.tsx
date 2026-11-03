@@ -24,7 +24,7 @@ import { yearPay } from "./pay-year";
 // per cell.
 //
 // Laid out as the Month view is (#268): the topline for the twelve months,
-// then the grid (the page's own), then progress across the months. The
+// then the grid (the page's own), then progress day by day across the months. The
 // reading notes sit behind "How to read this".
 //
 // A real table, so screen readers get rows and columns. It's sized to fit a
@@ -63,8 +63,8 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
   const before = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - MONTHS, 0)).toISOString().slice(0, 10);
   const [payYear, unsorted, earlier] = await Promise.all([
     read(db, budgetPayYear, { on, gross, months: MONTHS, includeOneTime }),
-    read(db, budgetMonthly, { on, gross, months: MONTHS, includeEnded: true, details: true }),
-    read(db, budgetMonthly, { on: before, gross, months: MONTHS, includeEnded: true }),
+    read(db, budgetMonthly, { on, gross, months: MONTHS, includeEnded: true, details: true, daily: true }),
+    read(db, budgetMonthly, { on: before, gross, months: MONTHS, includeEnded: true, daily: true }),
   ]);
   const rows = unsorted.sort((a, b) => (a.categoryId === null ? -1 : b.categoryId === null ? 1 : a.name.localeCompare(b.name)));
   const columns = rows[0]?.months.map((m) => m.month) ?? Array.from({ length: MONTHS }, (_, i) => `${shiftMonth(month, i - MONTHS + 1)}-01`);
@@ -74,7 +74,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
   // How far through the twelve months it is, for Under's colour and the projection.
   const lastDay = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).toISOString().slice(0, 10);
   const share = isCurrent ? elapsedShare(columns[0], lastDay, today) : 1;
-  const progress = yearProgress(rows, earlier.length ? earlier : null);
+  const progress = yearProgress(rows, earlier.length ? earlier : null, on);
   const span = `${monthName(columns[0], "long")} – ${monthName(columns.at(-1)!, "long")}`;
 
   const href = (path: "/budgets/month" | "/budgets/year", next: { month?: string; gross?: boolean; bonus?: boolean }) => {
@@ -209,21 +209,21 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
 
       {/* Progress, last: the same place as the Month view's burndown. */}
       {progress ? (
-        <section className="space-y-1" aria-label="These months, month by month">
+        <section className="space-y-1" aria-label="These months, day by day">
           <h2 className="text-sm font-medium">The months so far</h2>
           <Burndown
-            days={progress.months}
+            days={progress.days}
             availableCents={progress.availableCents}
             pastPeriods={progress.typical ? 1 : 0}
             typicalLabel="The 12 months before"
-            unit="month"
             idealLabel="Left at target"
+            idealShort="at target"
             height={110}
-            title={`What's left of these months' ${formatCents(progress.availableCents)} in targets, at the end of each month`}
+            title={`What's left of these months' ${formatCents(progress.availableCents)} in targets, at the end of each day`}
           />
           <p className="text-xs text-muted-foreground">
-            What&apos;s left of these months&apos; targets at the end of each month, against what would be left had each month spent exactly its
-            target (a month without a target adds nothing to either).
+            What&apos;s left of these months&apos; targets at the end of each day, against what would be left had each month spent exactly its
+            target, evenly across its days (a month without a target adds nothing to either).
           </p>
         </section>
       ) : null}
