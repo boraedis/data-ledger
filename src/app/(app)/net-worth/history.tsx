@@ -173,22 +173,25 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
             </button>
           ))}
         </div>
-        <div role="group" aria-label="Group by" className="flex rounded-md border text-xs">
-          {(["kind", "account", "institution"] as const).map((g) => (
-            <button
-              key={g}
-              type="button"
-              aria-pressed={groupBy === g}
-              className={button(groupBy === g)}
-              onClick={() => {
-                setGroupBy(g);
-                setSelected(null);
-              }}
-            >
-              {g === "kind" ? "Kind" : g === "account" ? "Account" : "Institution"}
-            </button>
-          ))}
-        </div>
+        {/* Only the stack is split into groups (#270); the line is one net worth, so there's nothing to group. The choice is kept for when it comes back. */}
+        {view === "stacked" ? (
+          <div role="group" aria-label="Group by" className="flex rounded-md border text-xs">
+            {(["kind", "account", "institution"] as const).map((g) => (
+              <button
+                key={g}
+                type="button"
+                aria-pressed={groupBy === g}
+                className={button(groupBy === g)}
+                onClick={() => {
+                  setGroupBy(g);
+                  setSelected(null);
+                }}
+              >
+                {g === "kind" ? "Kind" : g === "account" ? "Account" : "Institution"}
+              </button>
+            ))}
+          </div>
+        ) : null}
         <div role="group" aria-label="Time range" className="flex rounded-md border text-xs">
           {RANGES.map((r) => (
             <button key={r.key} type="button" aria-pressed={range === r.key} className={button(range === r.key)} onClick={() => setRange(r.key)}>
