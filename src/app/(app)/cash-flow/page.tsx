@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { cashFlowInputs } from "@/lib/cashflow/data";
+import { cashFlowInputs, typicalLine } from "@/lib/cashflow/data";
 import { investmentChange } from "@/lib/cashflow/investments";
 import { payPeriodRanges, payPeriods } from "@/lib/cashflow/pay-periods";
 import { rollUp, runningTotals } from "@/lib/cashflow/series";
@@ -120,6 +120,8 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
       : null;
   // Nothing recorded in the period at all: an empty state, not zeros (#171).
   const empty = flow.days.every((d) => d.inCents === 0 && d.outCents === 0);
+  // The line of what the three periods before predict, under the charts (Annual and Monthly only).
+  const typical = empty ? null : await typicalLine(db, period, today, gross);
   // The year month by month (#171); months still to come keep their place, undrawn.
   const monthSlots: FlowSlot[] = rollUp(flow.days, "month").map((m) => {
     const label = new Date(`${m.start}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
@@ -221,7 +223,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
             {soFar ? "so far " : ""}this year: growth and contributions together, not part of cash flow.
           </p>
         ) : null}
-        {period.view === "annual" && !empty ? <FlowChart slots={monthSlots} title={`Cash in and out by month, ${period.label}`} partialIndex={partialMonth} /> : null}
+        {period.view === "annual" && !empty ? <FlowChart slots={monthSlots} title={`Cash in and out by month, ${period.label}`} partialIndex={partialMonth} typical={typical} /> : null}
         {pay ? <PayPeriods periods={pay.periods} oneTime={pay.oneTime} needsGross={pay.needsGross} year={period.label} /> : null}
         {period.view === "monthly" && !empty ? (
           <FlowChart
@@ -230,6 +232,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
             partialIndex={partialDay}
             legend={{ in: "Cash in to date", out: "Cash out to date" }}
             steps={flow.days}
+            typical={typical}
           />
         ) : null}
         <p className="text-xs text-muted-foreground">

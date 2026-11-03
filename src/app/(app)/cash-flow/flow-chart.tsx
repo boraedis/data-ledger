@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { netBands } from "@/lib/cashflow/chart";
+import type { TypicalSlot } from "@/lib/cashflow/typical";
 import { formatCents } from "@/lib/money";
 
 // Cash in against cash out over a period (#171, and #172 by day): one axis,
@@ -12,6 +13,11 @@ import { formatCents } from "@/lib/money";
 // still to come keep their place on the axis with nothing drawn. Hovering
 // or tapping a slot reads out its figures; a table carries the same for
 // screen readers and anyone who wants the numbers.
+//
+// A typical line (src/lib/cashflow/typical.ts), when there is one: dashed, in
+// each line's colour, what the three periods before predict for each slot. It
+// runs on through slots still to come, since it's an expectation, not a
+// record, and breaks where it has nothing to say.
 
 export type FlowSlot = { label: string; title: string; inCents: number; outCents: number } | { label: string; title: string; inCents: null; outCents: null };
 
@@ -27,6 +33,7 @@ export function FlowChart({
   partialIndex = null,
   legend = { in: "Cash in", out: "Cash out" },
   steps,
+  typical = null,
 }: {
   slots: FlowSlot[];
   title: string;
@@ -34,21 +41,37 @@ export function FlowChart({
   legend?: { in: string; out: string };
   // With running totals (a month by day, #172): each slot's own amounts, which the table lists.
   steps?: { inCents: number; outCents: number }[];
+  typical?: { label: string; slots: TypicalSlot[] } | null;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   // The plot stretches to the width at a fixed height (in % of it), so on
   // a phone it stays tall enough to read; the labels and markers are plain
   // HTML on top, so text keeps its size however wide the chart is.
   const shown = slots.flatMap((s, i) => (s.inCents === null ? [] : [{ i, inCents: s.inCents, outCents: s.outCents }]));
-  const top = Math.max(1, ...shown.map((s) => Math.max(s.inCents, s.outCents)));
+  const top = Math.max(1, ...shown.map((s) => Math.max(s.inCents, s.outCents)), ...(typical?.slots ?? []).map((t) => (t ? Math.max(t.inCents, t.outCents) : 0)));
   const x = (i: number) => (slots.length > 1 ? (i / (slots.length - 1)) * 100 : 50);
   const y = (cents: number) => (1 - Math.max(0, cents) / top) * 100;
   const line = (pick: (s: (typeof shown)[number]) => number) => shown.map((s, k) => `${k ? "L" : "M"}${x(s.i).toFixed(2)},${y(pick(s)).toFixed(2)}`).join("");
+  // One dashed path per side, lifted where the typical has a gap.
+  const dashed = (pick: (t: NonNullable<TypicalSlot>) => number) => {
+    let d = "";
+    let drawing = false;
+    typical?.slots.forEach((t, i) => {
+      if (!t) {
+        drawing = false;
+        return;
+      }
+      d += `${drawing ? "L" : "M"}${x(i).toFixed(2)},${y(pick(t)).toFixed(2)}`;
+      drawing = true;
+    });
+    return d;
+  };
   // The bands run over the shown slots, which are contiguous from the start.
   const bands = netBands(shown);
   const ticks = [0, top / 2, top];
   const at = hover ?? shown.at(-1)?.i ?? null;
   const slot = at === null ? null : slots[at];
+  const typicalAt = at === null ? null : (typical?.slots[at] ?? null);
   // Labels thin out when there are many slots (a month by day).
   const every = slots.length > 16 ? Math.ceil(slots.length / 8) : 1;
 
@@ -68,6 +91,12 @@ export function FlowChart({
           <span className="flex items-center gap-1">
             <span className="inline-block h-0.5 w-4 rounded-full" style={{ background: "var(--flow-spend)" }} /> {legend.out}
           </span>
+          {typical ? (
+            <span className="flex items-center gap-1">
+              <span className="inline-block w-4 border-t-2 border-dashed" style={{ borderColor: "var(--flow-income)" }} />
+              <span className="inline-block w-4 border-t-2 border-dashed" style={{ borderColor: "var(--flow-spend)" }} /> {typical.label}
+            </span>
+          ) : null}
           <span className="flex items-center gap-1">
             <span className="inline-block size-3 rounded-sm" style={{ background: "color-mix(in oklab, var(--flow-income) 20%, transparent)" }} />
             <span className="inline-block size-3 rounded-sm" style={{ background: "color-mix(in oklab, var(--negative) 25%, transparent)" }} /> Net, whichever is ahead
@@ -81,6 +110,12 @@ export function FlowChart({
               net {slot.inCents - slot.outCents > 0 ? "+" : slot.inCents - slot.outCents < 0 ? "−" : ""}
               {formatCents(Math.abs(slot.inCents - slot.outCents))}
             </span>
+            {typicalAt ? (
+              <span className="text-muted-foreground">
+                {" "}
+                · typical: in {formatCents(typicalAt.inCents)} · out {formatCents(typicalAt.outCents)}
+              </span>
+            ) : null}
           </span>
         ) : slot ? (
           <span>{slot.title}: still to come</span>
@@ -117,6 +152,12 @@ export function FlowChart({
                   style={{ fill: b.ahead === "in" ? "color-mix(in oklab, var(--flow-income) 20%, transparent)" : "color-mix(in oklab, var(--negative) 25%, transparent)" }}
                 />
               ))}
+              {typical ? (
+                <>
+                  <path d={dashed((t) => t.outCents)} fill="none" strokeWidth="1.5" strokeDasharray="5 4" strokeLinejoin="round" vectorEffect="non-scaling-stroke" opacity="0.75" style={{ stroke: "var(--flow-spend)" }} />
+                  <path d={dashed((t) => t.inCents)} fill="none" strokeWidth="1.5" strokeDasharray="5 4" strokeLinejoin="round" vectorEffect="non-scaling-stroke" opacity="0.75" style={{ stroke: "var(--flow-income)" }} />
+                </>
+              ) : null}
               <path d={line((s) => s.outCents)} fill="none" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" style={{ stroke: "var(--flow-spend)" }} />
               <path d={line((s) => s.inCents)} fill="none" strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" style={{ stroke: "var(--flow-income)" }} />
               {at !== null ? <line x1={x(at)} x2={x(at)} y1="0" y2="100" className="stroke-foreground/40" strokeWidth="1" vectorEffect="non-scaling-stroke" /> : null}
@@ -163,6 +204,16 @@ export function FlowChart({
               <th scope="col" className="pb-1 text-right font-normal">
                 {steps ? "Net so far" : "Net"}
               </th>
+              {typical ? (
+                <>
+                  <th scope="col" className="pb-1 text-right font-normal">
+                    Typical in
+                  </th>
+                  <th scope="col" className="pb-1 text-right font-normal">
+                    Typical out
+                  </th>
+                </>
+              ) : null}
             </tr>
           </thead>
           <tbody>
@@ -177,6 +228,12 @@ export function FlowChart({
                   <td className="py-1 text-right">{formatCents(steps ? steps[i].outCents : s.outCents)}</td>
                   {/* Net to date with running totals; the slot's own net otherwise. */}
                   <td className={`py-1 text-right ${s.inCents - s.outCents < 0 ? "text-negative" : ""}`}>{formatCents(s.inCents - s.outCents)}</td>
+                  {typical ? (
+                    <>
+                      <td className="py-1 text-right">{typical.slots[i] ? formatCents(typical.slots[i]!.inCents) : "—"}</td>
+                      <td className="py-1 text-right">{typical.slots[i] ? formatCents(typical.slots[i]!.outCents) : "—"}</td>
+                    </>
+                  ) : null}
                 </tr>
               ),
             )}
