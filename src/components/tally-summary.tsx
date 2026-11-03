@@ -121,7 +121,9 @@ function Receipt({ lines, needs, mood, written }: { lines: ReceiptLine[]; needs:
 /** Today's version: the banner alone, in one line, linking to the full summary on the Inbox. */
 export function TallySummaryNote({ view, written }: { view: SummaryView; written: string }) {
   return (
-    <section aria-label="Tally's note" className={`flex items-center gap-4 rounded-xl border p-4 md:col-span-2 ${BANNER[view.tone]}`}>
+    // On a phone the link takes its own line under the note (#67): beside it,
+    // it left the headline a column a word or two wide.
+    <section aria-label="Tally's note" className={`flex flex-wrap items-center gap-x-4 gap-y-2 rounded-xl border p-4 sm:flex-nowrap md:col-span-2 ${BANNER[view.tone]}`}>
       <TallyMascot size={56} mood={view.mood} blink />
       <div className="min-w-0 flex-1 space-y-1">
         <p className="text-xs text-muted-foreground">Tally&apos;s note · Written {written}</p>
@@ -136,7 +138,7 @@ export function TallySummaryNote({ view, written }: { view: SummaryView; written
           </ul>
         ) : null}
       </div>
-      <Link href="/inbox" className="shrink-0 self-start text-sm text-muted-foreground hover:text-foreground">
+      <Link href="/inbox" className="w-full text-right text-sm text-muted-foreground hover:text-foreground sm:w-auto sm:shrink-0 sm:self-start">
         Read the summary →
       </Link>
     </section>

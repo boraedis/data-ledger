@@ -18,8 +18,10 @@ export default async function TallyPage(props: PageProps<"/tally">) {
   const initial = selected ? await conversationItems(db, selected) : [];
 
   return (
-    <div className="grid gap-6 md:grid-cols-[12rem_1fr]">
-      <aside className="space-y-2 text-sm">
+    // minmax(0, …) so a long conversation title truncates instead of widening
+    // the page on a phone (#67): an unsized grid column grows to its content.
+    <div className="grid grid-cols-[minmax(0,1fr)] gap-6 md:grid-cols-[12rem_minmax(0,1fr)]">
+      <aside className="min-w-0 space-y-2 text-sm">
         <Link href="/tally" className="block font-medium underline-offset-2 hover:underline">
           + New conversation
         </Link>
