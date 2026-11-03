@@ -8,6 +8,8 @@ import { updateAccount } from "./actions";
 import type { PositionWithMarket } from "./positions";
 import { ManualValueControls } from "./manual-account";
 import { Positions } from "./positions";
+import { TradeLog } from "./trades";
+import type { TradeMismatch, TradeRow } from "@/operations/trades";
 
 export type AccountRowData = {
   id: string;
@@ -23,6 +25,8 @@ export type AccountRowData = {
   balanceAt: string | null;
   // Positions kept by hand in a manual asset account (#231).
   positions?: PositionWithMarket[];
+  // The trade log (#247), for an account that takes trades.
+  trades?: { rows: TradeRow[]; mismatches: TradeMismatch[] };
 };
 
 export function AccountRow({ account }: { account: AccountRowData }) {
@@ -114,6 +118,14 @@ export function AccountRow({ account }: { account: AccountRowData }) {
       ) : null}
       {account.manual && account.kind !== "loan" && account.kind !== "credit" ? (
         <Positions account={{ id: account.id, name: account.displayName ?? account.name }} positions={account.positions ?? []} />
+      ) : null}
+      {account.trades ? (
+        <TradeLog
+          account={{ id: account.id, name: account.displayName ?? account.name }}
+          trades={account.trades.rows}
+          mismatches={account.trades.mismatches}
+          drivesPositions={account.manual}
+        />
       ) : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </li>

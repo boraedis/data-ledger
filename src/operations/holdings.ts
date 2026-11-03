@@ -1,8 +1,9 @@
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import { manualPositions } from "@/db/schema";
+import { manualPositions, trades } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { isLiability } from "@/lib/net-worth";
+import { difference } from "@/lib/holdings/replay";
 import { normalizeQuantity, positionValueCents } from "@/lib/holdings/value";
 import { defineWrite } from "@/operations/define";
 import { manualAccount, recordManualValue, valueDate } from "@/operations/accounts";
@@ -18,11 +19,16 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 // model (AGENTS.md), and there is deliberately no registered read of them,
 // since every read becomes one of Tally's tools. Pages read positions with
 // listManualPositions below. Outputs carry ids only.
+//
+// Since the trade log (#247), every quantity here is what the account's
+// trades add up to: adding a position records an opening buy, changing its
+// quantity records a buy or sell of the difference, dated today, and
+// removing it removes its trades. Trades themselves are in ./trades.ts.
 
 const today = () => new Date().toISOString().slice(0, 10);
 
 // A positive exact decimal, as a string, in canonical form.
-const decimal = (what: string) =>
+export const decimal = (what: string) =>
   z
     .string()
     .transform((text, ctx) => {
@@ -34,7 +40,7 @@ const decimal = (what: string) =>
       return n;
     });
 
-const symbol = z
+export const symbol = z
   .string()
   .trim()
   .min(1)
@@ -45,7 +51,7 @@ const symbol = z
 const costBasis = z.number().int().min(0).max(1_000_000_000_00).nullable().optional();
 
 /** The manual asset account a position belongs in; refuses a synced account or a liability. */
-async function positionsAccount(db: Db, accountId: string) {
+export async function positionsAccount(db: Db, accountId: string) {
   const account = await manualAccount(db, accountId);
   if (isLiability(account.type)) throw new Error("Positions go in an asset account, not a loan or card");
   return account;
@@ -58,7 +64,7 @@ async function position(db: Db, positionId: string) {
 }
 
 /** Revalues the account from its positions and records it as the day's value. */
-async function revalue(ctx: WriteContext, accountId: string, on: string) {
+export async function revalue(ctx: WriteContext, accountId: string, on: string) {
   const rows = await ctx.db.select().from(manualPositions).where(eq(manualPositions.accountId, accountId));
   const valueCents = rows.reduce((sum, p) => sum + positionValueCents(p.quantity, p.unitPrice), 0);
   await recordManualValue(ctx, accountId, valueCents, on);
@@ -96,6 +102,8 @@ export const addManualPosition = defineWrite({
       priceOn: input.priceOn ?? on,
       costBasisCents: input.costBasisCents ?? null,
     });
+    // The opening trade (#247), so the position is what its trades add up to.
+    await ctx.insert(trades, { accountId: input.accountId, on, symbol: input.symbol, side: "buy", quantity: input.quantity, price: input.unitPrice });
     await revalue(ctx, input.accountId, on);
     return { id: row.id };
   },
@@ -103,13 +111,22 @@ export const addManualPosition = defineWrite({
 
 export const setManualQuantity = defineWrite({
   name: "holdings.setQuantity",
-  description: "Change how much of a hand-entered position is held (an exact decimal), and optionally its total cost. Revalues its account.",
+  description:
+    "Change how much of a hand-entered position is held (an exact decimal), and optionally its total cost. Records the " +
+    "difference as a buy or sell dated today in the account's trades. Revalues its account.",
   allowedActors: ["user"],
   input: z.object({ positionId: z.uuid(), quantity: decimal("Quantity"), costBasisCents: costBasis, today: valueDate.optional() }),
   apply: async (ctx, { positionId, quantity, costBasisCents, today: day }) => {
     const row = await position(ctx.db, positionId);
+    const on = day ?? today();
+    // The change as a trade (#247), so the trades still add up to the position.
+    const change = difference(quantity, row.quantity);
+    if (change !== "0") {
+      const selling = change.startsWith("-");
+      await ctx.insert(trades, { accountId: row.accountId, on, symbol: row.symbol.toUpperCase(), side: selling ? "sell" : "buy", quantity: selling ? change.slice(1) : change, price: null });
+    }
     await ctx.update(manualPositions, positionId, { quantity, ...(costBasisCents !== undefined ? { costBasisCents } : {}) });
-    await revalue(ctx, row.accountId, day ?? today());
+    await revalue(ctx, row.accountId, on);
     return { id: positionId };
   },
 });
@@ -130,11 +147,16 @@ export const setManualPrice = defineWrite({
 
 export const removeManualPosition = defineWrite({
   name: "holdings.remove",
-  description: "Remove a hand-entered position. Revalues its account without it.",
+  description: "Remove a hand-entered position, and its trades: for one entered by mistake. Revalues its account without it.",
   allowedActors: ["user"],
   input: z.object({ positionId: z.uuid(), today: valueDate.optional() }),
   apply: async (ctx, { positionId, today: day }) => {
     const row = await position(ctx.db, positionId);
+    const own = await ctx.db
+      .select({ id: trades.id })
+      .from(trades)
+      .where(and(eq(trades.accountId, row.accountId), eq(trades.symbol, row.symbol.toUpperCase())));
+    for (const t of own) await ctx.remove(trades, t.id);
     await ctx.remove(manualPositions, positionId);
     await revalue(ctx, row.accountId, day ?? today());
     return { id: positionId };
