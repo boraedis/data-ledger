@@ -15,17 +15,26 @@ const statusStyle: Record<string, string> = {
 // Every write to the ledger, newest first: who did it, why, and what it
 // touched. Proposals wait here for approval; applied writes can be undone.
 // Market price refreshes (#229) are left out unless asked for (?prices=1):
-// one an hour would bury everything else.
+// one an hour would bury everything else. What Tally applied without asking
+// (#59) is marked as such, apart from what the owner approved, and can be
+// listed on its own (?auto=1).
 export default async function ActivityPage(props: PageProps<"/activity">) {
-  const showPrices = (await props.searchParams).prices === "1";
-  const commands = await listCommands(getDb(), { limit: 100, excludeActors: showPrices ? [] : ["market"] });
+  const sp = await props.searchParams;
+  const showPrices = sp.prices === "1";
+  const autoOnly = sp.auto === "1";
+  const commands = await listCommands(getDb(), { limit: 100, excludeActors: showPrices ? [] : ["market"], autoAppliedOnly: autoOnly });
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold">Activity</h1>
-        <Link href={showPrices ? "/activity" : "/activity?prices=1"} className="text-sm text-muted-foreground underline">
-          {showPrices ? "Hide price refreshes" : "Show price refreshes"}
-        </Link>
+        <span className="flex gap-3 text-sm text-muted-foreground">
+          <Link href={autoOnly ? "/activity" : "/activity?auto=1"} className="underline">
+            {autoOnly ? "Everything" : "Only what Tally applied without asking"}
+          </Link>
+          <Link href={showPrices ? "/activity" : "/activity?prices=1"} className="underline">
+            {showPrices ? "Hide price refreshes" : "Show price refreshes"}
+          </Link>
+        </span>
       </div>
       {commands.length === 0 ? (
         <p className="text-muted-foreground">No changes yet.</p>
@@ -37,6 +46,7 @@ export default async function ActivityPage(props: PageProps<"/activity">) {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-mono text-xs">{c.undoOf ? `undo ${c.operation}` : c.operation}</span>
                   <span className={`rounded px-1.5 py-0.5 text-xs ${statusStyle[c.status]}`}>{c.status}</span>
+                  {c.autoApplied ? <span className="rounded border border-dashed px-1.5 py-0.5 text-xs text-muted-foreground">auto-applied by Tally</span> : null}
                 </div>
                 <p>{c.reason}</p>
                 <p className="text-xs text-muted-foreground">

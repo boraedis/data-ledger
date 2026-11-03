@@ -3,6 +3,7 @@ import { commandLog, type RowChange } from "@/db/schema";
 import type { Db } from "@/db/types";
 import type { z } from "zod";
 import { isActor, type Actor, type Operation, type ReadOperation, type WriteOperation } from "@/operations/define";
+import { isPromoted } from "@/operations/promotions";
 import { getOperation, trackedTables } from "@/operations/registry";
 import { WriteContext, currentRow, restoreRow, sameRow } from "@/operations/tracked";
 
@@ -29,13 +30,13 @@ export type ExecuteResult =
   | { status: "applied"; output: unknown; commandId: string }
   | { status: "proposed"; commandId: string };
 
-// Tally proposes; the owner approves (README, decision 3). Promoting an
-// operation to auto-apply for Tally is a later, explicit change here — not a
-// flag Tally can set on a request.
-const AUTO_APPLY_FOR_TALLY = new Set<string>();
-
-function mustPropose(actor: Actor, op: WriteOperation): boolean {
-  return actor === "tally" && !AUTO_APPLY_FOR_TALLY.has(op.name);
+// Tally proposes; the owner approves (README, decision 3), unless the owner
+// has promoted this operation (#59): only one marked promotable in its
+// definition, and only once turned on in Settings, read fresh on every call
+// so turning it off applies to the very next one. Never a flag Tally can set
+// on a request.
+async function autoAppliesForTally(db: Db, actor: Actor, op: WriteOperation): Promise<boolean> {
+  return actor === "tally" && Boolean(op.promotable) && (await isPromoted(db, op.name));
 }
 
 function actorAllowed(allowed: NonNullable<Operation["allowedActors"]>, actor: Actor): boolean {
@@ -75,7 +76,8 @@ export async function execute(db: Db, request: ExecuteRequest): Promise<ExecuteR
   const reason = request.reason.trim();
   if (!reason) throw new OperationError("A write needs a reason");
 
-  if (request.propose || mustPropose(request.actor, op)) {
+  const autoApplied = !request.propose && (await autoAppliesForTally(db, request.actor, op));
+  if (request.propose || (request.actor === "tally" && !autoApplied)) {
     const [row] = await db
       .insert(commandLog)
       .values({ actor: request.actor, operation: op.name, input, reason, status: "proposed" })
@@ -87,7 +89,7 @@ export async function execute(db: Db, request: ExecuteRequest): Promise<ExecuteR
     const { output, changes } = await applyWrite(tx, op, input);
     const [row] = await tx
       .insert(commandLog)
-      .values({ actor: request.actor, operation: op.name, input, reason, status: "applied", changes })
+      .values({ actor: request.actor, operation: op.name, input, reason, status: "applied", changes, autoApplied })
       .returning({ id: commandLog.id });
     return { status: "applied" as const, output, commandId: row.id };
   });
@@ -207,11 +209,14 @@ export async function undoCommand(db: Db, commandId: string, { actor = "user", r
   });
 }
 
-export async function listCommands(db: Db, { limit = 50, excludeActors = [] }: { limit?: number; excludeActors?: Actor[] } = {}) {
+export async function listCommands(
+  db: Db,
+  { limit = 50, excludeActors = [], autoAppliedOnly = false }: { limit?: number; excludeActors?: Actor[]; autoAppliedOnly?: boolean } = {},
+) {
   return db
     .select()
     .from(commandLog)
-    .where(excludeActors.length ? notInArray(commandLog.actor, excludeActors) : undefined)
+    .where(and(excludeActors.length ? notInArray(commandLog.actor, excludeActors) : undefined, autoAppliedOnly ? eq(commandLog.autoApplied, true) : undefined))
     .orderBy(desc(commandLog.createdAt))
     .limit(limit);
 }

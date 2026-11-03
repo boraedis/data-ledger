@@ -5,6 +5,7 @@ export const SETTINGS_TABS = [
   { id: "notifications", label: "Notifications" },
   { id: "apple-pay", label: "Apple Pay" },
   { id: "model", label: "Model" },
+  { id: "tally", label: "Tally" },
   { id: "security", label: "Security" },
 ] as const;
 

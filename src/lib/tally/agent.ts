@@ -31,6 +31,7 @@ export function systemPrompt(today: string): string {
     "Amounts in tool results are already in dollars; quote them exactly as given. A minus sign means money left an account.",
     "When calling a tool, amounts you pass (fields ending in Cents) are integer cents: $45.50 is 4550.",
     "Changes (categorizing, rules, budget targets, goals…) are proposals: the owner approves or rejects each one. After proposing, say what you proposed — never say it's done.",
+    "The exception: a change whose result says status \"applied\" is done; the owner lets you make that kind directly. Say it's done and can be undone in Activity.",
     "You never see account balances, net worth, investment values or goal progress; if asked, point the owner to the Net worth, Investments or Goals page.",
     "Be brief and plain: a few sentences or a short list. No preamble.",
   ].join("\n");

@@ -121,6 +121,20 @@ export async function runTool(db: Db, call: { name: string; arguments: string })
         proposal: { commandId: result.commandId, operation: op.name, input: parsedInput, reason: typeof reason === "string" ? reason : "" },
       };
     }
+    // A write Tally may apply without asking (#59): done, so it says so, and
+    // where to undo it. The output itself carries ids only.
+    if (result.status === "applied" && op.kind === "write") {
+      return {
+        content: toolResult({
+          status: "applied",
+          commandId: result.commandId,
+          note: "Applied without asking: the owner lets you make this kind of change directly. Say it's done, and that it can be undone in Activity.",
+        }),
+        operation: op.name,
+        kind: "write",
+        ok: true,
+      };
+    }
     return { content: cap(toolResult(moneyForModel("output" in result ? result.output : null))), operation: op.name, kind: op.kind, ok: true };
   } catch (error) {
     // Validation and rule errors go back to the model so it can correct

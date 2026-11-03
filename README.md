@@ -55,8 +55,10 @@ retrofit:
    assistant editing money data is only trustworthy if every edit is
    visible and reversible.
 3. **Tally proposes, you approve.** Read tools run freely. Write tools
-   produce proposals accepted in one tap; specific trusted actions can be
-   promoted to auto-apply later.
+   produce proposals accepted in one tap. A few routine, undoable actions
+   (filing and tagging transactions, a purchase's date) can be promoted to
+   auto-apply in Settings › Tally (#59); all are off until turned on, and
+   what Tally applies without asking is marked as such in Activity.
 
 ### Bank connection
 

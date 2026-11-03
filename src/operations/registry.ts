@@ -30,7 +30,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, reapplyPreview, reapplyRule, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import type { Operation } from "@/operations/define";
-import { taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, trades, quotes, dailyPrices, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, trades, tallyPromotions, quotes, dailyPrices, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -55,6 +55,7 @@ import { moveToCategory, moveToCategoryPreview } from "@/operations/recategorize
 import { addManualPosition, removeManualPosition, setManualAssetClass, setManualPrice, setManualQuantity } from "@/operations/holdings";
 import { backfillPrices, refreshQuotes } from "@/operations/market";
 import { addTrade, removeTrade, updateTrade } from "@/operations/trades";
+import { demoteForTally, promoteForTally } from "@/operations/promotions";
 
 // The one list of everything that can be done to the ledger. The UI calls
 // these, Tally gets them as tools (#11), and the nightly pipeline runs them. Adding a capability means adding it
@@ -112,6 +113,8 @@ export const operations: Operation[] = [
   addTrade,
   updateTrade,
   removeTrade,
+  promoteForTally,
+  demoteForTally,
   endTarget,
   endTargetPreview,
   itemAnalysis,
@@ -192,6 +195,11 @@ export function getOperation(name: string): Operation | undefined {
   return byName.get(name);
 }
 
+/** The writes the owner may promote to auto-apply for Tally (#59), with how Settings names them. */
+export function describePromotable() {
+  return operations.flatMap((op) => (op.kind === "write" && op.promotable ? [{ operation: op.name, label: op.promotable }] : []));
+}
+
 /** Machine-readable catalog for tool-calling surfaces: name, description, kind, JSON Schema input. */
 export function describeOperations() {
   return operations.map((op) => ({
@@ -220,6 +228,7 @@ export const trackedTables = {
   holding_snapshots: holdingSnapshots,
   manual_positions: manualPositions,
   trades,
+  tally_promotions: tallyPromotions,
   quotes,
   daily_prices: dailyPrices,
   categories,

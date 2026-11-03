@@ -51,6 +51,10 @@ export type WriteOperation<I extends z.ZodObject = z.ZodObject, O = unknown> = B
   // goes through its tracked insert/update/remove, which is what gives every
   // write operation undo without per-operation undo code.
   apply: (ctx: WriteContext, input: z.infer<I>) => Promise<O>;
+  // Set on the few writes the owner may promote to auto-apply for Tally
+  // (#59): routine, low-risk and undoable. The text is how Settings names it.
+  // Unset, Tally's write is always a proposal, whatever Settings says.
+  promotable?: string;
 };
 
 export type Operation = ReadOperation | WriteOperation;
