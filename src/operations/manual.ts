@@ -2,7 +2,7 @@ import { and, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, alerts, categories, categorySuggestions, reimbursementMatches, reimbursements, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { normalizeMerchant } from "@/lib/categorize/merchant";
+import { merchantFields } from "@/operations/merchants";
 import { TRANSFER_WINDOW_DAYS, canPairKinds } from "@/lib/investments/transfers";
 import { DAYS_AFTER, DAYS_BEFORE, candidates } from "@/lib/manual/match";
 import { defineRead, defineWrite } from "@/operations/define";
@@ -75,7 +75,7 @@ export const createManual = defineWrite({
       postedOn: input.postedOn,
       amountCents: input.amountCents,
       description: input.description,
-      merchant: normalizeMerchant(input.description, null),
+      ...(await merchantFields(ctx, input.description)),
       categoryId: input.categoryId ?? null,
       source: "manual",
     });
@@ -140,7 +140,7 @@ export const addOtherHalf = defineWrite({
       postedOn: on,
       amountCents: -source.amountCents,
       description,
-      merchant: normalizeMerchant(description, null),
+      ...(await merchantFields(ctx, description)),
       categoryId: source.categoryId,
       source: "manual",
     });
@@ -168,7 +168,7 @@ export const updateManual = defineWrite({
     if (change.amountCents !== undefined && change.amountCents !== row.amountCents) values.amountCents = change.amountCents;
     if (change.description !== undefined && change.description !== row.description) {
       values.description = change.description;
-      values.merchant = normalizeMerchant(change.description, null);
+      Object.assign(values, await merchantFields(ctx, change.description));
     }
     if (Object.keys(values).length) await ctx.update(transactions, transactionId, values);
     return { changed: Object.keys(values) };

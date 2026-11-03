@@ -405,6 +405,52 @@ export const dailyPrices = pgTable(
   (t) => [uniqueIndex("daily_prices_class_symbol_on_idx").on(t.assetClass, t.symbol, t.on)],
 );
 
+// Merchants (#285): a merchant is a row, not just a string. A bank writes
+// one merchant many ways, and normalizeMerchant's cleaned name for each is
+// an alias; a transaction points at the merchant its cleaned name is an
+// alias of. transactions.merchant stays the derived key, recomputable from
+// the raw fields, so re-deriving never loses a merge: the alias carries it.
+//
+// The type is the merchant's, so every alias shares it: one of a short list
+// (merchant_types) the owner can add to, rather than free text, so grouping
+// by type stays clean. Optional, and empty until set.
+export const merchantTypes = pgTable("merchant_types", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull().unique(),
+  // Seeded by the migration; the owner's own additions are false.
+  builtIn: boolean("built_in").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const merchants = pgTable(
+  "merchants",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // What the merchant is called everywhere it's shown. Unique, ignoring
+    // case: two merchants with one name should be merged instead.
+    name: text("name").notNull(),
+    typeId: uuid("type_id").references(() => merchantTypes.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("merchants_name_idx").on(sql`lower(${t.name})`)],
+);
+
+// A cleaned name (normalizeMerchant's output) and the merchant it belongs
+// to. Each cleaned name belongs to one merchant; a merchant has one or
+// more. Its own id so it can be tracked (and so undone) like any row.
+export const merchantAliases = pgTable(
+  "merchant_aliases",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    alias: text("alias").notNull().unique(),
+    merchantId: uuid("merchant_id")
+      .notNull()
+      .references(() => merchants.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("merchant_aliases_merchant_idx").on(t.merchantId)],
+);
+
 export const categoryKind = pgEnum("category_kind", ["expense", "income", "transfer"]);
 
 // The owner's own category tree (#6) — nothing is inherited from a bank.
@@ -464,6 +510,10 @@ export const transactions = pgTable(
     // (src/lib/categorize/merchant.ts). What rules and merchant memory key
     // on. Recomputable at any time; the raw fields above are the truth.
     merchant: text("merchant"),
+    // The merchant `merchant` is an alias of (#285). Set when a transaction
+    // arrives; the nightly merchant backfill links any that arrived without
+    // one. SET NULL is a backstop: merging moves links as tracked writes.
+    merchantId: uuid("merchant_id").references((): AnyPgColumn => merchants.id, { onDelete: "set null" }),
     // True when the transaction is divided into transaction_splits, each
     // with its own category; categoryId is then null. A split transaction
     // counts as categorized (it's out of the inbox and the pipeline).
@@ -500,6 +550,7 @@ export const transactions = pgTable(
     index("transactions_provisional_idx").on(t.provisionalSource),
     index("transactions_transfer_pair_idx").on(t.transferPairId),
     index("transactions_merchant_idx").on(t.merchant),
+    index("transactions_merchant_id_idx").on(t.merchantId),
     uniqueIndex("transactions_account_external_idx").on(t.accountId, t.externalId),
   ],
 );

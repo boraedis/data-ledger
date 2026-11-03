@@ -15,7 +15,7 @@ import {
   transactionTags,
   transactions,
 } from "@/db/schema";
-import { normalizeMerchant } from "@/lib/categorize/merchant";
+import { linkUnlinked, merchantFields } from "@/operations/merchants";
 import { merchantMemory } from "@/lib/categorize/match";
 import { FLAG_KINDS } from "@/lib/suspicious/checks";
 import { searchTerms } from "@/lib/transactions/search";
@@ -788,7 +788,7 @@ export const recordSuggestions = defineWrite({
 
 export const backfillMerchants = defineWrite({
   name: "transactions.backfillMerchants",
-  description: "Pipeline only: derive the merchant name for transactions that don't have one yet.",
+  description: "Pipeline only: derive the merchant name for transactions that don't have one yet, and link any with a name but no merchant (#285).",
   allowedActors: ["import"],
   input: z.object({ limit: z.number().int().min(1).max(5000).default(2000) }),
   apply: async (ctx, { limit }) => {
@@ -800,9 +800,11 @@ export const backfillMerchants = defineWrite({
       .where(isNull(transactions.merchant))
       .limit(limit);
     for (const row of rows) {
-      await ctx.update(transactions, row.id, { merchant: normalizeMerchant(row.description, row.payee) });
+      await ctx.update(transactions, row.id, await merchantFields(ctx, row.description, row.payee));
     }
-    return { filled: rows.length };
+    // Rows whose merchant doesn't agree with their name's alias (see misLinked).
+    const linked = await linkUnlinked(ctx, limit - rows.length);
+    return { filled: rows.length, linked };
   },
 });
 

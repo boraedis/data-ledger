@@ -2,7 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, importMappings, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { normalizeMerchant } from "@/lib/categorize/merchant";
+import { merchantFields } from "@/operations/merchants";
 import { DATE_FORMATS, type Mapping } from "@/lib/history/csv";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { defineRead, defineWrite } from "@/operations/define";
@@ -102,7 +102,7 @@ export const importHistory = defineWrite({
         postedOn: r.postedOn,
         amountCents: r.amountCents,
         description: r.description,
-        merchant: normalizeMerchant(r.description),
+        ...(await merchantFields(ctx, r.description)),
         externalId: r.externalId,
         source: "import",
       });

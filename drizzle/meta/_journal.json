@@ -267,6 +267,13 @@
       "when": 1793719454677,
       "tag": "0037_tally_promotions",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "7",
+      "when": 1793740572891,
+      "tag": "0038_merchants",
+      "breakpoints": true
     }
   ]
 }

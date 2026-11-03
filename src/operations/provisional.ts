@@ -12,7 +12,7 @@ import {
   transactions,
 } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { normalizeMerchant } from "@/lib/categorize/merchant";
+import { merchantFields } from "@/operations/merchants";
 import { DAYS_AFTER, DAYS_BEFORE, dayOffset, isStale } from "@/lib/provisional/match";
 import { defineRead, defineWrite } from "@/operations/define";
 import { NotFoundError, type WriteContext } from "@/operations/tracked";
@@ -84,7 +84,7 @@ export const createProvisional = defineWrite({
       postedOn: input.postedOn,
       amountCents: input.amountCents,
       description: input.description,
-      merchant: normalizeMerchant(input.description, null),
+      ...(await merchantFields(ctx, input.description)),
       externalId,
       provisionalSource: input.source,
     });
