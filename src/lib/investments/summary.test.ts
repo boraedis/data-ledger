@@ -97,4 +97,29 @@ describe("investmentsSummary", () => {
     expect(s.byHolding.reduce((sum, h) => sum + h.cents, 0)).toBe(s.totalCents);
     expect(s.withBasis.positions).toBe(3);
   });
+
+  it("includes a manual account of any asset kind that holds hand-entered positions (#271), and not one that holds a value only", async () => {
+    const run = (operation: string, input: Record<string, unknown>) =>
+      execute(db, { operation, input, actor: "user", reason: "test" }) as Promise<{ output: { id: string } }>;
+    const wallet = (await run("accounts.createManual", { name: "Coin wallet", kind: "other_asset", valueCents: 0, on: "2026-06-01" })).output.id;
+    await run("accounts.createManual", { name: "Example house", kind: "other_asset", valueCents: 300_000_00, on: "2026-06-01" });
+    const [brokerage] = await db.select().from(accounts).where(eq(accounts.type, "brokerage"));
+    await run("holdings.addManual", { accountId: wallet, symbol: "zqc", quantity: "0.5", unitPrice: "40000", priceOn: "2026-06-29", costBasisCents: 1_500_000, today: "2026-06-29" });
+    // The same symbol the brokerage holds, so the two combine in "by holding".
+    await run("holdings.addManual", { accountId: wallet, symbol: "EXTM", quantity: "2", unitPrice: "100.50", priceOn: "2026-06-28", assetClass: "equity", today: "2026-06-29" });
+
+    const before = await investmentsSummary(db, { today });
+    const account = before.accounts.find((a) => a.id === wallet)!;
+    expect(before.accounts.map((a) => a.name)).not.toContain("Example house");
+    expect(account).toMatchObject({ kind: "other_asset", manual: true, holdingsOn: "2026-06-29", cashAndOtherCents: 0, valueCents: 2_000_000 + 20_100 });
+    expect(account.positions.map((p) => [p.symbol, p.shares, p.marketValueCents, p.gainCents])).toEqual([
+      ["ZQC", "0.5", 2_000_000, 500_000],
+      ["EXTM", "2", 20_100, null],
+    ]);
+    const brokerageExtm = before.accounts.find((a) => a.id === brokerage.id)!.positions.find((p) => p.symbol === "EXTM")!;
+    expect(before.byHolding.find((h) => h.label === "EXTM")?.cents).toBe(brokerageExtm.marketValueCents + 20_100);
+    expect(before.byHolding.find((h) => h.label === "ZQC")?.cents).toBe(2_000_000);
+    expect(before.byHolding.reduce((sum, h) => sum + h.cents, 0)).toBe(before.totalCents);
+    expect(before.withBasis.positions).toBe(3);
+  });
 });
