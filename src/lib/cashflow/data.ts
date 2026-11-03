@@ -5,6 +5,10 @@ import type { AccountKind } from "@/lib/account-kinds";
 import type { AccountGroup, AccountInfo, Paycheck, Transfer } from "@/lib/cashflow/graph";
 import type { Lookup, SpendLine } from "@/lib/spending/analyze";
 import { budgetAccountIds, listAccounts } from "@/operations/accounts";
+import { completeMonths, typicalDays, typicalMonths, TYPICAL_PERIODS, type TypicalSlot } from "@/lib/cashflow/typical";
+import { daysBetween } from "@/lib/cashflow/series";
+import { step, type ViewPeriod } from "@/lib/cashflow/view";
+import { cashFlowSeries } from "@/operations/cashflow";
 import { listCategories } from "@/operations/categories";
 import { listPayStubs } from "@/operations/pay";
 import { read } from "@/operations/runtime";
@@ -179,4 +183,36 @@ async function uncategorizedIn(db: Db, from: string, to: string, consumed: Set<s
   if (gross) return open;
   const { matched } = await reimbursementAdjustments(db, open.filter((r) => r.amountCents > 0).map((r) => r.transactionId));
   return open.map((r) => ({ ...r, amountCents: r.amountCents > 0 ? r.amountCents - (matched.get(r.transactionId) ?? 0) : r.amountCents })).filter((r) => r.amountCents !== 0);
+}
+
+/** The earliest day any transaction is dated, or null with none: where recorded history starts. */
+export async function firstRecordedDay(db: Db): Promise<string | null> {
+  const [row] = await db.select({ on: sql<string | null>`min(${transactions.postedOn})::text` }).from(transactions);
+  return row?.on ?? null;
+}
+
+export type TypicalLine = { label: string; slots: TypicalSlot[] };
+
+/**
+ * The typical line for the Annual and Monthly charts (src/lib/cashflow/typical.ts):
+ * what the three periods before predict. Only complete periods inside
+ * recorded history count, so it shows once there are three, and not before.
+ */
+export async function typicalLine(db: Db, period: ViewPeriod, today: string, gross: boolean): Promise<TypicalLine | null> {
+  if (period.view === "pay") return null;
+  const firstDay = await firstRecordedDay(db);
+  if (!firstDay) return null;
+  if (period.view === "annual") {
+    // January to March look back into the year before; fetch it only if history reaches that far.
+    const years = [period, ...(firstDay < period.from ? [step(period, -1, today)!] : [])];
+    const series = await Promise.all(years.map((y) => read(db, cashFlowSeries, { from: y.from, to: y.to, gross })));
+    const slots = typicalMonths(period.key, completeMonths(series.flatMap((s) => s.days), { firstDay, today }));
+    return slots.some(Boolean) ? { label: `Typical: average of the ${TYPICAL_PERIODS} months before`, slots } : null;
+  }
+  const priors: ViewPeriod[] = [];
+  for (let p = step(period, -1, today); p && priors.length < TYPICAL_PERIODS; p = step(p, -1, today)) priors.push(p);
+  if (priors.some((p) => p.from < firstDay)) return null;
+  const series = await Promise.all(priors.map((p) => read(db, cashFlowSeries, { from: p.from, to: p.to, gross })));
+  const slots = typicalDays(series.map((s) => s.days), daysBetween(period.from, period.to).length);
+  return slots ? { label: `Typical pace: average of the ${TYPICAL_PERIODS} months before`, slots } : null;
 }
