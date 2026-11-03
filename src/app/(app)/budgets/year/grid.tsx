@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { scheduleLabel, periodLabel } from "@/lib/budgets/format";
 import { paceFor, paceTone } from "@/lib/budgets/pace-colour";
 import { elapsedShare, projectAtEnd } from "@/lib/pace";
@@ -14,8 +15,17 @@ import { formatCents } from "@/lib/money";
 // title tooltips, so the two never show together; each square still has an
 // aria-label for screen readers.
 //
-// On a phone a tap opens the tooltip rather than following the link (there's
-// no hover to preview with), and the tooltip carries the links instead.
+// The tooltip is text only (#269), so it never has to be reached by the
+// pointer: it follows the pointer across the grid and lets clicks through.
+// A square opens its target's page, as the row's name does; that page has
+// the target's months (each opening the Month view) and its transactions,
+// and the column headers open their month. Focus anchors the tooltip to the
+// square instead, and Enter follows the link.
+//
+// On a phone a first tap shows the tooltip (there's no hover to preview
+// with) and a second tap on the same square follows its link, which the
+// tooltip says. Not a link inside the tooltip: that would bring back a
+// tooltip the pointer has to reach.
 //
 // A quarterly or annual target's period is one box spanning its months
 // (#157), with the period's own target and spend; a period running past
@@ -39,8 +49,6 @@ export type GridCell = {
   targetCents: number | null;
   transactions: number;
   period?: Period | null;
-  href: string;
-  transactionsHref: string | null;
 };
 export type GridRow = { key: string; name: string; isBuffer: boolean; months: GridCell[]; total: YearTotal | null; over: number; targeted: number; href: string };
 // Pay and saving for each month (#138), under the grid.
@@ -81,7 +89,10 @@ const monthEnd = (month: string) => new Date(Date.UTC(Number(month.slice(0, 4)),
 const underOver = (spent: number, target: number) =>
   spent > target ? `${formatCents(spent - target)} over` : `${formatCents(target - spent)} under`;
 
-type Tip = { id: string; body: React.ReactNode; align: "left" | "center" | "right" };
+// `next` is what a second tap opens, said only on touch.
+type Tip = { id: string; body: React.ReactNode; next: string | null };
+
+const EDGE = 8;
 
 export function YearGrid({
   rows,
@@ -127,6 +138,31 @@ export function YearGrid({
   };
   const touch = useRef(false);
   const tableRef = useRef<HTMLTableElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  // Where the tooltip goes: the pointer, or for focus and a tap, the square.
+  const at = useRef<{ x: number; y: number } | Element | null>(null);
+
+  // Above the point if there's room, else below it, and kept inside the
+  // window either side. Written to the element directly: following the
+  // pointer through state would re-render the whole grid on every move.
+  const place = useCallback(() => {
+    const el = tipRef.current;
+    const a = at.current;
+    if (!el || !a) return;
+    const { width, height } = el.getBoundingClientRect();
+    let x: number, above: number, below: number;
+    if (a instanceof Element) {
+      const r = a.getBoundingClientRect();
+      [x, above, below] = [r.left + r.width / 2, r.top - 4, r.bottom + 4];
+    } else {
+      // Clear of the cursor, which hangs down and right of the point.
+      [x, above, below] = [a.x, a.y - 12, a.y + 20];
+    }
+    const left = Math.max(EDGE, Math.min(x - width / 2, window.innerWidth - width - EDGE));
+    const top = above - height >= EDGE ? above - height : Math.max(EDGE, Math.min(below, window.innerHeight - height - EDGE));
+    el.style.transform = `translate(${Math.round(left)}px, ${Math.round(top)}px)`;
+  }, []);
+  useLayoutEffect(place, [tip, place]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setTip(null);
@@ -135,54 +171,59 @@ export function YearGrid({
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onDown);
+    // A square scrolled under a focused or tapped tooltip takes it along.
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
     return () => {
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("pointerdown", onDown);
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
     };
-  }, []);
+  }, [place]);
 
-  // Near the right edge the tooltip opens leftwards, so it stays on screen.
-  const alignFor = (col: number) => (col < 3 ? "left" : col > columns.length - 4 ? "right" : "center");
-
-  // Hover (on the whole cell, so moving into the tooltip keeps it open) and
-  // focus show it; a tap toggles it instead of navigating.
-  const show = (id: string, col: number, body: React.ReactNode) => setTip({ id, body, align: alignFor(col) });
   const hide = (id: string) => setTip((t) => (t?.id === id ? null : t));
-  const cellProps = (id: string, col: number, body: React.ReactNode) => ({
+  const follow = (e: React.PointerEvent) => {
+    at.current = { x: e.clientX, y: e.clientY };
+    place();
+  };
+  // Hover shows it at the pointer and it follows from there.
+  const cellProps = (id: string, body: React.ReactNode) => ({
     onPointerEnter: (e: React.PointerEvent) => {
-      if (e.pointerType !== "touch") show(id, col, body);
+      if (e.pointerType === "touch") return;
+      at.current = { x: e.clientX, y: e.clientY };
+      setTip({ id, body, next: null });
+    },
+    onPointerMove: (e: React.PointerEvent) => {
+      if (e.pointerType !== "touch") follow(e);
     },
     onPointerLeave: (e: React.PointerEvent) => {
       if (e.pointerType !== "touch") hide(id);
     },
   });
-  const triggerProps = (id: string, col: number, body: React.ReactNode) => ({
+  // `next` names where the square leads, for the second-tap line; a square
+  // that leads nowhere (the grand total) toggles its tooltip instead.
+  const triggerProps = (id: string, body: React.ReactNode, next: string | null) => ({
     onPointerDown: (e: React.PointerEvent) => {
       touch.current = e.pointerType === "touch";
     },
-    onFocus: () => show(id, col, body),
-    // Focus moving into the tooltip's own links keeps it open.
-    onBlur: (e: React.FocusEvent) => {
-      if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) hide(id);
+    // Keyboard focus only: a click focuses the square too, and its tooltip
+    // is already at the pointer.
+    onFocus: (e: React.FocusEvent<HTMLElement>) => {
+      if (!e.currentTarget.matches(":focus-visible")) return;
+      at.current = e.currentTarget;
+      setTip({ id, body, next: null });
     },
-    onClick: (e: React.MouseEvent) => {
+    onBlur: () => hide(id),
+    onClick: (e: React.MouseEvent<HTMLElement>) => {
       if (!touch.current) return;
+      // The second tap on a square with somewhere to go goes there.
+      if (next && tip?.id === id) return;
       e.preventDefault();
-      setTip((t) => (t?.id === id ? null : { id, body, align: alignFor(col) }));
+      at.current = e.currentTarget;
+      setTip((t) => (t?.id === id ? null : { id, body, next }));
     },
   });
-
-  const bubble = (id: string) =>
-    tip?.id === id ? (
-      // Padding, not margin, between square and tooltip: no gap to fall through.
-      <div
-        className={`absolute bottom-full z-20 pb-1 ${tip.align === "left" ? "left-0" : tip.align === "right" ? "right-0" : "left-1/2 -translate-x-1/2"}`}
-      >
-        <div role="tooltip" className="w-56 rounded-md border bg-popover p-2 text-left text-xs text-popover-foreground shadow-md">
-          {tip.body}
-        </div>
-      </div>
-    ) : null;
 
   const cellBody = (r: GridRow, c: GridCell) => (
     <div className="space-y-1">
@@ -219,16 +260,6 @@ export function YearGrid({
           ) : null}
         </dl>
       )}
-      <div className="flex gap-3 pt-0.5">
-        <Link href={c.href} className="underline">
-          Open {monthName(c.month, "short")}
-        </Link>
-        {c.transactionsHref ? (
-          <Link href={c.transactionsHref} className="underline">
-            Transactions
-          </Link>
-        ) : null}
-      </div>
     </div>
   );
 
@@ -236,7 +267,6 @@ export function YearGrid({
     const p = seg.cells[0].period!;
     // Held to target plus rollover and moved budget, as the card is (#194).
     const budget = periodBudget(p);
-    const last = seg.cells.at(-1)!;
     const soFar = seg.cells.some((c) => c.month === partial) || seg.clippedAfter;
     return (
       <div className="space-y-1">
@@ -273,16 +303,6 @@ export function YearGrid({
             </>
           ) : null}
         </dl>
-        <div className="flex gap-3 pt-0.5">
-          <Link href={last.href} className="underline">
-            Open {monthName(last.month, "short")}
-          </Link>
-          {last.transactionsHref ? (
-            <Link href={last.transactionsHref} className="underline">
-              Transactions
-            </Link>
-          ) : null}
-        </div>
       </div>
     );
   };
@@ -302,23 +322,37 @@ export function YearGrid({
     </div>
   );
 
-  const totalCell = (id: string, label: string, t: YearTotal | null, overLine: string, strong = false) => {
+  // A row's total opens its target, like the row's squares; the grand
+  // total has no one page to open, so it's a button that only shows its
+  // tooltip.
+  const totalCell = (id: string, label: string, t: YearTotal | null, overLine: string, to: { href: string; name: string } | null, strong = false) => {
     if (!t) return <td className="h-9 p-0 pl-1" />;
     const diff = t.spentCents - t.targetCents;
+    const body = totalBody(label, t, overLine);
+    const props = {
+      "aria-label": `${label}: ${formatCents(t.spentCents)} of ${formatCents(t.targetCents)}, ${underOver(t.spentCents, t.targetCents)}. ${overLine}`,
+      ...triggerProps(id, body, to?.name ?? null),
+      className: `flex h-full w-full flex-col items-center justify-center rounded-sm leading-tight tabular-nums focus-visible:outline-2 focus-visible:outline-ring ${to ? "hover:ring-1 hover:ring-foreground/50" : ""} ${shade(t.spentCents, t.targetCents)} ${strong ? "font-medium" : ""}`,
+    };
+    const inside = (
+      <>
+        <span className="text-[10px]">{compactDiff(diff)}</span>
+        <span className="hidden text-[9px] text-muted-foreground sm:block">
+          {compact(t.spentCents)} of {compact(t.targetCents)}
+        </span>
+      </>
+    );
     return (
-      <td className={`relative h-9 p-0 pl-1 ${strong ? "pt-1" : ""}`} {...cellProps(id, columns.length, totalBody(label, t, overLine))}>
-        <button
-          type="button"
-          aria-label={`${label}: ${formatCents(t.spentCents)} of ${formatCents(t.targetCents)}, ${underOver(t.spentCents, t.targetCents)}. ${overLine}`}
-          {...triggerProps(id, columns.length, totalBody(label, t, overLine))}
-          className={`flex h-full w-full flex-col items-center justify-center rounded-sm leading-tight tabular-nums focus-visible:outline-2 focus-visible:outline-ring ${shade(t.spentCents, t.targetCents)} ${strong ? "font-medium" : ""}`}
-        >
-          <span className="text-[10px]">{compactDiff(diff)}</span>
-          <span className="hidden text-[9px] text-muted-foreground sm:block">
-            {compact(t.spentCents)} of {compact(t.targetCents)}
-          </span>
-        </button>
-        {bubble(id)}
+      <td className={`h-9 p-0 pl-1 ${strong ? "pt-1" : ""}`} {...cellProps(id, body)}>
+        {to ? (
+          <Link href={to.href} {...props}>
+            {inside}
+          </Link>
+        ) : (
+          <button type="button" {...props}>
+            {inside}
+          </button>
+        )}
       </td>
     );
   };
@@ -348,10 +382,13 @@ export function YearGrid({
               abbr={monthName(c.month, "long")}
               className={`pb-1 text-center font-normal text-muted-foreground ${c.month.slice(0, 7) === viewedMonth ? "font-medium text-foreground" : ""}`}
             >
-              <span className="md:hidden">{monthName(c.month, "narrow")}</span>
-              <span className="hidden md:inline">{monthName(c.month, "short")}</span>
-              {/* Where the year turns, so twelve months never read as one calendar year. */}
-              {c.month.slice(5, 7) === "01" ? <span className="block text-[9px] leading-none">{c.month.slice(2, 4)}</span> : null}
+              {/* The month in the Month view, which the squares no longer open (#269). */}
+              <Link href={c.href} className="block underline-offset-2 hover:text-foreground hover:underline">
+                <span className="md:hidden">{monthName(c.month, "narrow")}</span>
+                <span className="hidden md:inline">{monthName(c.month, "short")}</span>
+                {/* Where the year turns, so twelve months never read as one calendar year. */}
+                {c.month.slice(5, 7) === "01" ? <span className="block text-[9px] leading-none">{c.month.slice(2, 4)}</span> : null}
+              </Link>
             </th>
           ))}
           <th scope="col" abbr="Total of the months with a target" className="pb-1 pl-1 text-center font-medium">
@@ -372,20 +409,18 @@ export function YearGrid({
               </span>
             </th>
             {gridSegments(r.months).map((seg) => {
-              const ci = seg.first;
               if (seg.period) {
                 const p = seg.period;
                 const budget = periodBudget(p);
                 const id = `${r.key}:${p.start}`;
                 const body = periodBody(r, seg);
                 const soFar = seg.cells.some((c) => c.month === partial) || seg.clippedAfter;
-                const last = seg.cells.at(-1)!;
                 return (
-                  <td key={p.start} colSpan={seg.cells.length} className="relative h-9 p-0" {...cellProps(id, ci, body)}>
+                  <td key={p.start} colSpan={seg.cells.length} className="relative h-9 p-0" {...cellProps(id, body)}>
                     <Link
-                      href={last.href}
+                      href={r.href}
                       aria-label={`${r.name}, ${periodLabel(p.start, p.end)}${soFar ? " so far" : ""}: ${formatCents(p.spentCents)} of ${formatCents(budget)}, ${underOver(p.spentCents, budget)}`}
-                      {...triggerProps(id, ci, body)}
+                      {...triggerProps(id, body, r.name)}
                       className={`flex h-full items-center justify-center gap-1 rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 focus-visible:outline-2 focus-visible:outline-ring ${shade(p.spentCents, budget, paceOf(p.start, p.end, budget))} ${
                         seg.clippedBefore ? "rounded-l-none" : ""
                       } ${seg.clippedAfter ? "rounded-r-none" : ""} ${soFar ? "outline-1 -outline-offset-2 outline-dashed outline-foreground/40" : ""}`}
@@ -402,7 +437,6 @@ export function YearGrid({
                       ) : null}
                       {seg.clippedAfter ? <span aria-hidden className="absolute right-0.5 text-[10px] text-muted-foreground">›</span> : null}
                     </Link>
-                    {bubble(id)}
                   </td>
                 );
               }
@@ -413,11 +447,11 @@ export function YearGrid({
                   ? `${r.name}, ${monthName(c.month, "long")}: no target`
                   : `${r.name}, ${monthName(c.month, "long")}${c.month === partial ? " so far" : ""}: ${formatCents(c.spentCents)} of ${formatCents(c.targetCents)}, ${underOver(c.spentCents, c.targetCents)}, ${c.transactions} transaction${c.transactions === 1 ? "" : "s"}`;
               return (
-                <td key={c.month} className="relative h-9 p-0" {...cellProps(id, ci, cellBody(r, c))}>
+                <td key={c.month} className="h-9 p-0" {...cellProps(id, cellBody(r, c))}>
                   <Link
-                    href={c.href}
+                    href={r.href}
                     aria-label={label}
-                    {...triggerProps(id, ci, cellBody(r, c))}
+                    {...triggerProps(id, cellBody(r, c), r.name)}
                     className={`flex h-full items-center justify-center rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 focus-visible:outline-2 focus-visible:outline-ring ${
                       c.targetCents === null ? "bg-muted/50 text-muted-foreground" : shade(c.spentCents, c.targetCents, paceOf(c.month, monthEnd(c.month), c.targetCents))
                     } ${c.month === partial ? "outline-1 -outline-offset-2 outline-dashed outline-foreground/40" : ""}`}
@@ -426,7 +460,6 @@ export function YearGrid({
                       {c.targetCents === null ? "–" : compactDiff(c.spentCents - c.targetCents)}
                     </span>
                   </Link>
-                  {bubble(id)}
                 </td>
               );
             })}
@@ -435,6 +468,7 @@ export function YearGrid({
               `${r.name}, ${r.total?.months ?? 0} months with a target`,
               r.total,
               `Over target in ${r.over} of ${r.targeted} ${r.months.some((c) => c.period && c.period.periodMonths > 1) ? "periods" : "months"}.`,
+              { href: r.href, name: r.name },
             )}
           </tr>
         ))}
@@ -445,28 +479,28 @@ export function YearGrid({
           <th scope="row" className="pr-1 pt-1 text-left align-middle text-sm font-medium">
             All targets
           </th>
-          {columns.map((c, ci) => {
+          {columns.map((c) => {
             const id = `all:${c.month}`;
             const overLine = `${c.over} of ${c.targets} target${c.targets === 1 ? "" : "s"} over.`;
             return (
               <td
                 key={c.month}
-                className="relative h-9 p-0 pt-1"
-                {...(c.total ? cellProps(id, ci, totalBody(`All targets · ${monthName(c.month, "long")}`, c.total, overLine)) : {})}
+                className="h-9 p-0 pt-1"
+                {...(c.total ? cellProps(id, totalBody(`All targets · ${monthName(c.month, "long")}`, c.total, overLine)) : {})}
               >
                 {c.total ? (
                   <>
+                    {/* Every target at once has no page of its own, so this opens the month. */}
                     <Link
                       href={c.href}
                       aria-label={`All targets, ${monthName(c.month, "long")}: ${formatCents(c.total.spentCents)} of ${formatCents(c.total.targetCents)}, ${underOver(c.total.spentCents, c.total.targetCents)}. ${overLine}`}
-                      {...triggerProps(id, ci, totalBody(`All targets · ${monthName(c.month, "long")}`, c.total, overLine))}
+                      {...triggerProps(id, totalBody(`All targets · ${monthName(c.month, "long")}`, c.total, overLine), monthName(c.month, "long"))}
                       className={`flex h-full items-center justify-center rounded-sm tabular-nums hover:ring-1 hover:ring-foreground/50 focus-visible:outline-2 focus-visible:outline-ring ${shade(c.total.spentCents, c.total.targetCents, paceOf(c.month, monthEnd(c.month), c.total.targetCents))}`}
                     >
                       <span aria-hidden className="hidden text-[10px] md:inline">
                         {compactDiff(c.total.spentCents - c.total.targetCents)}
                       </span>
                     </Link>
-                    {bubble(id)}
                   </>
                 ) : (
                   <span className="flex h-full items-center justify-center rounded-sm bg-muted/50 text-muted-foreground">
@@ -483,6 +517,7 @@ export function YearGrid({
             "All targets, these 12 months",
             grand,
             `${rows.reduce((s, r) => s + r.over, 0)} of ${rows.reduce((s, r) => s + r.targeted, 0)} target-months over.`,
+            null,
             true,
           )}
         </tr>
@@ -526,6 +561,15 @@ export function YearGrid({
           </>
         ) : null}
       </tfoot>
+      {tip
+        ? createPortal(
+            <div ref={tipRef} role="tooltip" className="pointer-events-none fixed left-0 top-0 z-50 w-56 rounded-md border bg-popover p-2 text-left text-xs text-popover-foreground shadow-md">
+              {tip.body}
+              {tip.next ? <div className="mt-1 border-t pt-1 text-muted-foreground">Tap again to open {tip.next}</div> : null}
+            </div>,
+            document.body,
+          )
+        : null}
     </table>
   );
 }
