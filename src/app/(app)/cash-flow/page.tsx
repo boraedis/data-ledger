@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { cashFlowInputs, typicalLine } from "@/lib/cashflow/data";
+import { cashFlowInputs, typicalLine, type AnnualChart } from "@/lib/cashflow/data";
 import { investmentChange } from "@/lib/cashflow/investments";
 import { payPeriodRanges, payPeriods } from "@/lib/cashflow/pay-periods";
 import { rollUp, runningTotals } from "@/lib/cashflow/series";
@@ -57,6 +57,8 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const by: Grouping = GROUPINGS.some((g) => g.id === one(sp.by)) ? (one(sp.by) as Grouping) : "category";
   const gross = one(sp.gross) === "1";
   const percent = one(sp.show) === "percent";
+  // Annual's chart: the year by month (the default), or by day as running totals.
+  const chart: AnnualChart = one(sp.chart) === "day" ? "day" : "month";
 
   const db = getDb();
   // Monthly compares with the month before, or its same days for the month in progress (#172).
@@ -76,7 +78,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const totalIn = t.income + t.drawn;
   const label = new Map(graph.nodes.map((n) => [n.id, n.label]));
 
-  const href = (next: { period?: ViewPeriod; by?: Grouping; gross?: boolean; percent?: boolean }) => {
+  const href = (next: { period?: ViewPeriod; by?: Grouping; gross?: boolean; percent?: boolean; chart?: AnnualChart }) => {
     const q = new URLSearchParams();
     const p = next.period ?? period;
     // This year's Annual is the page's default: a bare /cash-flow.
@@ -85,6 +87,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
     if ((next.by ?? by) !== "category") q.set("by", next.by ?? by);
     if (next.gross ?? gross) q.set("gross", "1");
     if (next.percent ?? percent) q.set("show", "percent");
+    if (p.view === "annual" && (next.chart ?? chart) === "day") q.set("chart", "day");
     const qs = q.toString();
     return `/cash-flow${qs ? `?${qs}` : ""}`;
   };
@@ -121,7 +124,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   // Nothing recorded in the period at all: an empty state, not zeros (#171).
   const empty = flow.days.every((d) => d.inCents === 0 && d.outCents === 0);
   // The line of what the three periods before predict, under the charts (Annual and Monthly only).
-  const typical = empty ? null : await typicalLine(db, period, today, gross);
+  const typical = empty ? null : await typicalLine(db, period, today, gross, chart);
   // The year month by month (#171); months still to come keep their place, undrawn.
   const monthSlots: FlowSlot[] = rollUp(flow.days, "month").map((m) => {
     const label = new Date(`${m.start}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
@@ -138,6 +141,12 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
     return d.date > today ? { label, title, inCents: null, outCents: null } : { label, title, inCents: d.inCents, outCents: d.outCents };
   });
   const partialDay = soFar ? flow.days.findIndex((d) => d.date === today) : null;
+  // A year by day: the same running totals, labelled by the months' first days.
+  const yearDaySlots: FlowSlot[] = running.map((d) => {
+    const label = d.date.endsWith("-01") ? new Date(`${d.date}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", timeZone: "UTC" }) : "";
+    const title = new Date(`${d.date}T00:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+    return d.date > today ? { label, title, inCents: null, outCents: null } : { label, title, inCents: d.inCents, outCents: d.outCents };
+  });
   // Each tile's change from the period it's compared with.
   const change = (now: number, then: number | undefined, upIsGood: boolean) => {
     if (then === undefined) return null;
@@ -223,7 +232,34 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
             {soFar ? "so far " : ""}this year: growth and contributions together, not part of cash flow.
           </p>
         ) : null}
-        {period.view === "annual" && !empty ? <FlowChart slots={monthSlots} title={`Cash in and out by month, ${period.label}`} partialIndex={partialMonth} typical={typical} /> : null}
+        {period.view === "annual" && !empty ? (
+          <>
+            {/* The year by month, or by day as running totals, like a month's. */}
+            <nav aria-label="Chart detail" className="flex gap-3 text-xs">
+              <span className="text-muted-foreground">Show</span>
+              <Link href={href({ chart: "month" })} aria-current={chart === "month" ? "page" : undefined} className={tab(chart === "month")}>
+                By month
+              </Link>
+              <Link href={href({ chart: "day" })} aria-current={chart === "day" ? "page" : undefined} className={tab(chart === "day")}>
+                By day
+              </Link>
+            </nav>
+            {chart === "day" ? (
+              <FlowChart
+                key="day"
+                slots={yearDaySlots}
+                title={`Cash in and out by day, ${period.label}`}
+                partialIndex={partialDay}
+                legend={{ in: "Cash in to date", out: "Cash out to date" }}
+                steps={flow.days}
+                typical={typical}
+                labelledOnly
+              />
+            ) : (
+              <FlowChart key="month" slots={monthSlots} title={`Cash in and out by month, ${period.label}`} partialIndex={partialMonth} typical={typical} />
+            )}
+          </>
+        ) : null}
         {pay ? <PayPeriods periods={pay.periods} oneTime={pay.oneTime} needsGross={pay.needsGross} year={period.label} /> : null}
         {period.view === "monthly" && !empty ? (
           <FlowChart
