@@ -232,6 +232,22 @@ describe("budgets.monthly over a year (#108)", () => {
   });
 });
 
+describe("budgets.monthly by day (the Year view's chart)", () => {
+  type Monthly = { categoryId: string | null; months: { month: string; spentCents: number; dailyCents?: number[] }[] }[];
+
+  it("gives each month a figure for every day, adding up to the month's spend, and only when asked", async () => {
+    await run("budgets.setTarget", { categoryId: cat.Groceries, amountCents: 30_000, today: "2026-01-10" });
+    const rows = (await run("budgets.monthly", { on: "2026-06-30", months: 12, includeEnded: true, daily: true })).output as Monthly;
+    const months = rows.find((r) => r.categoryId === cat.Groceries)!.months;
+    expect(months.map((m) => m.dailyCents!.length)).toEqual(months.map((m) => new Date(Date.UTC(Number(m.month.slice(0, 4)), Number(m.month.slice(5, 7)), 0)).getUTCDate()));
+    for (const m of months) expect(m.dailyCents!.reduce((a, b) => a + b, 0)).toBe(m.spentCents);
+    expect(months.some((m) => m.spentCents > 0)).toBe(true);
+
+    const plain = (await run("budgets.monthly", { on: "2026-06-30", months: 12, includeEnded: true })).output as Monthly;
+    expect(plain.find((r) => r.categoryId === cat.Groceries)!.months.every((m) => m.dailyCents === undefined)).toBe(true);
+  });
+});
+
 describe("budgets.monthly with moved budget (#146)", () => {
   type Moved = { categoryId: string | null; months: { month: string; targetCents: number | null; movedCents?: number }[] }[];
 
