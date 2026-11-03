@@ -9,6 +9,7 @@ import { listDevices, pushConfig } from "@/lib/push/send";
 import { listTokens, listUnmappedCards } from "@/lib/shortcuts/tokens";
 import { getConnectionHealth } from "@/lib/sync/health";
 import { listAccounts } from "@/operations/accounts";
+import { listPromotions } from "@/operations/promotions";
 import { read } from "@/operations/runtime";
 import { AddPasskey } from "./add-passkey";
 import { ApplePay } from "./apple-pay";
@@ -16,6 +17,7 @@ import { Connections } from "./connections";
 import { ModelStatusPanel } from "./model-status";
 import { Notifications } from "./notifications";
 import { SETTINGS_TABS, settingsHref, settingsTab, type SettingsTab } from "./tabs";
+import { TallyPromotions } from "./tally-promotions";
 
 // Settings (#69): one page, one tab per area, the tab in the URL. Each tab
 // loads only its own data. What each setting does is unchanged; only where
@@ -87,6 +89,11 @@ async function ModelTab() {
   return <ModelStatusPanel status={model} evaluation={evaluation} threshold={autoApplyThreshold()} />;
 }
 
+// What Tally may do without asking (#59).
+async function TallyTab() {
+  return <TallyPromotions promotions={await listPromotions(getDb())} />;
+}
+
 async function SecurityTab() {
   const passkeys = await listPasskeys();
   return (
@@ -121,6 +128,7 @@ const CONTENT: Record<SettingsTab, () => Promise<React.ReactNode>> = {
   notifications: NotificationsTab,
   "apple-pay": ApplePayTab,
   model: ModelTab,
+  tally: TallyTab,
   security: SecurityTab,
 };
 

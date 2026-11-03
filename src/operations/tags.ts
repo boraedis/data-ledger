@@ -30,6 +30,7 @@ export const listTags = defineRead({
 
 export const setTransactionTags = defineWrite({
   name: "transactions.setTags",
+  promotable: "Tag a transaction",
   description:
     "Set the complete list of tags on a transaction, by name. Tags that don't exist yet are created; " +
     "tags left out are removed from this transaction (the tag itself stays).",

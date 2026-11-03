@@ -260,6 +260,13 @@
       "when": 1793718407727,
       "tag": "0036_manual_asset_class",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "7",
+      "when": 1793719454677,
+      "tag": "0037_tally_promotions",
+      "breakpoints": true
     }
   ]
 }

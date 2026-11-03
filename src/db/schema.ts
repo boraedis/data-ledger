@@ -1074,6 +1074,16 @@ export type RowChange = {
   after: Record<string, unknown> | null;
 };
 
+// Operations the owner has promoted to auto-apply for Tally (#59): one row
+// each. Off by default, which is no row. Only an operation marked promotable
+// in its definition can have one (tally.promote checks), and the runtime
+// reads this on every Tally write, so turning one off applies to the next.
+export const tallyPromotions = pgTable("tally_promotions", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  operation: text("operation").notNull().unique(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const commandLog = pgTable(
   "command_log",
   {
@@ -1094,6 +1104,9 @@ export const commandLog = pgTable(
     // reversed command points back.
     undoOf: uuid("undo_of"),
     undoneBy: uuid("undone_by"),
+    // Applied by Tally without asking, because the owner promoted this
+    // operation (#59). Shown apart from writes the owner approved.
+    autoApplied: boolean("auto_applied").notNull().default(false),
   },
   (t) => [index("command_log_created_at_idx").on(t.createdAt), index("command_log_status_idx").on(t.status)],
 );

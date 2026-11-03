@@ -398,6 +398,7 @@ export const transactionTypeCounts = defineRead({
 
 export const setTransactionCategory = defineWrite({
   name: "transactions.setCategory",
+  promotable: "File a transaction under a category",
   description:
     "Set the category of one transaction, or clear it with categoryId null. On a split transaction this " +
     "replaces the split with the single category.",
@@ -411,6 +412,7 @@ export const setTransactionCategory = defineWrite({
 
 export const setCategories = defineWrite({
   name: "transactions.setCategories",
+  promotable: "File several transactions at once, such as confirming the inbox's suggestions",
   description:
     "Categorize a set of uncategorized transactions at once: confirming the inbox's suggestions (#86). One " +
     "entry in Activity, undone together. A transaction categorized or split since is left as it is.",
@@ -485,6 +487,7 @@ export const splitTransaction = defineWrite({
 
 export const setExperienceDate = defineWrite({
   name: "transactions.setExperienceDate",
+  promotable: "Set the date a purchase was for, for budgets",
   description:
     "Set when a purchase was actually experienced, for budgeting (e.g. tickets bought months before the " +
     "event). Budgets use it instead of the posted date. Null clears it.",
