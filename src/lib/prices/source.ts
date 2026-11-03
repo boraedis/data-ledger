@@ -20,9 +20,19 @@ export type QuoteResult =
   // The provider couldn't be reached or answered oddly: try again next time.
   | { symbol: string; failed: true };
 
+/** A day's closing price, an exact decimal in USD. */
+export type DailyClose = { on: string; price: string };
+
 export type PriceSource = {
   /** Stored with each quote, so a price says where it's from. */
   id: string;
   assetClass: AssetClass;
   quote(symbols: string[]): Promise<QuoteResult[]>;
+  /**
+   * Daily closes from `from` to `to` (YYYY-MM-DD, both included), for
+   * rebuilding history (#232): null when the provider has no such symbol,
+   * and a throw when it couldn't be reached. Days without trading are
+   * simply absent. Optional: a source without it isn't backfilled.
+   */
+  history?(symbol: string, from: string, to: string): Promise<DailyClose[] | null>;
 };

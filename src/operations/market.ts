@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { dailyPrices, quotes } from "@/db/schema";
 import { defineWrite } from "@/operations/define";
@@ -69,5 +69,40 @@ export const refreshQuotes = defineWrite({
       }
     }
     return { priced, unpriced, failed };
+  },
+});
+
+// Filling in past daily prices (#232) for one symbol, back to its first
+// trade, as one command. Only days not already recorded are added: a price
+// recorded by a refresh is never overwritten by the backfill.
+export const backfillPrices = defineWrite({
+  name: "market.backfillPrices",
+  description: "Record past daily closing prices for one symbol, adding only the days not already recorded.",
+  allowedActors: ["market"],
+  input: z.object({
+    assetClass: z.enum(["crypto", "equity"]),
+    source: z.string().min(1).max(40),
+    symbol: z.string().min(1).max(16),
+    closes: z.array(z.object({ on: z.iso.date(), price: z.string().regex(/^\d+(\.\d+)?$/) })).max(20_000),
+  }),
+  apply: async (ctx, { assetClass, source, symbol, closes }) => {
+    const days = closes.map((c) => c.on);
+    const have = days.length
+      ? new Set(
+          (
+            await ctx.db
+              .select({ on: dailyPrices.on })
+              .from(dailyPrices)
+              .where(and(eq(dailyPrices.assetClass, assetClass), eq(dailyPrices.symbol, symbol), inArray(dailyPrices.on, days)))
+          ).map((r) => r.on),
+        )
+      : new Set<string>();
+    let added = 0;
+    for (const c of closes) {
+      if (have.has(c.on)) continue;
+      await ctx.insert(dailyPrices, { assetClass, symbol, on: c.on, price: c.price, source });
+      added++;
+    }
+    return { added };
   },
 });

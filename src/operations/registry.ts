@@ -53,7 +53,7 @@ import {
 } from "@/operations/transactions";
 import { moveToCategory, moveToCategoryPreview } from "@/operations/recategorize";
 import { addManualPosition, removeManualPosition, setManualPrice, setManualQuantity } from "@/operations/holdings";
-import { refreshQuotes } from "@/operations/market";
+import { backfillPrices, refreshQuotes } from "@/operations/market";
 import { addTrade, removeTrade, updateTrade } from "@/operations/trades";
 
 // The one list of everything that can be done to the ledger. The UI calls
@@ -107,6 +107,7 @@ export const operations: Operation[] = [
   setManualPrice,
   removeManualPosition,
   refreshQuotes,
+  backfillPrices,
   addTrade,
   updateTrade,
   removeTrade,

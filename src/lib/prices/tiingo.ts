@@ -19,6 +19,8 @@ const BASE = "https://api.tiingo.com";
 
 export const tiingoIexUrl = (symbol: string) => `${BASE}/iex/${encodeURIComponent(symbol.toLowerCase())}`;
 export const tiingoDailyUrl = (symbol: string) => `${BASE}/tiingo/daily/${encodeURIComponent(symbol.toLowerCase())}/prices`;
+/** Daily closes over a window, for rebuilding history (#232): the ticker and dates, nothing else. */
+export const tiingoHistoryUrl = (symbol: string, from: string, to: string) => `${tiingoDailyUrl(symbol)}?startDate=${from}&endDate=${to}`;
 
 type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -71,6 +73,15 @@ export function tiingoSource(key: string, fetchImpl: Fetch = fetch): PriceSource
         }
       }
       return results;
+    },
+    async history(symbol, from, to) {
+      const rows = (await get(tiingoHistoryUrl(symbol, from, to))) as { date?: unknown; close?: unknown }[] | null;
+      if (rows === null) return null;
+      if (!Array.isArray(rows)) throw new Error("No prices in the answer");
+      return rows
+        .map((r) => ({ on: typeof r.date === "string" ? r.date.slice(0, 10) : "", price: decimal(r.close) }))
+        .filter((r): r is { on: string; price: string } => r.on !== "" && r.price !== null)
+        .sort((a, b) => a.on.localeCompare(b.on));
     },
   };
 }
