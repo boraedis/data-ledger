@@ -2,6 +2,7 @@ import { timingSafeEqual } from "crypto";
 import { withTransactionalDb } from "@/lib/db";
 import { chainUrl, triggerClassify } from "@/lib/categorize/classify-chain";
 import { modelIsConfigured } from "@/lib/model/client";
+import { backfillPricesIfDue } from "@/lib/prices/backfill";
 import { refreshPricesIfDue } from "@/lib/prices/refresh";
 import { notifyNewAlerts } from "@/lib/push/alerts";
 import { syncAllConnections } from "@/lib/sync/run";
@@ -52,6 +53,7 @@ export async function GET(request: Request) {
   // was opened overnight. Same rule: never fails the sync.
   try {
     await withTransactionalDb((db) => refreshPricesIfDue(db));
+    await withTransactionalDb((db) => backfillPricesIfDue(db));
   } catch (error) {
     console.error("Price refresh failed", error instanceof Error ? error.message.slice(0, 120) : "unknown");
   }

@@ -11,6 +11,7 @@ import { NetWorthHistory } from "./history";
 import { pricesNote } from "@/lib/prices/describe";
 import { ValueChart } from "@/components/charts/value-chart";
 import { GROUP_LABELS, forecast, forecastStart, parseAssumptions, type ForecastGroup } from "@/lib/forecast";
+import { rebuiltHistory, type RebuiltHistory } from "@/lib/prices/rebuilt";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 
 // Net worth today and over time (#25), and a forecast on the owner's own
@@ -23,7 +24,11 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
   // The trailing twelve months, from the first of the month eleven months ago.
   const now = new Date();
   const yearAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1)).toISOString().slice(0, 10);
-  const [summary, income] = await Promise.all([netWorthSummary(db), read(db, investmentIncome, { from: yearAgo })]);
+  const [summary, income, rebuilt] = await Promise.all([
+    netWorthSummary(db),
+    read(db, investmentIncome, { from: yearAgo }),
+    rebuiltHistory(db, now.toISOString().slice(0, 10)),
+  ]);
   // Values move with prices (#230): refresh them after this page is sent, if due.
   refreshPricesAfterResponse();
   const largest = Math.max(1, ...summary.byKind.map((k) => Math.abs(k.cents)));
@@ -56,6 +61,14 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
           </p>
         )}
       </section>
+
+      {rebuilt.days.length ? (
+        <Rebuilt
+          history={rebuilt}
+          names={new Map([...summary.accounts, ...summary.excluded.map((e) => e.account)].map((a) => [a.id, a.name]))}
+          balancesFrom={historyStart ?? null}
+        />
+      ) : null}
 
       {summary.accounts.length ? <Forecast accounts={summary.accounts} assumptions={assumptions} /> : null}
 
@@ -284,6 +297,43 @@ function Forecast({
           </p>
         </form>
       </div>
+    </section>
+  );
+}
+
+// History rebuilt from trades (#232): the market value of the positions in
+// every account with trades, from the earliest trade. It reaches further
+// back than balance history, which starts when syncing did, but it's only
+// positions: each account names where its coverage starts, and any day not
+// every account covers is labelled partial. Nothing is guessed.
+function Rebuilt({ history, names, balancesFrom }: { history: RebuiltHistory; names: Map<string, string>; balancesFrom: string | null }) {
+  const n = history.accounts.length;
+  const series = history.total
+    .filter((p) => p.counted > 0)
+    .map((p) => ({ on: p.on, cents: p.cents, detail: p.complete ? `All ${n} traded ${n === 1 ? "account" : "accounts"}` : `Partial: ${p.counted} of ${n} accounts` }));
+  return (
+    <section className="space-y-2" aria-label="Rebuilt from your trades">
+      <h2 className="text-lg font-medium">Rebuilt from your trades</h2>
+      <p className="text-sm text-muted-foreground">
+        What your positions were worth each day: the quantity your trades say you held, at that day&apos;s closing price. Positions
+        only, not cash{balancesFrom ? `; your full net worth history above starts ${balancesFrom}` : ""}.
+        {history.completeFrom ? ` Every traded account is covered from ${history.completeFrom}; before that it's partial.` : ""}
+      </p>
+      {series.length > 1 ? (
+        <ValueChart label="Positions rebuilt from trades" height={180} series={series} />
+      ) : (
+        <p className="text-sm text-muted-foreground">Past prices are being filled in; the chart appears once they are.</p>
+      )}
+      <ul className="divide-y rounded-lg border text-sm">
+        {history.accounts.map((a) => (
+          <li key={a.accountId} className="flex justify-between gap-3 px-3 py-1.5">
+            <span className="truncate">{names.get(a.accountId) ?? "Account"}</span>
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              {a.coverageStart ? `from ${a.coverageStart}` : "no prices for its holdings yet"}
+            </span>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

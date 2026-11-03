@@ -6,6 +6,18 @@ import type { PriceSource, QuoteResult } from "@/lib/prices/source";
 // pair is a 404, which means "no price", not a failure.
 
 const BASE = "https://api.coinbase.com/v2/prices";
+// Daily candles come from Coinbase's public exchange API, also keyless: rows
+// of [time, low, high, open, close, volume], newest first, at most 300 a
+// request. An unknown pair is a 404 there too.
+const CANDLES = "https://api.exchange.coinbase.com/products";
+const CANDLES_PER_REQUEST = 300;
+
+/** The candles URL for a pair and window: the pair name and dates, nothing else. */
+export const coinbaseCandlesUrl = (symbol: string, from: string, to: string) =>
+  `${CANDLES}/${encodeURIComponent(`${symbol.toUpperCase()}-USD`)}/candles?granularity=86400&start=${from}T00:00:00Z&end=${to}T00:00:00Z`;
+
+const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+const closeText = (n: number) => (/e/i.test(String(n)) ? n.toFixed(10).replace(/0+$/, "").replace(/\.$/, "") : String(n));
 
 /** The request URL for a symbol: the pair name and nothing else. */
 export const coinbaseUrl = (symbol: string) => `${BASE}/${encodeURIComponent(`${symbol.toUpperCase()}-USD`)}/spot`;
@@ -38,6 +50,22 @@ export function coinbaseSource(fetchImpl: Fetch = fetch, now: () => Date = () =>
         }
       }
       return results;
+    },
+    async history(symbol, from, to) {
+      const closes: { on: string; price: string }[] = [];
+      for (let start = from; start <= to; start = addDays(start, CANDLES_PER_REQUEST)) {
+        const end = addDays(start, CANDLES_PER_REQUEST - 1) < to ? addDays(start, CANDLES_PER_REQUEST - 1) : to;
+        const response = await fetchImpl(coinbaseCandlesUrl(symbol, start, end), { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+        if (response.status === 404) return null;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const rows = (await response.json()) as unknown;
+        if (!Array.isArray(rows)) throw new Error("No candles in the answer");
+        for (const row of rows) {
+          if (!Array.isArray(row) || typeof row[0] !== "number" || typeof row[4] !== "number" || row[4] <= 0) continue;
+          closes.push({ on: new Date(row[0] * 1000).toISOString().slice(0, 10), price: closeText(row[4]) });
+        }
+      }
+      return closes.sort((a, b) => a.on.localeCompare(b.on));
     },
   };
 }
