@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { paceFor, paceTone } from "./pace-colour";
-import { gridSegments, periodBudget, segmentFigures, sumCells, yearTotals } from "./year";
+import { gridSegments, periodBudget, segmentFigures, sumCells, yearProgress, yearTotals } from "./year";
 
 // Made-up rows over four months: a target that started in month 2, and one
 // that ran all four.
@@ -113,5 +113,40 @@ describe("a period's budget", () => {
     expect(segmentFigures(segments[0])).toEqual({ spentCents: spent, targetCents: available });
     expect(paceTone(spent, periodBudget(period), paceFor(periodBudget(period), share))).toBe("within");
     expect(paceTone(spent, target, paceFor(target, share))).toBe("ahead");
+  });
+});
+
+describe("yearProgress (#268)", () => {
+  // Made-up: a $100 target every month and a $50 one from month 2, over three months.
+  const rows = [
+    { months: [{ month: "2026-01-01", spentCents: 8000, targetCents: 10000 }, { month: "2026-02-01", spentCents: 12000, targetCents: 10000 }, { month: "2026-03-01", spentCents: 3000, targetCents: 10000 }] },
+    { months: [{ month: "2026-01-01", spentCents: 2000, targetCents: null }, { month: "2026-02-01", spentCents: 4000, targetCents: 5000 }, { month: "2026-03-01", spentCents: 1000, targetCents: 5000 }] },
+  ];
+
+  it("counts down from the months' targets, against what the targets had used up", () => {
+    const p = yearProgress(rows, null)!;
+    expect(p.availableCents).toBe(40000);
+    expect(p.typical).toBe(false);
+    // A month without a target adds nothing on either side, as in the totals.
+    expect(p.months.map((m) => [m.leftCents, m.idealCents, m.typicalCents])).toEqual([
+      [32000, 30000, null],
+      [16000, 15000, null],
+      [12000, 0, null],
+    ]);
+    // The last point is the year's Under.
+    const total = yearTotals(rows).total!;
+    expect(p.months.at(-1)!.leftCents).toBe(total.targetCents - total.spentCents);
+  });
+
+  it("puts the months before at the same share of their own targets", () => {
+    const before = [{ months: [{ spentCents: 7500, targetCents: 10000 }, { spentCents: 7500, targetCents: 10000 }, { spentCents: 15000, targetCents: 10000 }] }];
+    const p = yearProgress(rows, before)!;
+    expect(p.typical).toBe(true);
+    // A quarter, a half, then all of $300 used: so 3/4, 1/2 and none of this year's $400 left.
+    expect(p.months.map((m) => m.typicalCents)).toEqual([30000, 20000, 0]);
+  });
+
+  it("has nothing to draw without a target", () => {
+    expect(yearProgress([{ months: [{ month: "2026-01-01", spentCents: 500, targetCents: null }] }], null)).toBeNull();
   });
 });
