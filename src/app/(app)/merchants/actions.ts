@@ -1,0 +1,43 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { execute } from "@/operations/runtime";
+import { asOwner } from "@/operations/server";
+
+type Result = { error: string } | { ok: true; id?: string };
+
+// Each edit is one operation as the owner (validated, logged, undoable in
+// Activity), as on the Categories page.
+async function run(operation: string, input: Record<string, unknown>, reason: string): Promise<Result> {
+  try {
+    const output = await asOwner(async (db) => {
+      const result = await execute(db, { operation, input, actor: "user", reason });
+      return result.status === "applied" ? (result.output as Record<string, unknown> | undefined) : undefined;
+    });
+    revalidatePath("/merchants", "layout");
+    const id = typeof output?.merchantId === "string" ? output.merchantId : typeof output?.typeId === "string" ? output.typeId : undefined;
+    return { ok: true, id };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Something went wrong" };
+  }
+}
+
+export async function renameMerchant(merchantId: string, name: string) {
+  return run("merchants.rename", { merchantId, name }, `Renamed a merchant to "${name}"`);
+}
+
+export async function setMerchantType(merchantId: string, typeId: string | null) {
+  return run("merchants.setType", { merchantId, typeId }, typeId ? "Set a merchant's type" : "Cleared a merchant's type");
+}
+
+export async function addMerchantType(name: string) {
+  return run("merchants.addType", { name }, `Added the merchant type "${name}"`);
+}
+
+export async function mergeMerchants(keepId: string, mergeId: string) {
+  return run("merchants.merge", { keepId, mergeId }, "Merged two merchants");
+}
+
+export async function splitAlias(aliasId: string) {
+  return run("merchants.splitAlias", { aliasId }, "Split a name out into a merchant of its own");
+}
