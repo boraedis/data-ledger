@@ -253,6 +253,13 @@
       "when": 1793656938772,
       "tag": "0035_trade_log",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1793718407727,
+      "tag": "0036_manual_asset_class",
+      "breakpoints": true
     }
   ]
 }

@@ -6,7 +6,7 @@ import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { difference, firstShortfall, holdingsOn, inOrder, SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
 import { valueDate } from "@/operations/accounts";
 import { defineWrite } from "@/operations/define";
-import { decimal, positionsAccount, revalue, symbol } from "@/operations/holdings";
+import { assetClassInput, decimal, positionsAccount, revalue, symbol } from "@/operations/holdings";
 import { NotFoundError, type WriteContext } from "@/operations/tracked";
 
 // The trade log (#247): dated buys, sells and share transfers, so past
@@ -52,7 +52,7 @@ async function trade(db: Db, tradeId: string) {
  * revalues the account. A symbol new to the account takes its first price
  * from its trades, since a position needs one to be valued.
  */
-async function followTrades(ctx: WriteContext, accountId: string, symbols: string[], on: string) {
+async function followTrades(ctx: WriteContext, accountId: string, symbols: string[], on: string, assetClass: "crypto" | "equity" = "crypto") {
   const all = await ctx.db.select().from(trades).where(eq(trades.accountId, accountId));
   const short = firstShortfall(all);
   if (short) throw new Error(`That sells more ${short.symbol} than was held on ${short.on}`);
@@ -70,7 +70,7 @@ async function followTrades(ctx: WriteContext, accountId: string, symbols: strin
     } else {
       const priced = inOrder(all.filter((t) => t.symbol === s && t.price !== null)).at(-1);
       if (!priced) throw new Error(`Give a price for ${s}: it's new to this account, and needs one to be valued`);
-      await ctx.insert(manualPositions, { accountId, symbol: s, quantity, unitPrice: priced.price!, priceOn: priced.on, costBasisCents: null });
+      await ctx.insert(manualPositions, { accountId, symbol: s, quantity, unitPrice: priced.price!, priceOn: priced.on, costBasisCents: null, assetClass });
     }
   }
   await revalue(ctx, accountId, on);
@@ -80,7 +80,8 @@ export const addTrade = defineWrite({
   name: "trades.add",
   description:
     "Record a trade in an investment account: the date, a symbol, buy, sell, transfer in or transfer out, the quantity " +
-    "and optionally the price per unit, as exact decimals. In a manual account, its positions follow its trades.",
+    "and optionally the price per unit, as exact decimals. In a manual account, its positions follow its trades; " +
+    "assetClass (crypto by default, or equity) is the kind of asset for a symbol new to the account.",
   allowedActors: ["user"],
   input: z.object({
     accountId: z.uuid(),
@@ -89,12 +90,13 @@ export const addTrade = defineWrite({
     side: sides,
     quantity: decimal("Quantity"),
     price: decimal("Price").nullable().optional(),
+    assetClass: assetClassInput.optional(),
     today: valueDate.optional(),
   }),
   apply: async (ctx, input) => {
     const { drivesPositions } = await tradeAccount(ctx.db, input.accountId);
     const row = await ctx.insert(trades, { accountId: input.accountId, on: input.on, symbol: input.symbol, side: input.side, quantity: input.quantity, price: input.price ?? null });
-    if (drivesPositions) await followTrades(ctx, input.accountId, [input.symbol], input.today ?? today());
+    if (drivesPositions) await followTrades(ctx, input.accountId, [input.symbol], input.today ?? today(), input.assetClass);
     return { id: row.id };
   },
 });

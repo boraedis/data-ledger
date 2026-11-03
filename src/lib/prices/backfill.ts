@@ -2,6 +2,7 @@ import { and, desc, eq, min } from "drizzle-orm";
 import { accounts, commandLog, dailyPrices, trades } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { REFRESH_MINUTES } from "@/lib/prices/config";
+import { manualClasses } from "@/lib/prices/rebuilt";
 import { defaultSources } from "@/lib/prices/refresh";
 import type { AssetClass, PriceSource } from "@/lib/prices/source";
 import { execute } from "@/operations/runtime";
@@ -9,8 +10,8 @@ import { execute } from "@/operations/runtime";
 // Filling in past daily prices (#232), so trades (#247) can be valued on the
 // days they were held. For each traded symbol, its closes from its first
 // trade up to the earliest price already recorded (or yesterday), from its
-// source's history: Tiingo for a synced brokerage's symbols, Coinbase for a
-// manual account's. One market.backfillPrices command per symbol.
+// source's history: Tiingo for equities, Coinbase for crypto. One
+// market.backfillPrices command per symbol.
 //
 // Bounded like refreshing: it runs from the same places (after a page that
 // shows values, and the nightly sync), at most once per REFRESH_MINUTES,
@@ -22,15 +23,17 @@ const dayBefore = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) - 86_
 
 /** Each traded symbol's asset class and first trade date. */
 export async function tradedSymbols(db: Db): Promise<{ assetClass: AssetClass; symbol: string; first: string }[]> {
-  const rows = await db
-    .select({ symbol: trades.symbol, source: accounts.source, first: min(trades.on) })
-    .from(trades)
-    .innerJoin(accounts, eq(accounts.id, trades.accountId))
-    .groupBy(trades.symbol, accounts.source);
-  // A manual account's positions are priced as crypto, a synced one's as equities (as in live-value.ts).
+  const [rows, classes] = await Promise.all([
+    db
+      .select({ accountId: trades.accountId, symbol: trades.symbol, source: accounts.source, first: min(trades.on) })
+      .from(trades)
+      .innerJoin(accounts, eq(accounts.id, trades.accountId))
+      .groupBy(trades.accountId, trades.symbol, accounts.source),
+    manualClasses(db),
+  ]);
   const out = new Map<string, { assetClass: AssetClass; symbol: string; first: string }>();
   for (const r of rows) {
-    const assetClass: AssetClass = r.source === "manual" ? "crypto" : "equity";
+    const assetClass = r.source === "manual" ? (classes.get(`${r.accountId}:${r.symbol}`) ?? "crypto") : "equity";
     const key = `${assetClass}:${r.symbol}`;
     const prev = out.get(key);
     if (!prev || r.first! < prev.first) out.set(key, { assetClass, symbol: r.symbol, first: r.first! });

@@ -1,0 +1,1 @@
+ALTER TABLE "manual_positions" ADD COLUMN "asset_class" "asset_class" DEFAULT 'crypto' NOT NULL;

@@ -66,7 +66,7 @@ export function TradeLog({
             ))}
           </ul>
         ) : null}
-        <AddTrade account={account} />
+        <AddTrade account={account} drivesPositions={drivesPositions} />
       </div>
     </details>
   );
@@ -137,12 +137,14 @@ function TradeItem({ trade: t }: { trade: TradeRow }) {
   );
 }
 
-function AddTrade({ account }: { account: { id: string; name: string } }) {
+function AddTrade({ account, drivesPositions }: { account: { id: string; name: string }; drivesPositions: boolean }) {
   const [on, setOn] = useState(localToday);
   const [side, setSide] = useState<TradeSide>("buy");
   const [symbol, setSymbol] = useState("");
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
+  // For a symbol new to a manual account: what kind of asset it is, so it's priced by the right source (#244).
+  const [kind, setKind] = useState<"crypto" | "equity">("crypto");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -154,7 +156,10 @@ function AddTrade({ account }: { account: { id: string; name: string } }) {
     if (!q) return setError("Quantity should be a positive number like 2.5");
     if (price.trim() && !p) return setError("Price should be a positive number, or left empty");
     startTransition(async () => {
-      const result = await addTrade({ accountId: account.id, on, side, symbol: symbol.trim(), quantity: q, price: p }, account.name);
+      const result = await addTrade(
+        { accountId: account.id, on, side, symbol: symbol.trim(), quantity: q, price: p, ...(drivesPositions ? { assetClass: kind } : {}) },
+        account.name,
+      );
       if (result?.error) return setError(result.error);
       setSymbol("");
       setQuantity("");
@@ -176,6 +181,17 @@ function AddTrade({ account }: { account: { id: string; name: string } }) {
       <Input aria-label="Symbol" value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="Symbol" maxLength={16} className="h-8 w-24" />
       <Input aria-label="Quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} inputMode="decimal" placeholder="Quantity" className="h-8 w-28" />
       <Input aria-label="Price per unit" value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder="Price (optional)" className="h-8 w-32" />
+      {drivesPositions ? (
+        <select
+          aria-label="Kind of asset, for a new symbol"
+          value={kind}
+          onChange={(e) => setKind(e.target.value as "crypto" | "equity")}
+          className="h-8 rounded-md border bg-background px-2 text-sm"
+        >
+          <option value="crypto">Coin</option>
+          <option value="equity">Stock or fund</option>
+        </select>
+      ) : null}
       <Button type="submit" size="sm" variant="outline" disabled={pending}>
         Add trade
       </Button>

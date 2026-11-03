@@ -50,6 +50,10 @@ export const symbol = z
 
 const costBasis = z.number().int().min(0).max(1_000_000_000_00).nullable().optional();
 
+// Which source prices a position (#244): Coinbase for a coin, Tiingo for a
+// stock, ETF or fund. Crypto unless said otherwise, as before this existed.
+export const assetClassInput = z.enum(["crypto", "equity"]);
+
 /** The manual asset account a position belongs in; refuses a synced account or a liability. */
 export async function positionsAccount(db: Db, accountId: string) {
   const account = await manualAccount(db, accountId);
@@ -74,8 +78,9 @@ export const addManualPosition = defineWrite({
   name: "holdings.addManual",
   description:
     "Add a position the owner keeps by hand to a manual asset account: a symbol (e.g. BTC), the quantity held and a " +
-    "unit price with its date, as exact decimals, and optionally its total cost. The account's value becomes the sum " +
-    "of its positions.",
+    "unit price with its date, as exact decimals, and optionally its total cost. assetClass is crypto (a coin, the " +
+    "default) or equity (a stock, ETF or fund), which decides where its market price comes from. The account's value " +
+    "becomes the sum of its positions.",
   allowedActors: ["user"],
   input: z.object({
     accountId: z.uuid(),
@@ -84,6 +89,7 @@ export const addManualPosition = defineWrite({
     unitPrice: decimal("Price"),
     priceOn: valueDate.optional(),
     costBasisCents: costBasis,
+    assetClass: assetClassInput.default("crypto"),
     today: valueDate.optional(),
   }),
   apply: async (ctx, input) => {
@@ -101,6 +107,7 @@ export const addManualPosition = defineWrite({
       unitPrice: input.unitPrice,
       priceOn: input.priceOn ?? on,
       costBasisCents: input.costBasisCents ?? null,
+      assetClass: input.assetClass,
     });
     // The opening trade (#247), so the position is what its trades add up to.
     await ctx.insert(trades, { accountId: input.accountId, on, symbol: input.symbol, side: "buy", quantity: input.quantity, price: input.unitPrice });
@@ -145,6 +152,19 @@ export const setManualPrice = defineWrite({
   },
 });
 
+export const setManualAssetClass = defineWrite({
+  name: "holdings.setAssetClass",
+  description: "Say what kind of asset a hand-entered position is: crypto (a coin) or equity (a stock, ETF or fund). This decides where its market price comes from.",
+  allowedActors: ["user"],
+  input: z.object({ positionId: z.uuid(), assetClass: assetClassInput }),
+  apply: async (ctx, { positionId, assetClass }) => {
+    const row = await position(ctx.db, positionId);
+    if (row.assetClass === assetClass) throw new Error("It's already that kind of asset");
+    await ctx.update(manualPositions, positionId, { assetClass });
+    return { id: positionId };
+  },
+});
+
 export const removeManualPosition = defineWrite({
   name: "holdings.remove",
   description: "Remove a hand-entered position, and its trades: for one entered by mistake. Revalues its account without it.",
@@ -171,6 +191,7 @@ export type ManualPosition = {
   unitPrice: string;
   priceOn: string;
   costBasisCents: number | null;
+  assetClass: "crypto" | "equity";
   valueCents: number;
 };
 
@@ -185,6 +206,7 @@ export async function listManualPositions(db: Db): Promise<ManualPosition[]> {
     unitPrice: p.unitPrice,
     priceOn: p.priceOn,
     costBasisCents: p.costBasisCents,
+    assetClass: p.assetClass,
     valueCents: positionValueCents(p.quantity, p.unitPrice),
   }));
 }

@@ -52,7 +52,7 @@ import {
   unmatchTransfer,
 } from "@/operations/transactions";
 import { moveToCategory, moveToCategoryPreview } from "@/operations/recategorize";
-import { addManualPosition, removeManualPosition, setManualPrice, setManualQuantity } from "@/operations/holdings";
+import { addManualPosition, removeManualPosition, setManualAssetClass, setManualPrice, setManualQuantity } from "@/operations/holdings";
 import { backfillPrices, refreshQuotes } from "@/operations/market";
 import { addTrade, removeTrade, updateTrade } from "@/operations/trades";
 
@@ -106,6 +106,7 @@ export const operations: Operation[] = [
   setManualQuantity,
   setManualPrice,
   removeManualPosition,
+  setManualAssetClass,
   refreshQuotes,
   backfillPrices,
   addTrade,

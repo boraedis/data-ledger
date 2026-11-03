@@ -94,7 +94,8 @@ describe("with the ledger (#232)", () => {
   });
 
   it("fills in past prices back to the first trade, once per symbol, and isn't due again within the hour", async () => {
-    const now = new Date(`${day}T15:00:00Z`);
+    // The real clock: "not due" is measured from the logged command's own time.
+    const now = new Date();
     const { source, asked } = fakeHistory(() => "31000");
     expect(await backfillPricesIfDue(db, { now, sources: [source] })).toMatchObject({ status: "backfilled", symbols: 1 });
     const yesterday = new Date(now.getTime() - 86_400_000).toISOString().slice(0, 10);
