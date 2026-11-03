@@ -111,7 +111,7 @@ export function parsePeriod(params: PeriodParams, today: string): Period {
 export type Lookup = { categories: Map<string, CategoryInfo>; accountNames: Map<string, string> };
 
 /** Spending lines only: expense categories. */
-const isSpend = (line: SpendLine, lookup: Lookup) => lookup.categories.get(line.categoryId)?.kind === "expense";
+export const isSpend = (line: SpendLine, lookup: Lookup) => lookup.categories.get(line.categoryId)?.kind === "expense";
 
 // A parent's own spending, when it also has subcategories, is a row of its own.
 const SELF = ":self";
