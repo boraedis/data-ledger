@@ -220,7 +220,7 @@ export const itemAnalysis = defineRead({
     const months = rangeMonths(range, on);
     const from = firstOfMonth(monthIndex(on) - months + 1);
     const [series, year, versions, lines, { rows, labelOf }] = await Promise.all([
-      budgetMonthly.run(db, { on, gross, months, includeEnded: true, details: false, moved: false }),
+      budgetMonthly.run(db, { on, gross, months, includeEnded: true, details: false, moved: false, daily: false }),
       budgetYear.run(db, { year: Number(on.slice(0, 4)), gross }),
       loadVersions(db),
       spendingLines.run(db, { from, to: on, budgetOnly: true, gross }),
@@ -325,7 +325,8 @@ export const budgetMonthly = defineRead({
     "`includeEnded` also lists targets in effect during the window but not on `on`. Each month counts its transactions. " +
     "`details` adds, for a month with a target, the period it falls in as budgets.status had it then: dates, target, " +
     "rollover carried in, rebalancing, available, and whether it rolls over. `moved` adds movedCents to each month: " +
-    "budget moved into (+) or out of (−) the target that month by budgets.rebalance. Net unless gross is true.",
+    "budget moved into (+) or out of (−) the target that month by budgets.rebalance. `daily` adds dailyCents to each " +
+    "month: its net spend on each day, in order, adding up to spentCents. Net unless gross is true.",
   input: z.object({
     on: isoDate.optional(),
     gross: z.boolean().default(false),
@@ -333,8 +334,9 @@ export const budgetMonthly = defineRead({
     includeEnded: z.boolean().default(false),
     details: z.boolean().default(false),
     moved: z.boolean().default(false),
+    daily: z.boolean().default(false),
   }),
-  run: async (db, { on = today(), gross, months, includeEnded, details, moved }) => {
+  run: async (db, { on = today(), gross, months, includeEnded, details, moved, daily }) => {
     const windowStart = firstOfMonth(monthIndex(on) - months + 1);
     const versions = await loadVersions(db);
     // Rollover carries from the target's first period, so with details the
@@ -350,7 +352,7 @@ export const budgetMonthly = defineRead({
     ]);
     const categoryInfo = rows.map((r) => ({ id: r.id, parentId: r.parentId, kind: r.kind }));
     const spend = lines.map((l) => ({ date: l.date, amountCents: l.amountCents, categoryId: l.categoryId, transactionId: l.transactionId }));
-    const series = monthlySeries({ on, versions, lines: spend.filter((l) => l.date >= windowStart), categories: categoryInfo, months, includeEnded });
+    const series = monthlySeries({ on, versions, lines: spend.filter((l) => l.date >= windowStart), categories: categoryInfo, months, includeEnded, daily });
     const periods = details ? periodsByKey({ on, versions, lines: spend, categories: categoryInfo, adjustments }) : null;
     return [...series].map(([key, bars]) => {
       const categoryId = key === BUFFER ? null : key;
