@@ -90,7 +90,8 @@ describe("hand-entered positions (#231)", () => {
   it("is the owner's alone: Tally can't write positions, and no read exposes them", async () => {
     await expect(run("holdings.addManual", { accountId: wallet, symbol: "ZQC", quantity: "1", unitPrice: "1" }, "tally")).rejects.toThrow();
     const holdings = describeOperations().filter((op) => op.name.startsWith("holdings."));
-    expect(holdings.map((op) => op.kind)).toEqual(["write", "write", "write", "write"]);
+    expect(holdings.length).toBeGreaterThan(0);
+    expect(holdings.every((op) => op.kind === "write")).toBe(true);
     // What a write returns carries an id, never a quantity or value.
     expect((await add("ZQC", "0.5", "40000")).output).toEqual({ id: expect.any(String) });
   });

@@ -18,12 +18,12 @@ import type { AssetClass } from "@/lib/prices/source";
 // never stored: net worth stays a read path.
 //
 // Two kinds of account have positions: a manual one with positions entered
-// by hand (#231), whose last value is quantity × the owner's price, priced
-// as crypto; and a synced brokerage or retirement account, whose last value
+// by hand (#231), whose last value is quantity × the owner's price, each
+// priced as the kind of asset the owner said it is (#244); and a synced brokerage or retirement account, whose last value
 // is its newest holdings snapshot, priced as equities (Tiingo, once its key
 // is set; until then those keep their balance).
 
-export type LivePosition = { symbol: string; quantity: string; lastValueCents: number };
+export type LivePosition = { symbol: string; quantity: string; lastValueCents: number; assetClass: AssetClass };
 
 export type LiveValue = {
   valueCents: number;
@@ -35,15 +35,15 @@ export type LiveValue = {
   unpriced: string[];
 };
 
-/** The live value of one account from its balance, its positions and the fresh quotes. Pure. */
-export function liveValue(balanceCents: number, positions: LivePosition[], quotes: Map<string, Quote>): LiveValue {
+/** The live value of one account from its balance, its positions and the fresh quotes, by class. Pure. */
+export function liveValue(balanceCents: number, positions: LivePosition[], quotes: Map<AssetClass, Map<string, Quote>>): LiveValue {
   const lastTotal = positions.reduce((s, p) => s + p.lastValueCents, 0);
   const cashAndOtherCents = balanceCents - lastTotal;
   let valueCents = cashAndOtherCents;
   let pricesAsOf: Date | null = null;
   const unpriced: string[] = [];
   for (const p of positions) {
-    const q = quotes.get(p.symbol.toUpperCase());
+    const q = quotes.get(p.assetClass)?.get(p.symbol.toUpperCase());
     if (q && q.price !== null && !q.stale && q.asOf) {
       valueCents += positionValueCents(p.quantity, q.price);
       if (!pricesAsOf || q.asOf < pricesAsOf) pricesAsOf = q.asOf;
@@ -89,12 +89,12 @@ export async function liveValues(db: Db, { now = new Date() }: { now?: Date } = 
     const own = manual.filter((p) => p.accountId === a.id);
     const held = synced.filter((p) => p.accountId === a.id);
     if (own.length) {
-      const positions = own.map((p) => ({ symbol: p.symbol, quantity: p.quantity, lastValueCents: positionValueCents(p.quantity, p.unitPrice) }));
-      out.set(a.id, liveValue(a.balanceCents, positions, quotes.get("crypto")!));
+      const positions = own.map((p) => ({ symbol: p.symbol, quantity: p.quantity, lastValueCents: positionValueCents(p.quantity, p.unitPrice), assetClass: p.assetClass }));
+      out.set(a.id, liveValue(a.balanceCents, positions, quotes));
     } else if (held.length) {
       // A position without a symbol can't be priced; it stays at its last value.
-      const positions = held.map((p) => ({ symbol: p.symbol ?? `(${p.description})`, quantity: p.shares, lastValueCents: p.marketValueCents }));
-      out.set(a.id, liveValue(a.balanceCents, positions, quotes.get("equity")!));
+      const positions = held.map((p) => ({ symbol: p.symbol ?? `(${p.description})`, quantity: p.shares, lastValueCents: p.marketValueCents, assetClass: "equity" as const }));
+      out.set(a.id, liveValue(a.balanceCents, positions, quotes));
     }
   }
   return out;

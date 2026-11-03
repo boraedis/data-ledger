@@ -7,13 +7,21 @@ import { normalizeQuantity } from "@/lib/holdings/value";
 import { formatCents, parseAmountCents } from "@/lib/money";
 import { priceTime } from "@/lib/prices/describe";
 import type { ManualPosition } from "@/operations/holdings";
-import { addPosition, removePosition, setPositionPrice, setPositionQuantity } from "./actions";
+import { addPosition, removePosition, setPositionAssetClass, setPositionPrice, setPositionQuantity } from "./actions";
 
 // Positions kept by hand in a manual account (#231): crypto, say, until a
 // connection covers it. Each is a symbol, how much is held and a price per
 // unit with its date; the account's value is their total, recorded as that
 // day's value on every change. Until live prices (#229), every price here
 // is the owner's, so its date is always shown.
+
+// What kind of asset a position is decides where its market price comes
+// from (#244): Coinbase for coins, Tiingo for stocks, ETFs and funds.
+type AssetClass = ManualPosition["assetClass"];
+const KINDS: { value: AssetClass; label: string }[] = [
+  { value: "crypto", label: "Coins and tokens" },
+  { value: "equity", label: "Stocks, ETFs and funds" },
+];
 
 /** Today in the owner's own time zone. */
 function localToday(): string {
@@ -90,6 +98,7 @@ function PositionRow({ position: p }: { position: PositionWithMarket }) {
   const [quantity, setQuantity] = useState(p.quantity);
   const [price, setPrice] = useState(p.unitPrice);
   const [priceOn, setPriceOn] = useState(localToday);
+  const [kind, setKind] = useState<AssetClass>(p.assetClass);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -100,10 +109,11 @@ function PositionRow({ position: p }: { position: PositionWithMarket }) {
     if (!q || !/[1-9]/.test(q)) return setError("Quantity should be a positive number like 0.5");
     if (!u || !/[1-9]/.test(u)) return setError("Price should be a positive number like 61,234.50");
     startTransition(async () => {
-      // Two operations, each logged and undoable on its own: how much is held, and what it's worth.
+      // Separate operations, each logged and undoable on its own: how much is held, what it's worth, and what kind it is.
       const results = [
         q !== p.quantity ? await setPositionQuantity(p.id, p.symbol, q) : undefined,
         u !== p.unitPrice || priceOn !== p.priceOn ? await setPositionPrice(p.id, p.symbol, u, priceOn) : undefined,
+        kind !== p.assetClass ? await setPositionAssetClass(p.id, p.symbol, kind) : undefined,
       ];
       const failed = results.find((r) => r?.error);
       setError(failed?.error ?? null);
@@ -121,6 +131,7 @@ function PositionRow({ position: p }: { position: PositionWithMarket }) {
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span>
           <span className="font-medium">{p.symbol}</span>{" "}
+          <span className="text-xs text-muted-foreground">{p.assetClass === "equity" ? "stock or fund" : "coin"}</span>{" "}
           <span className="text-muted-foreground tabular-nums">
             {formatQuantity(p.quantity)} × {formatPrice(p.unitPrice)}
           </span>
@@ -146,6 +157,13 @@ function PositionRow({ position: p }: { position: PositionWithMarket }) {
           <span className="text-muted-foreground">at</span>
           <Input aria-label={`${p.symbol} price per unit`} value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className="h-8 w-32" />
           <Input aria-label="Price as of" type="date" value={priceOn} max={localToday()} onChange={(e) => setPriceOn(e.target.value)} className="h-8 w-40" />
+          <select aria-label="Kind of asset" value={kind} onChange={(e) => setKind(e.target.value as AssetClass)} className="h-8 rounded-md border bg-background px-2 text-sm">
+            {KINDS.map((k) => (
+              <option key={k.value} value={k.value}>
+                {k.label}
+              </option>
+            ))}
+          </select>
           <Button type="submit" size="sm" variant="outline" disabled={pending}>
             Save
           </Button>
@@ -162,6 +180,7 @@ function AddPosition({ account, onDone }: { account: { id: string; name: string 
   const [price, setPrice] = useState("");
   const [priceOn, setPriceOn] = useState(localToday);
   const [cost, setCost] = useState("");
+  const [kind, setKind] = useState<AssetClass>("crypto");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -175,7 +194,7 @@ function AddPosition({ account, onDone }: { account: { id: string; name: string 
     if (!u || !/[1-9]/.test(u)) return setError("Price should be a positive number like 61,234.50");
     if (costBasisCents === undefined) return setError("Total cost should be an amount like 1,200.00, or left empty");
     startTransition(async () => {
-      const result = await addPosition({ accountId: account.id, symbol: symbol.trim(), quantity: q, unitPrice: u, priceOn, costBasisCents }, account.name);
+      const result = await addPosition({ accountId: account.id, symbol: symbol.trim(), quantity: q, unitPrice: u, priceOn, costBasisCents, assetClass: kind }, account.name);
       if (result?.error) return setError(result.error);
       onDone();
     });
@@ -203,6 +222,16 @@ function AddPosition({ account, onDone }: { account: { id: string; name: string 
         <label className="space-y-1">
           <span className="text-xs text-muted-foreground">Price as of</span>
           <Input type="date" value={priceOn} max={localToday()} onChange={(e) => setPriceOn(e.target.value)} />
+        </label>
+        <label className="space-y-1">
+          <span className="block text-xs text-muted-foreground">Kind</span>
+          <select value={kind} onChange={(e) => setKind(e.target.value as AssetClass)} className="h-8 w-full rounded-md border bg-background px-2 text-sm">
+            {KINDS.map((k) => (
+              <option key={k.value} value={k.value}>
+                {k.label}
+              </option>
+            ))}
+          </select>
         </label>
         <label className="space-y-1">
           <span className="text-xs text-muted-foreground">Total cost (optional)</span>

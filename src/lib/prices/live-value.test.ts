@@ -22,26 +22,26 @@ describe("liveValue (#230)", () => {
   it("is cash and other, plus each position at its latest price", () => {
     // $1,000 balance: $800 in positions at the last sync, so $200 is cash and other.
     const positions = [
-      { symbol: "ZQC", quantity: "2", lastValueCents: 50_000 },
-      { symbol: "BLX", quantity: "10", lastValueCents: 30_000 },
+      { symbol: "ZQC", quantity: "2", lastValueCents: 50_000, assetClass: "crypto" as const },
+      { symbol: "BLX", quantity: "10", lastValueCents: 30_000, assetClass: "crypto" as const },
     ];
-    const v = liveValue(100_000, positions, new Map([["ZQC", fresh("300")], ["BLX", fresh("35")]]));
+    const v = liveValue(100_000, positions, new Map([["crypto", new Map([["ZQC", fresh("300")], ["BLX", fresh("35")]])]]));
     expect(v).toMatchObject({ cashAndOtherCents: 20_000, valueCents: 20_000 + 60_000 + 35_000, priced: 2, unpriced: [] });
   });
 
   it("leaves a position with no current price at its last value, and names it", () => {
     const old = new Date(NOW.getTime() - 3_600_000);
     const positions = [
-      { symbol: "ZQC", quantity: "2", lastValueCents: 50_000 },
-      { symbol: "BLX", quantity: "10", lastValueCents: 30_000 },
-      { symbol: "QQQ", quantity: "1", lastValueCents: 5_000 },
+      { symbol: "ZQC", quantity: "2", lastValueCents: 50_000, assetClass: "crypto" as const },
+      { symbol: "BLX", quantity: "10", lastValueCents: 30_000, assetClass: "crypto" as const },
+      { symbol: "QQQ", quantity: "1", lastValueCents: 5_000, assetClass: "crypto" as const },
     ];
     const quotes = new Map<string, Quote>([
       ["ZQC", fresh("300", old)],
       ["BLX", { price: "99", asOf: old, stale: true, source: "fake" }],
       ["QQQ", { price: null, asOf: null, stale: true, source: "fake" }],
     ]);
-    const v = liveValue(85_000, positions, quotes);
+    const v = liveValue(85_000, positions, new Map([["crypto", quotes]]));
     expect(v).toMatchObject({ valueCents: 60_000 + 30_000 + 5_000, priced: 1, unpriced: ["BLX", "QQQ"], pricesAsOf: old });
     expect(pricesNote(v)).toMatch(/prices as of .* UTC · BLX, QQQ at last value, no current price/);
     expect(pricesNote({ ...v, priced: 0 })).toBe(" · not valued live: no current prices");

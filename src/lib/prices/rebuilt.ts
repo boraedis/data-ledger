@@ -1,5 +1,5 @@
 import { and, eq, inArray } from "drizzle-orm";
-import { accounts, dailyPrices, trades } from "@/db/schema";
+import { accounts, dailyPrices, manualPositions, trades } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { positionValueCents } from "@/lib/holdings/value";
 import { holdingsOn, inOrder, type Trade } from "@/lib/holdings/replay";
@@ -108,6 +108,19 @@ export function rebuild(tradesByAccount: Map<string, PricedTrade[]>, closes: Map
   return { days, accounts: rebuilt, total, completeFrom };
 }
 
+/**
+ * The kind of asset each symbol is in each manual account (#244), from its
+ * position, keyed "accountId:SYMBOL". A synced account's symbols are
+ * equities. A symbol sold out of a manual account has no position left to
+ * say, and is taken as crypto, as every manual position was before #244.
+ */
+export async function manualClasses(db: Db): Promise<Map<string, AssetClass>> {
+  const rows = await db
+    .select({ accountId: manualPositions.accountId, symbol: manualPositions.symbol, assetClass: manualPositions.assetClass })
+    .from(manualPositions);
+  return new Map(rows.map((r) => [`${r.accountId}:${r.symbol.toUpperCase()}`, r.assetClass]));
+}
+
 /** The rebuilt history for every account with trades, through `through` (YYYY-MM-DD). */
 export async function rebuiltHistory(db: Db, through: string): Promise<RebuiltHistory> {
   const rows = await db
@@ -115,11 +128,15 @@ export async function rebuiltHistory(db: Db, through: string): Promise<RebuiltHi
     .from(trades)
     .innerJoin(accounts, eq(accounts.id, trades.accountId));
   if (!rows.length) return { days: [], accounts: [], total: [], completeFrom: null };
+  const classes = await manualClasses(db);
   const byAccount = new Map<string, PricedTrade[]>();
   const wanted = new Map<AssetClass, Set<string>>([["crypto", new Set()], ["equity", new Set()]]);
+  // Each trade's symbol is keyed by its class, so the same ticker as a coin and as a stock never share prices.
+  const keyOf = (assetClass: AssetClass, symbol: string) => `${assetClass}:${symbol}`;
   for (const { trade, source } of rows) {
-    byAccount.set(trade.accountId, [...(byAccount.get(trade.accountId) ?? []), { ...trade, accountId: trade.accountId }]);
-    wanted.get(source === "manual" ? "crypto" : "equity")!.add(trade.symbol);
+    const assetClass: AssetClass = source === "manual" ? (classes.get(`${trade.accountId}:${trade.symbol}`) ?? "crypto") : "equity";
+    byAccount.set(trade.accountId, [...(byAccount.get(trade.accountId) ?? []), { ...trade, accountId: trade.accountId, symbol: keyOf(assetClass, trade.symbol) }]);
+    wanted.get(assetClass)!.add(trade.symbol);
   }
   const closes = new Map<string, ClosePrice[]>();
   for (const [assetClass, symbols] of wanted) {
@@ -129,7 +146,7 @@ export async function rebuiltHistory(db: Db, through: string): Promise<RebuiltHi
       .from(dailyPrices)
       .where(and(eq(dailyPrices.assetClass, assetClass), inArray(dailyPrices.symbol, [...symbols])))
       .orderBy(dailyPrices.on);
-    for (const p of prices) closes.set(p.symbol, [...(closes.get(p.symbol) ?? []), p]);
+    for (const p of prices) closes.set(keyOf(assetClass, p.symbol), [...(closes.get(keyOf(assetClass, p.symbol)) ?? []), { ...p, symbol: keyOf(assetClass, p.symbol) }]);
   }
   return rebuild(byAccount, closes, through);
 }

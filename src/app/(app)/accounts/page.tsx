@@ -17,7 +17,7 @@ export default async function AccountsPage() {
   const [rows, positions, quotes, tradeRows, mismatches] = await Promise.all([
     db.select().from(accountsTable).orderBy(accountsTable.institution, accountsTable.name),
     listManualPositions(db),
-    latestQuotes(db, "crypto"),
+    Promise.all([latestQuotes(db, "crypto"), latestQuotes(db, "equity")]).then(([crypto, equity]) => ({ crypto, equity })),
     listTrades(db),
     tradeCheck(db),
   ]);
@@ -47,7 +47,8 @@ export default async function AccountsPage() {
     positions: positions
       .filter((p) => p.accountId === a.id)
       .map((p) => {
-        const q = quotes.get(p.symbol.toUpperCase());
+        // Its market price from the source for its kind (#244).
+        const q = quotes[p.assetClass].get(p.symbol.toUpperCase());
         return { ...p, market: q ? { price: q.price, asOf: q.asOf?.toISOString() ?? null, stale: q.stale } : null };
       }),
     trades: takesTrades(a) ? { rows: tradeRows.filter((t) => t.accountId === a.id), mismatches: mismatches.get(a.id) ?? [] } : undefined,

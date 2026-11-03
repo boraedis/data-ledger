@@ -14,8 +14,8 @@ import { execute } from "@/operations/runtime";
 // after()), and the nightly sync asks once; whichever comes first in an
 // hour refreshes, and the rest find nothing due and write nothing.
 //
-// What gets priced: the symbols of positions entered by hand (#231), as
-// crypto, and the symbols in each brokerage or retirement account's newest
+// What gets priced: the symbols of positions entered by hand (#231), each
+// as the kind of asset the owner said it is (#244), and the symbols in each brokerage or retirement account's newest
 // holdings snapshot, as equities (Tiingo, when TIINGO_API_KEY is set; without
 // it, equities aren't asked about and keep their synced value).
 //
@@ -31,7 +31,7 @@ export const defaultSources = (): PriceSource[] => {
 /** The symbols to price, by asset class. */
 export async function pricedSymbols(db: Db): Promise<Map<AssetClass, string[]>> {
   const [manual, latestDays] = await Promise.all([
-    db.selectDistinct({ symbol: sql<string>`upper(${manualPositions.symbol})` }).from(manualPositions),
+    db.selectDistinct({ symbol: sql<string>`upper(${manualPositions.symbol})`, assetClass: manualPositions.assetClass }).from(manualPositions),
     db
       .select({ accountId: holdingSnapshots.accountId, on: sql<string>`max(${holdingSnapshots.on})` })
       .from(holdingSnapshots)
@@ -53,9 +53,10 @@ export async function pricedSymbols(db: Db): Promise<Map<AssetClass, string[]>> 
           ),
         )
     : [];
+  const of = (assetClass: AssetClass) => manual.filter((r) => r.assetClass === assetClass).map((r) => r.symbol);
   return new Map<AssetClass, string[]>([
-    ["crypto", manual.map((r) => r.symbol).sort()],
-    ["equity", held.map((r) => r.symbol).sort()],
+    ["crypto", [...new Set(of("crypto"))].sort()],
+    ["equity", [...new Set([...of("equity"), ...held.map((r) => r.symbol)])].sort()],
   ]);
 }
 

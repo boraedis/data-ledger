@@ -297,6 +297,10 @@ export const holdingSnapshots = pgTable(
   ],
 );
 
+// What kind of asset a price is for (#229, #244): coins and tokens, priced
+// by Coinbase, or stocks, ETFs and funds, priced by Tiingo.
+export const assetClass = pgEnum("asset_class", ["crypto", "equity"]);
+
 // Positions the owner keeps up by hand in a manual account (#231): crypto
 // that no connection covers yet, say. The account's value is the sum of
 // quantity × unit price over these, written as its dated balance by every
@@ -315,6 +319,9 @@ export const manualPositions = pgTable(
       .references(() => accounts.id, { onDelete: "restrict" }),
     // As the owner writes it ("BTC"); unique per account, ignoring case.
     symbol: text("symbol").notNull(),
+    // Which source prices it (#244): a coin from Coinbase, or a stock, ETF or
+    // fund from Tiingo. Positions from before this were all crypto.
+    assetClass: assetClass("asset_class").notNull().default("crypto"),
     // Exact decimals: crypto quantities and prices run to many places.
     quantity: numeric("quantity").notNull(),
     // The owner's price per unit, and the day it's from. Until live prices
@@ -364,7 +371,6 @@ export const trades = pgTable(
 // an hour when a page that shows values is opened, and by the nightly sync
 // (src/lib/prices/refresh.ts). What's asked of a provider is a symbol and
 // nothing else; quantities and accounts never leave the app.
-export const assetClass = pgEnum("asset_class", ["crypto", "equity"]);
 
 export const quotes = pgTable(
   "quotes",

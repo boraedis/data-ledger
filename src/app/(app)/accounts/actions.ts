@@ -42,7 +42,10 @@ export async function deleteManualAccount(accountId: string, name: string): Resu
 }
 
 // Positions kept by hand (#231). Reasons name the symbol, never a quantity or price.
-export async function addPosition(input: { accountId: string; symbol: string; quantity: string; unitPrice: string; priceOn: string; costBasisCents: number | null }, accountName: string): Result {
+export async function addPosition(
+  input: { accountId: string; symbol: string; quantity: string; unitPrice: string; priceOn: string; costBasisCents: number | null; assetClass: "crypto" | "equity" },
+  accountName: string,
+): Result {
   return run("holdings.addManual", input, `Added ${input.symbol.toUpperCase()} to "${accountName}"`, "Couldn't add the position");
 }
 
@@ -54,12 +57,19 @@ export async function setPositionPrice(positionId: string, symbol: string, unitP
   return run("holdings.setPrice", { positionId, unitPrice, priceOn }, `Updated the price of ${symbol} as of ${priceOn}`, "Couldn't update the price");
 }
 
+export async function setPositionAssetClass(positionId: string, symbol: string, assetClass: "crypto" | "equity"): Result {
+  return run("holdings.setAssetClass", { positionId, assetClass }, `Marked ${symbol} as ${assetClass === "equity" ? "a stock, ETF or fund" : "a coin"}`, "Couldn't change the kind of asset");
+}
+
 export async function removePosition(positionId: string, symbol: string): Result {
   return run("holdings.remove", { positionId }, `Removed ${symbol}`, "Couldn't remove the position");
 }
 
 // The trade log (#247). Reasons name the symbol, never a quantity or price.
-export async function addTrade(input: { accountId: string; on: string; side: string; symbol: string; quantity: string; price: string | null }, accountName: string): Result {
+export async function addTrade(
+  input: { accountId: string; on: string; side: string; symbol: string; quantity: string; price: string | null; assetClass?: "crypto" | "equity" },
+  accountName: string,
+): Result {
   return run("trades.add", input, `Recorded a trade of ${input.symbol.toUpperCase()} in "${accountName}"`, "Couldn't record the trade");
 }
 
