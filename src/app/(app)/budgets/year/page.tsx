@@ -72,8 +72,6 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
   const later = shiftMonth(month, MONTHS) > thisMonth ? thisMonth : shiftMonth(month, MONTHS);
 
   // What the grid and its tooltips (#139) need, links worked out here.
-  // A month's transactions are on the target's own page (#174).
-  const transactionsHref = (categoryId: string | null, m: string) => `${itemHref(categoryId, { ...view, month: m.slice(0, 7) })}#transactions`;
   const gridRows: GridRow[] = rows.map((r, ri) => {
     // A quarterly or annual target counts once per period, not per month (#157).
     const targeted = gridSegments(r.months).flatMap((s) => segmentFigures(s) ?? []);
@@ -85,11 +83,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
       total: totals.byRow[ri],
       targeted: targeted.length,
       over: targeted.filter((m) => m.spentCents > m.targetCents).length,
-      months: r.months.map((m) => ({
-        ...m,
-        href: href("/budgets/month", { month: m.month.slice(0, 7) }),
-        transactionsHref: m.targetCents === null ? null : transactionsHref(r.categoryId, m.month),
-      })),
+      months: r.months,
     };
   });
   const gridColumns: GridColumn[] = columns.map((c, i) => {
@@ -126,7 +120,7 @@ export default async function BudgetYearPage(props: PageProps<"/budgets/year">) 
       </div>
       <p className="text-sm text-muted-foreground">
         Each target&apos;s spending against the target it had that month: green under, red over, deeper the further off (yellow while still in progress: ahead of pace but under), with the amount over (+) or under (−) where there&apos;s room.
-        A quarterly or annual target is one box per period, spanning its months, against the period&apos;s target; in the totals it counts at its even monthly share, so months add up. Totals add up only the months that had a target. Tap a month to open it.{" "}
+        A quarterly or annual target is one box per period, spanning its months, against the period&apos;s target; in the totals it counts at its even monthly share, so months add up. Totals add up only the months that had a target. A square opens its target; a month&apos;s name opens that month.{" "}
         {gross ? (
           <>
             Showing gross spending.{" "}
