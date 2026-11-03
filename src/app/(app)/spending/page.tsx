@@ -22,6 +22,7 @@ import { read } from "@/operations/runtime";
 import { misfiledTransfers, spendingLines, uncategorizedSpend } from "@/operations/transactions";
 import { MisfiledTransfers } from "../cash-flow/misfiled-transfers";
 import { PaceChart } from "./pace-chart";
+import { SplitChart } from "./split-chart";
 
 // Spending (#66): where the money went over a period, by category, merchant
 // or account, each against the period before. The lines are
@@ -31,7 +32,8 @@ import { PaceChart } from "./pace-chart";
 // Account rows show names only: never balances or account numbers.
 //
 // Above the table, the period's pace against the typical (#264): see
-// lib/spending/pace.ts.
+// lib/spending/pace.ts. Then the split, this period against the last
+// (#265), from the table's own rows.
 
 const GROUPINGS: { id: Grouping; label: string }[] = [
   { id: "category", label: "Category" },
@@ -305,6 +307,10 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
           typicalLabel={pace.typicalLabel}
           title={`Spending so far in ${period.label}${pace.typicalLabel ? ", against the typical" : ""}`}
         />
+      )}
+
+      {rows.length === 0 ? null : (
+        <SplitChart rows={rows} label={period.label} prevLabel={period.prev.label} hrefFor={(key) => href({ sel: key }, "#behind")} />
       )}
 
       {rows.length === 0 ? null : (
