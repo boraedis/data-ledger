@@ -6,12 +6,13 @@ import { formatCents } from "@/lib/money";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { listTags } from "@/operations/tags";
-import { getTransaction } from "@/operations/transactions";
+import { getTransaction, pairingCandidates } from "@/operations/transactions";
 import { NotFoundError } from "@/operations/tracked";
 import { ACTIVITY_LABELS } from "@/lib/investments/activity";
 import { canPairKinds } from "@/lib/investments/transfers";
 import { listAccounts } from "@/operations/accounts";
 import { AddOtherHalf } from "./add-other-half";
+import { PairWithExisting } from "./pair-with-existing";
 import { TransactionEditor } from "./editor";
 import { listPeople, transactionReimbursements } from "@/operations/reimbursements";
 import { SharePanel } from "./share-panel";
@@ -45,6 +46,8 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
     txn.transferUnmatched && sourceKind
       ? accts.filter((a) => !a.manual && a.id !== txn.accountId && canPairKinds(sourceKind, a.kind)).map((a) => ({ id: a.id, name: a.name }))
       : [];
+  // Rows that already exist and could be its other half (#252), including ones "Not a transfer" rejected.
+  const existingHalves = txn.transferUnmatched ? await pairingCandidates(db, txn.id) : [];
 
   return (
     <div className="space-y-4">
@@ -87,6 +90,7 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
           income below, or it counts as neither.
         </p>
       ) : null}
+      {existingHalves.length > 0 ? <PairWithExisting transactionId={txn.id} amountCents={txn.amountCents} candidates={existingHalves} /> : null}
       {otherHalfAccounts.length > 0 ? (
         <AddOtherHalf transactionId={txn.id} accounts={otherHalfAccounts} description={txn.description} />
       ) : null}

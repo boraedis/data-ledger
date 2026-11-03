@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, or, sql, type SQL } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, isNull, lte, ne, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import {
@@ -20,7 +20,7 @@ import { merchantMemory } from "@/lib/categorize/match";
 import { FLAG_KINDS } from "@/lib/suspicious/checks";
 import { searchTerms } from "@/lib/transactions/search";
 import { isInvestmentKind, investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
-import { TRANSFER_PASSES, findTransferPairs } from "@/lib/investments/transfers";
+import { TRANSFER_PASSES, TRANSFER_WINDOW_DAYS, canPairKinds, findTransferPairs } from "@/lib/investments/transfers";
 import { DAYS_AFTER as MANUAL_DAYS_AFTER, DAYS_BEFORE as MANUAL_DAYS_BEFORE } from "@/lib/manual/match";
 import { distribute } from "@/lib/reimbursements/match";
 import type { Db } from "@/db/types";
@@ -1038,6 +1038,59 @@ export const pairAsTransfer = defineWrite({
     return { paired: [a.id, b.id] };
   },
 });
+
+export type PairingCandidate = { id: string; postedOn: string; accountName: string; description: string; categoryName: string | null };
+
+/**
+ * Existing rows that could be an unpaired transfer's other half (#252): the
+ * exact opposite amount, in another account the matcher would pair it with,
+ * within the pairing window, posted, unpaired and not split. Rows rejected
+ * earlier are included on purpose: "Not a transfer" rejects both sides, and
+ * this is the way back from a mistake. Nearest in date first.
+ *
+ * A plain function for the transaction page, not a registered read: every
+ * registered read is a Tally tool, and the owner picks the pair here
+ * (transactions.pairAsTransfer does the writing).
+ */
+export async function pairingCandidates(db: Db, transactionId: string): Promise<PairingCandidate[]> {
+  const [source] = await db
+    .select({ accountId: transactions.accountId, amountCents: transactions.amountCents, postedOn: transactions.postedOn, kind: accounts.type })
+    .from(transactions)
+    .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+    .where(eq(transactions.id, transactionId));
+  if (!source || source.amountCents === 0) return [];
+  const day = (iso: string) => Date.parse(`${iso}T00:00:00Z`);
+  const shift = (offset: number) => new Date(day(source.postedOn) + offset * 86_400_000).toISOString().slice(0, 10);
+  const rows = await db
+    .select({
+      id: transactions.id,
+      postedOn: transactions.postedOn,
+      description: transactions.description,
+      accountName: sql<string>`coalesce(${accounts.displayName}, ${accounts.name})`,
+      kind: accounts.type,
+      categoryName: categories.name,
+    })
+    .from(transactions)
+    .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+    .leftJoin(categories, eq(categories.id, transactions.categoryId))
+    .where(
+      and(
+        eq(transactions.amountCents, -source.amountCents),
+        ne(transactions.accountId, source.accountId),
+        isNull(transactions.transferPairId),
+        eq(transactions.pending, false),
+        isNull(transactions.provisionalSource),
+        eq(transactions.isSplit, false),
+        gte(transactions.postedOn, shift(-TRANSFER_WINDOW_DAYS)),
+        lte(transactions.postedOn, shift(TRANSFER_WINDOW_DAYS)),
+      ),
+    );
+  return rows
+    .filter((r) => canPairKinds(source.kind, r.kind))
+    .sort((a, b) => Math.abs(day(a.postedOn) - day(source.postedOn)) - Math.abs(day(b.postedOn) - day(source.postedOn)) || a.postedOn.localeCompare(b.postedOn))
+    .slice(0, 8)
+    .map((r) => ({ id: r.id, postedOn: r.postedOn, accountName: r.accountName, description: r.description, categoryName: r.categoryName }));
+}
 
 export const dismissTransfer = defineWrite({
   name: "transactions.dismissTransfer",

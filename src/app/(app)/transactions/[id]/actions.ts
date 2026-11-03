@@ -68,6 +68,22 @@ export async function notATransfer(transactionId: string) {
   return run(transactionId, "transactions.unmatchTransfer", {}, "Marked as not a transfer");
 }
 
+// Pairing with a row that already exists (#252): the way back from "Not a
+// transfer", which rejects both sides. The operation checks the amounts, the
+// accounts and that neither is paired; the page just names the two rows.
+export async function pairWithExisting(transactionId: string, otherId: string, amountCents: number): Promise<ActionResult> {
+  const [outId, inId] = amountCents < 0 ? [transactionId, otherId] : [otherId, transactionId];
+  try {
+    await executeAsOwner({ operation: "transactions.pairAsTransfer", input: { outId, inId }, reason: "Paired with an existing transaction by hand" });
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Something went wrong" };
+  }
+  for (const id of [transactionId, otherId]) revalidatePath(`/transactions/${id}`);
+  revalidatePath("/transactions");
+  revalidatePath("/inbox");
+  return { ok: true };
+}
+
 // Adding the other half of an unpaired transfer creates a row, so it can't
 // go through run(): on success the page moves to the new row, which is where
 // the owner can see both sides paired.
