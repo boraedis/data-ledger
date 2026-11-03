@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { netBands } from "@/lib/cashflow/chart";
-import type { TypicalSlot } from "@/lib/cashflow/typical";
+import type { TypicalLine, TypicalSlot } from "@/lib/cashflow/typical";
 import { formatCents } from "@/lib/money";
 
 // Cash in against cash out over a period (#171, and #172 by day): one axis,
@@ -34,6 +34,7 @@ export function FlowChart({
   legend = { in: "Cash in", out: "Cash out" },
   steps,
   typical = null,
+  labelledOnly = false,
 }: {
   slots: FlowSlot[];
   title: string;
@@ -41,7 +42,9 @@ export function FlowChart({
   legend?: { in: string; out: string };
   // With running totals (a month by day, #172): each slot's own amounts, which the table lists.
   steps?: { inCents: number; outCents: number }[];
-  typical?: { label: string; slots: TypicalSlot[] } | null;
+  typical?: TypicalLine | null;
+  // Only slots with a label of their own get one on the axis, where the default thinning won't do (a year by day labels the months' first days).
+  labelledOnly?: boolean;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   // The plot stretches to the width at a fixed height (in % of it), so on
@@ -113,7 +116,7 @@ export function FlowChart({
             {typicalAt ? (
               <span className="text-muted-foreground">
                 {" "}
-                · typical: in {formatCents(typicalAt.inCents)} · out {formatCents(typicalAt.outCents)}
+                · typical ({typicalAt.periods === 1 ? `1 ${typical!.unit}` : `avg of ${typicalAt.periods} ${typical!.unit}s`}): in {formatCents(typicalAt.inCents)} · out {formatCents(typicalAt.outCents)}
               </span>
             ) : null}
           </span>
@@ -171,20 +174,23 @@ export function FlowChart({
             ) : null}
           </div>
           <div className="relative mt-1 h-3 text-[10px] text-muted-foreground" aria-hidden>
-            {slots.map((s, i) =>
-              i % every === 0 || i === slots.length - 1 ? (
+            {slots.map((s, i) => {
+              const labelled = labelledOnly ? s.label !== "" : i % every === 0 || i === slots.length - 1;
+              if (!labelled) return null;
+              // On a phone, every other label (from the first), so a year's months don't collide.
+              const ordinal = labelledOnly ? slots.slice(0, i).filter((o) => o.label !== "").length : i / every;
+              return (
                 <span
                   key={i}
-                  // On a phone, every other label (from the first), so a year's months don't collide.
                   className={`absolute whitespace-nowrap ${i === 0 ? "" : i === slots.length - 1 ? "-translate-x-full" : "-translate-x-1/2"} ${i === at ? "text-foreground" : ""} ${
-                    slots.length > 6 && (i / every) % 2 === 1 ? "max-sm:hidden" : ""
+                    slots.length > 6 && ordinal % 2 === 1 ? "max-sm:hidden" : ""
                   }`}
                   style={{ left: `${x(i)}%` }}
                 >
                   {s.label}
                 </span>
-              ) : null,
-            )}
+              );
+            })}
           </div>
         </div>
       </div>

@@ -5,7 +5,7 @@ import type { AccountKind } from "@/lib/account-kinds";
 import type { AccountGroup, AccountInfo, Paycheck, Transfer } from "@/lib/cashflow/graph";
 import type { Lookup, SpendLine } from "@/lib/spending/analyze";
 import { budgetAccountIds, listAccounts } from "@/operations/accounts";
-import { completeMonths, typicalDays, typicalMonths, TYPICAL_PERIODS, type TypicalSlot } from "@/lib/cashflow/typical";
+import { completeMonths, typicalDays, typicalMonths, TYPICAL_PERIODS, type TypicalLine } from "@/lib/cashflow/typical";
 import { daysBetween } from "@/lib/cashflow/series";
 import { step, type ViewPeriod } from "@/lib/cashflow/view";
 import { cashFlowSeries } from "@/operations/cashflow";
@@ -191,28 +191,39 @@ export async function firstRecordedDay(db: Db): Promise<string | null> {
   return row?.on ?? null;
 }
 
-export type TypicalLine = { label: string; slots: TypicalSlot[] };
+/** Which Annual chart is showing: the year by month, or by day (running totals). */
+export type AnnualChart = "month" | "day";
 
 /**
- * The typical line for the Annual and Monthly charts (src/lib/cashflow/typical.ts):
- * what the three periods before predict. Only complete periods inside
- * recorded history count, so it shows once there are three, and not before.
+ * The typical line for the Annual and Monthly charts (src/lib/cashflow/typical.ts).
+ * Annual looks back up to three years: by month, the same month of each (a
+ * year history began part way through still gives its whole months); by day,
+ * only whole years, since a running total from mid-year isn't comparable.
+ * Monthly looks back three months, and needs all of them. Only complete
+ * periods inside recorded history count.
  */
-export async function typicalLine(db: Db, period: ViewPeriod, today: string, gross: boolean): Promise<TypicalLine | null> {
+export async function typicalLine(db: Db, period: ViewPeriod, today: string, gross: boolean, chart: AnnualChart = "month"): Promise<TypicalLine | null> {
   if (period.view === "pay") return null;
   const firstDay = await firstRecordedDay(db);
   if (!firstDay) return null;
+  const earlier: ViewPeriod[] = [];
+  for (let p = step(period, -1, today); p && earlier.length < TYPICAL_PERIODS; p = step(p, -1, today)) earlier.push(p);
+
   if (period.view === "annual") {
-    // January to March look back into the year before; fetch it only if history reaches that far.
-    const years = [period, ...(firstDay < period.from ? [step(period, -1, today)!] : [])];
+    // Years that end before history began have nothing to give.
+    const years = earlier.filter((y) => y.to >= firstDay && (chart === "month" || y.from >= firstDay));
+    if (years.length === 0) return null;
     const series = await Promise.all(years.map((y) => read(db, cashFlowSeries, { from: y.from, to: y.to, gross })));
-    const slots = typicalMonths(period.key, completeMonths(series.flatMap((s) => s.days), { firstDay, today }));
-    return slots.some(Boolean) ? { label: `Typical: average of the ${TYPICAL_PERIODS} months before`, slots } : null;
+    if (chart === "day") {
+      const slots = typicalDays(series.map((r) => r.days), daysBetween(period.from, period.to).length);
+      return slots ? { label: `Typical pace: average of up to the ${TYPICAL_PERIODS} years before`, unit: "year", slots } : null;
+    }
+    const slots = typicalMonths(period.key, completeMonths(series.flatMap((r) => r.days), { firstDay, today }));
+    return slots.some(Boolean) ? { label: `Typical: the same month, average of up to the ${TYPICAL_PERIODS} years before`, unit: "year", slots } : null;
   }
-  const priors: ViewPeriod[] = [];
-  for (let p = step(period, -1, today); p && priors.length < TYPICAL_PERIODS; p = step(p, -1, today)) priors.push(p);
-  if (priors.some((p) => p.from < firstDay)) return null;
-  const series = await Promise.all(priors.map((p) => read(db, cashFlowSeries, { from: p.from, to: p.to, gross })));
-  const slots = typicalDays(series.map((s) => s.days), daysBetween(period.from, period.to).length);
-  return slots ? { label: `Typical pace: average of the ${TYPICAL_PERIODS} months before`, slots } : null;
+
+  if (earlier.length < TYPICAL_PERIODS || earlier.some((p) => p.from < firstDay)) return null;
+  const series = await Promise.all(earlier.map((p) => read(db, cashFlowSeries, { from: p.from, to: p.to, gross })));
+  const slots = typicalDays(series.map((r) => r.days), daysBetween(period.from, period.to).length);
+  return slots ? { label: `Typical pace: average of the ${TYPICAL_PERIODS} months before`, unit: "month", slots } : null;
 }

@@ -1,25 +1,28 @@
 import { rollUp, runningTotals, type FlowDay } from "@/lib/cashflow/series";
 
-// The typical line on the Cash flow charts: what the three periods before
-// predict for this one. Annual's months get the average of the three months
-// before each (so January looks back into the year before); Monthly's days
-// get the average running pace of the three months before. Averages are of
-// complete, recorded periods only: a month that began before the history did
-// would pull the line down, and a month still going would too. With fewer
-// than three such periods there is no line, rather than one that looks
-// typical and isn't. Client-safe and pure.
+// The typical line on the Cash flow charts: what the periods before predict
+// for this one.
+//   - Annual, by month: each month is the average of the same month in the
+//     previous three years.
+//   - Annual, by day: each day is the average running total the previous
+//     three years had reached by that day.
+//   - Monthly, by day: each day is the average running total the three
+//     months before had by that day.
+// Averages are of complete, recorded periods only: a month that began before
+// the history did would pull the line down, and one still going would too.
+// Annual's lines use as many of the earlier years as have the data, up to
+// three, and say how many on each point; Monthly needs all three months, or
+// there is no line, rather than one that looks typical and isn't.
+// Client-safe and pure.
 
 export const TYPICAL_PERIODS = 3;
 
-export type TypicalSlot = { inCents: number; outCents: number } | null;
+/** One slot's typical, and how many earlier periods it averages. */
+export type TypicalSlot = { inCents: number; outCents: number; periods: number } | null;
+
+export type TypicalLine = { label: string; unit: "month" | "year"; slots: TypicalSlot[] };
 
 const average = (values: number[]) => Math.round(values.reduce((s, v) => s + v, 0) / values.length);
-
-const shiftMonth = (month: string, by: number) => {
-  const d = new Date(`${month}-01T00:00:00Z`);
-  d.setUTCMonth(d.getUTCMonth() + by);
-  return d.toISOString().slice(0, 7);
-};
 
 const lastDay = (start: string) => new Date(Date.UTC(Number(start.slice(0, 4)), Number(start.slice(5, 7)), 0)).getUTCDate();
 
@@ -37,26 +40,29 @@ export function completeMonths(days: FlowDay[], { firstDay, today }: { firstDay:
   return out;
 }
 
-/** The twelve months of `year`, each the average of the three months before it, or null where one of them isn't in `months`. */
+/**
+ * The twelve months of `year`, each the average of the same month in the
+ * (up to) three years before it that `months` has, or null where none has it.
+ */
 export function typicalMonths(year: string, months: Map<string, { inCents: number; outCents: number }>): TypicalSlot[] {
   return Array.from({ length: 12 }, (_, i) => {
-    const before = Array.from({ length: TYPICAL_PERIODS }, (_, k) => months.get(shiftMonth(`${year}-${String(i + 1).padStart(2, "0")}`, -(k + 1))));
-    if (before.some((m) => !m)) return null;
-    const found = before as { inCents: number; outCents: number }[];
-    return { inCents: average(found.map((m) => m.inCents)), outCents: average(found.map((m) => m.outCents)) };
+    const month = String(i + 1).padStart(2, "0");
+    const found = Array.from({ length: TYPICAL_PERIODS }, (_, k) => months.get(`${Number(year) - (k + 1)}-${month}`)).filter((m) => m !== undefined);
+    if (found.length === 0) return null;
+    return { inCents: average(found.map((m) => m.inCents)), outCents: average(found.map((m) => m.outCents)), periods: found.length };
   });
 }
 
 /**
- * A month's days, each the average of what the three months before had
- * running in and out by that day. A shorter month holds its final total for
- * the days it doesn't have. Null unless exactly three months are given.
+ * A period's days, each the average of what the earlier periods given had
+ * running in and out by that day. A shorter period holds its final total for
+ * the days it doesn't have. Null with none given.
  */
-export function typicalDays(priorMonths: FlowDay[][], length: number): TypicalSlot[] | null {
-  if (priorMonths.length !== TYPICAL_PERIODS || priorMonths.some((m) => m.length === 0)) return null;
-  const running = priorMonths.map(runningTotals);
+export function typicalDays(priors: FlowDay[][], length: number): TypicalSlot[] | null {
+  const running = priors.filter((p) => p.length > 0).map(runningTotals);
+  if (running.length === 0) return null;
   return Array.from({ length }, (_, i) => {
     const at = running.map((r) => r[Math.min(i, r.length - 1)]);
-    return { inCents: average(at.map((d) => d.inCents)), outCents: average(at.map((d) => d.outCents)) };
+    return { inCents: average(at.map((d) => d.inCents)), outCents: average(at.map((d) => d.outCents)), periods: running.length };
   });
 }
