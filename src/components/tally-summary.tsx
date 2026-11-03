@@ -4,12 +4,14 @@ import { TallyMascot } from "@/components/tally-mascot";
 import { MASCOT_COLOURS, type MascotMood } from "@/lib/tally/mascot";
 import type { LineTone, ReceiptLine, SummaryTone, SummaryView } from "@/lib/tally/summary";
 
-// Tally's summary of the night (#214), drawn. The night's figures lead, on
-// a printed receipt: counts as tally marks, lines in the status colours, a
-// double-ruled total. Under it, the full summary: a banner whose tint and
-// face follow how the night went (src/lib/tally/summary.ts), with the
-// note's own words. The receipt is always open; it's short, and it's what
-// to glance at before the triage below.
+// Tally's summary of the night (#214), drawn. The banner leads, kept to a
+// few lines so the triage below stays in view: a tint and a face that follow
+// how the night went (src/lib/tally/summary.ts), the headline and the chips.
+// Under it, two columns: the receipt, the night's figures on a printed slip
+// (counts as tally marks, lines in the status colours, a double-ruled
+// total), and beside it the full text of the note. On a narrow screen they
+// stack, receipt first. The receipt is always open; it's short, and it's
+// what to glance at before the triage.
 //
 // The receipt is paper whatever the theme, like the mascot: a character
 // keeps its own colours, and a slip of paper on a dark page is the point.
@@ -38,10 +40,9 @@ const PAPER_DOTS = "rgb(82 61 45 / 0.45)";
 export function TallySummary({ view, written }: { view: SummaryView; written: string }) {
   return (
     <section aria-label="Tally's summary" className="space-y-3">
-      <Receipt lines={view.lines} needs={view.needs} mood={view.mood} written={written} />
-      <div className={`flex items-center gap-4 rounded-xl border p-4 ${BANNER[view.tone]}`}>
-        <TallyMascot size={72} mood={view.mood} blink />
-        <div className="min-w-0 space-y-2">
+      <div className={`flex items-center gap-4 rounded-xl border p-3 ${BANNER[view.tone]}`}>
+        <TallyMascot size={56} mood={view.mood} blink />
+        <div className="min-w-0 space-y-1.5">
           <p className="text-xs text-muted-foreground">Tally&apos;s summary · Written {written}</p>
           {view.headline ? <p className="font-heading text-xl leading-snug">{view.headline}</p> : null}
           {view.chips.length ? (
@@ -55,13 +56,20 @@ export function TallySummary({ view, written }: { view: SummaryView; written: st
           ) : null}
         </div>
       </div>
-      {view.body.length ? (
-        <ul className="list-disc space-y-0.5 pl-9 text-sm">
-          {view.body.map((line, i) => (
-            <li key={i}>{line}</li>
-          ))}
-        </ul>
-      ) : null}
+      {/* Without any text to put beside it, the receipt keeps its own width. */}
+      <div className={view.body.length ? "grid gap-4 md:grid-cols-[minmax(0,24rem)_minmax(0,1fr)] md:items-start" : ""}>
+        <Receipt lines={view.lines} needs={view.needs} mood={view.mood} written={written} />
+        {view.body.length ? (
+          <div className="space-y-1.5">
+            <h2 className="text-sm font-medium text-muted-foreground">From Tally&apos;s note</h2>
+            <ul className="list-disc space-y-1 pl-5 text-sm">
+              {view.body.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
     </section>
   );
 }
