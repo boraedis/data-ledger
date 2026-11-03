@@ -255,6 +255,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     {t.experiencedOn ? ` (for ${t.experiencedOn})` : ""} · {accountName.get(t.accountId)}
                     {t.provisionalSource ? " · from an alert, not yet from the bank" : ""}
                     {t.manual ? " · added by hand" : ""}
+                    {t.imported ? " · imported from a CSV" : ""}
                   </span>
                   <span className="mt-0.5 flex flex-wrap gap-1 text-xs">
                     {t.pending ? <span className="rounded border border-dashed px-1.5">Pending</span> : null}

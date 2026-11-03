@@ -89,6 +89,30 @@ describe("adding, changing and deleting", () => {
     await expect(run("transactions.createManual", { accountId: p2p, postedOn: "2026-06-20", amountCents: -100, description: "x" }, "import")).rejects.toThrow(/may not run/);
   });
 
+  it("changes and deletes a row imported from a CSV export, which stays imported and is never offered for merging", async () => {
+    const imported = (
+      await db
+        .insert(transactions)
+        .values({ accountId: p2p, postedOn: "2026-06-20", amountCents: -4_250, description: "Dinner with Alex", merchant: "Dinner With Alex", externalId: "csv:2026-06-20:-4250:abc:0", source: "import" })
+        .returning()
+    )[0];
+    // A synced row for the same purchase would make a hand-added one ask to merge; an imported one doesn't.
+    await bankRow("2026-06-21", -4_250);
+    expect(await read(db, manualMatches, { transactionId: imported.id })).toEqual([]);
+
+    const changed = await run("transactions.updateManual", { transactionId: imported.id, description: "Dinner with Sam", amountCents: -4_500 });
+    expect(await row(imported.id)).toMatchObject({ source: "import", description: "Dinner with Sam", amountCents: -4_500, externalId: imported.externalId });
+    expect(await read(db, getTransaction, { transactionId: imported.id })).toMatchObject({ imported: true, manual: false });
+
+    await undoCommand(db, changed.commandId);
+    expect(await row(imported.id)).toMatchObject({ description: "Dinner with Alex", amountCents: -4_250 });
+
+    const deleted = await run("transactions.deleteManual", { transactionId: imported.id });
+    expect(await row(imported.id)).toBeUndefined();
+    await undoCommand(db, deleted.commandId);
+    expect(await row(imported.id)).toMatchObject({ source: "import" });
+  });
+
   it("takes history into a brokerage, and pairs a cash transfer with it", async () => {
     const [brokerage] = await db.select().from(accounts).where(eq(accounts.type, "brokerage"));
     const cashIn = (await db.insert(transactions).values({ accountId: checking, postedOn: "2026-01-10", amountCents: -123_45, description: "Example transfer out", externalId: "transfer-out" }).returning())[0];

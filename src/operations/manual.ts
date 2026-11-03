@@ -46,7 +46,14 @@ async function assertTakesManual(db: Db, accountId: string) {
 async function manualRow(ctx: WriteContext, transactionId: string) {
   const [row] = await ctx.db.select().from(transactions).where(eq(transactions.id, transactionId));
   if (!row) throw new NotFoundError("Transaction not found");
-  if (row.source !== "manual") throw new Error("Only a transaction added by hand can be changed or deleted; the bank's stay as reported");
+  // History imported from a CSV export (#35) is the owner's own file, not
+  // the bank's feed, so it can be corrected or removed like a hand-added row.
+  // It keeps its "import" source: it isn't offered for merging with a synced
+  // row, since the import already skipped what the sync had, and it counts
+  // like any other.
+  if (row.source !== "manual" && row.source !== "import") {
+    throw new Error("Only a transaction added by hand or imported from a CSV export can be changed or deleted; the bank's stay as reported");
+  }
   return row;
 }
 
@@ -145,7 +152,7 @@ export const addOtherHalf = defineWrite({
 
 export const updateManual = defineWrite({
   name: "transactions.updateManual",
-  description: "Change the date, amount or description of a transaction added by hand. The bank's transactions can't be changed.",
+  description: "Change the date, amount or description of a transaction added by hand or imported from a CSV export. The bank's synced transactions can't be changed.",
   allowedActors: ["user", "tally"],
   input: z.object({ transactionId: z.uuid(), postedOn: postedOn.optional(), amountCents: amountCents.optional(), description: description.optional() }),
   apply: async (ctx, { transactionId, ...change }) => {
@@ -170,7 +177,7 @@ export const updateManual = defineWrite({
 
 export const deleteManual = defineWrite({
   name: "transactions.deleteManual",
-  description: "Delete a transaction added by hand. The bank's transactions can't be deleted.",
+  description: "Delete a transaction added by hand or imported from a CSV export. The bank's synced transactions can't be deleted.",
   allowedActors: ["user", "tally"],
   input: z.object({ transactionId: z.uuid() }),
   apply: async (ctx, { transactionId }) => {

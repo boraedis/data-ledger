@@ -219,7 +219,7 @@ export const listTransactions = defineRead({
     "is true for money in that looks like a paycheck (the category or payer of linked ones) but has none. " +
     "`flagged` is true while a suspicious-charge alert on it waits for a verdict or was marked suspicious. " +
     "`provisionalSource` is set on a provisional transaction: one from a purchase alert that the bank hasn't " +
-    "reported yet (see transactions.provisional). `manual` is true for one the owner added by hand.",
+    "reported yet (see transactions.provisional). `manual` is true for one the owner added by hand, `imported` for one backfilled from a CSV export.",
   input: z.object({
     ...listFilterInput,
     uncategorized: z.boolean().optional(),
@@ -244,6 +244,7 @@ export const listTransactions = defineRead({
         pending: transactions.pending,
         provisionalSource: transactions.provisionalSource,
         manual: sql<boolean>`${transactions.source} is not distinct from 'manual'`,
+        imported: sql<boolean>`${transactions.source} is not distinct from 'import'`,
         accountId: transactions.accountId,
         categoryId: transactions.categoryId,
         isSplit: transactions.isSplit,
@@ -513,6 +514,7 @@ export const getTransaction = defineRead({
         pending: transactions.pending,
         provisionalSource: transactions.provisionalSource,
         manual: sql<boolean>`${transactions.source} is not distinct from 'manual'`,
+        imported: sql<boolean>`${transactions.source} is not distinct from 'import'`,
         categoryId: transactions.categoryId,
         isSplit: transactions.isSplit,
         accountId: transactions.accountId,
