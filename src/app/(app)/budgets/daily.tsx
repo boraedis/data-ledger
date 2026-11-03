@@ -4,17 +4,20 @@ import { useState } from "react";
 import type { BurndownDay } from "@/lib/budgets/burndown";
 import { formatCents } from "@/lib/money";
 
-// A budget period day by day (#149): the burndown, on the Month view.
+// A budget period day by day (#149): the burndown, on the Month view. The
+// Year view draws the same chart a month to a point (#268), with `unit`.
 //
 // The burndown is one axis (money left) with three lines: this period's
 // actual, the straight line from the full amount to zero, and what a typical
 // past period had left by the same day. Series are told apart by line style
 // as well as weight, with a legend.
 // Hovering (or tapping) a day reads out all three; a text summary carries
-// the same for screen readers.
+// the same for screen readers, and "As a table" lists every day.
 
 const dayLabel = (date: string, withWeekday = false) =>
   new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", { ...(withWeekday ? { weekday: "short" } : {}), month: "short", day: "numeric", timeZone: "UTC" });
+const monthLabel = (date: string, long = false) =>
+  new Date(`${date.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-US", { month: long ? "long" : "short", year: "numeric", timeZone: "UTC" });
 
 export function Burndown({
   days,
@@ -22,13 +25,23 @@ export function Burndown({
   pastPeriods,
   height = 180,
   title,
+  unit = "day",
+  typicalLabel,
+  idealLabel = "Straight line",
 }: {
   days: BurndownDay[];
   availableCents: number;
   pastPeriods: number;
   height?: number;
   title: string;
+  /** Each point a day, or (the Year view) the end of a month. */
+  unit?: "day" | "month";
+  /** The typical line's name in the legend, in place of "Typical (N past periods)". */
+  typicalLabel?: string;
+  /** The dashed line's name: the Year view's isn't straight, as months without a target add nothing. */
+  idealLabel?: string;
 }) {
+  const label = (date: string, long = false) => (unit === "month" ? monthLabel(date, long) : dayLabel(date, long));
   const [hover, setHover] = useState<number | null>(null);
   const W = 600;
   const pad = { top: 18, right: 8, bottom: 18, left: 8 };
@@ -58,8 +71,8 @@ export function Burndown({
       <figcaption className="sr-only">
         {title}.{" "}
         {at && at.leftCents !== null
-          ? `${dayLabel(at.date)}: ${at.leftCents < 0 ? `${formatCents(-at.leftCents)} over` : `${formatCents(at.leftCents)} left`}, against ${formatCents(at.idealCents)} on a straight line${
-              at.typicalCents !== null ? ` and ${formatCents(at.typicalCents)} in a typical period` : ""
+          ? `${label(at.date)}: ${at.leftCents < 0 ? `${formatCents(-at.leftCents)} over` : `${formatCents(at.leftCents)} left`}, against ${formatCents(at.idealCents)} on the ${idealLabel.toLowerCase()}${
+              at.typicalCents !== null ? ` and ${formatCents(at.typicalCents)} ${typicalLabel ? `on ${typicalLabel.toLowerCase()}` : "in a typical period"}` : ""
             }.`
           : ""}
       </figcaption>
@@ -75,21 +88,21 @@ export function Burndown({
             <svg width="16" height="6">
               <line x1="0" y1="3" x2="16" y2="3" className="stroke-muted-foreground" strokeWidth="1.5" strokeDasharray="4 3" />
             </svg>
-            Straight line
+            {idealLabel}
           </span>
           {pastPeriods ? (
             <span className="flex items-center gap-1">
               <svg width="16" height="6">
                 <line x1="0" y1="3" x2="16" y2="3" className="stroke-foreground/50" strokeWidth="1.5" strokeDasharray="1 3" strokeLinecap="round" />
               </svg>
-              Typical ({pastPeriods} past {pastPeriods === 1 ? "period" : "periods"})
+              {typicalLabel ?? `Typical (${pastPeriods} past ${pastPeriods === 1 ? "period" : "periods"})`}
             </span>
           ) : null}
         </span>
         {/* The readout: the hovered day, else the latest. */}
         {at ? (
           <span className="tabular-nums text-foreground">
-            {dayLabel(at.date, true)}:{" "}
+            {label(at.date, true)}:{" "}
             {at.leftCents !== null ? (
               <span className={at.leftCents < 0 ? "text-negative" : ""}>
                 {at.leftCents < 0 ? `${formatCents(-at.leftCents)} over` : `${formatCents(at.leftCents)} left`}
@@ -99,7 +112,7 @@ export function Burndown({
             )}
             <span className="text-muted-foreground">
               {" "}
-              · line {formatCents(at.idealCents)}
+              · {unit === "month" ? "at target" : "line"} {formatCents(at.idealCents)}
               {at.typicalCents !== null ? ` · typical ${formatCents(at.typicalCents)}` : ""}
             </span>
           </span>
@@ -137,12 +150,46 @@ export function Burndown({
         ) : null}
         {hover !== null ? <line x1={x(hover)} x2={x(hover)} y1={pad.top} y2={height - pad.bottom} className="stroke-foreground/40" strokeWidth="1" /> : null}
         <text x={pad.left} y={height - 4} className="fill-muted-foreground text-[11px]">
-          {dayLabel(days[0].date)}
+          {label(days[0].date)}
         </text>
         <text x={W - pad.right} y={height - 4} textAnchor="end" className="fill-muted-foreground text-[11px]">
-          {dayLabel(days.at(-1)!.date)}
+          {label(days.at(-1)!.date)}
         </text>
       </svg>
+      {/* The chart's figures as a table (#268), for anyone who'd rather read them. */}
+      <details className="text-xs">
+        <summary className="cursor-pointer text-muted-foreground hover:text-foreground">As a table</summary>
+        <table className="mt-1 w-full tabular-nums">
+          <thead className="text-muted-foreground">
+            <tr>
+              <th scope="col" className="py-0.5 text-left font-normal">
+                {unit === "month" ? "Month" : "Day"}
+              </th>
+              <th scope="col" className="py-0.5 text-right font-normal">Spent</th>
+              <th scope="col" className="py-0.5 text-right font-normal">Left</th>
+              <th scope="col" className="py-0.5 text-right font-normal">{idealLabel}</th>
+              {pastPeriods ? <th scope="col" className="py-0.5 text-right font-normal">{typicalLabel ?? "Typical"}</th> : null}
+            </tr>
+          </thead>
+          <tbody>
+            {days
+              .filter((d) => d.leftCents !== null)
+              .map((d) => (
+                <tr key={d.date} className="border-t">
+                  <th scope="row" className="py-0.5 text-left font-normal">
+                    {label(d.date)}
+                  </th>
+                  <td className="py-0.5 text-right">{formatCents(d.spentCents)}</td>
+                  <td className={`py-0.5 text-right ${d.leftCents! < 0 ? "text-negative" : ""}`}>
+                    {d.leftCents! < 0 ? `${formatCents(-d.leftCents!)} over` : formatCents(d.leftCents!)}
+                  </td>
+                  <td className="py-0.5 text-right">{formatCents(d.idealCents)}</td>
+                  {pastPeriods ? <td className="py-0.5 text-right">{d.typicalCents === null ? "–" : formatCents(d.typicalCents)}</td> : null}
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </details>
     </figure>
   );
 }
