@@ -95,3 +95,44 @@ export function segmentFigures(s: Segment<SegmentCell>): { spentCents: number; t
   const c = s.cells[0];
   return c.targetCents === null ? null : { spentCents: c.spentCents, targetCents: c.targetCents };
 }
+
+// --- Progress across the months (#268) ----------------------------------------
+//
+// The Year view's chart, to match the Month view's burndown: what's left of
+// the months' targets at the end of each month, against what the targets
+// had used up by then (the "line": not straight, since a month without a
+// target adds nothing), and the twelve months before at the same point, as
+// a share of their own targets. From the same cells as the totals, so the
+// last point is the year's Under (or Over).
+
+type MonthCell = YearCell & { month: string };
+
+export type ProgressMonth = { date: string; leftCents: number | null; idealCents: number; typicalCents: number | null; spentCents: number };
+
+export function yearProgress(rows: { months: MonthCell[] }[], before: { months: YearCell[] }[] | null): { months: ProgressMonth[]; availableCents: number; typical: boolean } | null {
+  const total = sumCells(rows.flatMap((r) => r.months));
+  if (!total) return null;
+  const columns = rows[0].months.length;
+  // The months before, as the share of their targets used by the end of each month.
+  const prior = before ? sumCells(before.flatMap((r) => r.months)) : null;
+  let used = 0;
+  const priorShare =
+    before && prior && prior.targetCents > 0
+      ? Array.from({ length: columns }, (_, i) => (used += sumCells(before.flatMap((r) => r.months[i] ?? []))?.spentCents ?? 0) / prior.targetCents)
+      : null;
+  let target = 0;
+  let spent = 0;
+  const months = Array.from({ length: columns }, (_, i) => {
+    const column = sumCells(rows.map((r) => r.months[i]));
+    target += column?.targetCents ?? 0;
+    spent += column?.spentCents ?? 0;
+    return {
+      date: rows[0].months[i].month,
+      leftCents: total.targetCents - spent,
+      idealCents: total.targetCents - target,
+      typicalCents: priorShare ? Math.round(total.targetCents * (1 - priorShare[i])) : null,
+      spentCents: column?.spentCents ?? 0,
+    };
+  });
+  return { months, availableCents: total.targetCents, typical: priorShare !== null };
+}
