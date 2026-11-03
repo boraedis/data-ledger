@@ -1,10 +1,12 @@
-import { asc, inArray, sql, sum } from "drizzle-orm";
-import { accounts, balanceSnapshots, holdingSnapshots } from "@/db/schema";
+import { and, asc, eq, exists, inArray, or, sql, sum } from "drizzle-orm";
+import { accounts, balanceSnapshots, holdingSnapshots, manualPositions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import type { AccountKind } from "@/lib/account-kinds";
+import { positionValueCents } from "@/lib/holdings/value";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { NET_WORTH_CURRENCY } from "@/lib/net-worth";
 import { liveValues, type LiveValue } from "@/lib/prices/live-value";
+import { latestQuotes } from "@/lib/prices/quotes";
 
 // The investments view (#27): allocation, value and cost basis, built from
 // balance and holding snapshots. Display only — no advice, no projections.
@@ -100,10 +102,19 @@ function slices(entries: { label: string; cents: number }[], total: number): All
 }
 
 export async function investmentsSummary(db: Db, { today = new Date() }: { today?: Date } = {}): Promise<InvestmentsSummary> {
+  // Brokerage and retirement accounts, and any manual account holding
+  // positions entered by hand (#271), whatever its kind: positions are what
+  // make it an investment here, and a hand-entered crypto holding sits most
+  // naturally in an "Other asset" account.
   const rows = await db
     .select()
     .from(accounts)
-    .where(inArray(accounts.type, [...INVESTMENT_KINDS]))
+    .where(
+      or(
+        inArray(accounts.type, [...INVESTMENT_KINDS]),
+        and(eq(accounts.source, "manual"), exists(db.select({ one: sql`1` }).from(manualPositions).where(eq(manualPositions.accountId, accounts.id)))),
+      ),
+    )
     .orderBy(accounts.institution, accounts.name);
 
   const excluded: InvestmentsSummary["excluded"] = [];
@@ -128,7 +139,7 @@ export async function investmentsSummary(db: Db, { today = new Date() }: { today
     };
   }
 
-  const [balances, holdingTotals, latestDays, live] = await Promise.all([
+  const [balances, holdingTotals, latestDays, live, handEntered, quotes] = await Promise.all([
     db
       .select({ accountId: balanceSnapshots.accountId, on: balanceSnapshots.on, cents: balanceSnapshots.balanceCents })
       .from(balanceSnapshots)
@@ -145,6 +156,8 @@ export async function investmentsSummary(db: Db, { today = new Date() }: { today
       .where(inArray(holdingSnapshots.accountId, ids))
       .groupBy(holdingSnapshots.accountId),
     liveValues(db, { now: today }),
+    db.select().from(manualPositions).where(inArray(manualPositions.accountId, ids)),
+    Promise.all([latestQuotes(db, "crypto", { now: today }), latestQuotes(db, "equity", { now: today })]).then(([crypto, equity]) => ({ crypto, equity })),
   ]);
   const latestPositions = latestDays.length
     ? await db
@@ -160,19 +173,39 @@ export async function investmentsSummary(db: Db, { today = new Date() }: { today
 
   const through = today.toISOString().slice(0, 10);
   const result: InvestmentAccount[] = counted.map((a) => {
-    const holdingsOn = latestDays.find((d) => d.accountId === a.id)?.on ?? null;
-    const positions: Position[] = latestPositions
-      .filter((p) => p.accountId === a.id)
-      .map((p) => ({
-        externalId: p.externalId,
+    const own = handEntered.filter((p) => p.accountId === a.id);
+    // A hand-entered position (#231) is worth its quantity at the latest fresh
+    // market price, else at the owner's own price, as the account's live
+    // value counts it (src/lib/prices/live-value.ts). "As of" is the day of
+    // the newest owner price.
+    const handPositions: Position[] = own.map((p) => {
+      const quote = quotes[p.assetClass].get(p.symbol.toUpperCase());
+      const marketValueCents = positionValueCents(p.quantity, quote && quote.price !== null && !quote.stale ? quote.price : p.unitPrice);
+      return {
+        externalId: p.id,
         symbol: p.symbol,
-        description: p.description,
-        shares: p.shares,
-        marketValueCents: p.marketValueCents,
+        description: p.symbol,
+        shares: p.quantity,
+        marketValueCents,
         costBasisCents: p.costBasisCents,
-        gainCents: p.costBasisCents === null ? null : p.marketValueCents - p.costBasisCents,
-      }))
-      .sort((x, y) => y.marketValueCents - x.marketValueCents);
+        gainCents: p.costBasisCents === null ? null : marketValueCents - p.costBasisCents,
+      };
+    });
+    const holdingsOn = own.length ? own.map((p) => p.priceOn).sort().at(-1)! : (latestDays.find((d) => d.accountId === a.id)?.on ?? null);
+    const positions: Position[] = (own.length
+      ? handPositions
+      : latestPositions
+          .filter((p) => p.accountId === a.id)
+          .map((p) => ({
+            externalId: p.externalId,
+            symbol: p.symbol,
+            description: p.description,
+            shares: p.shares,
+            marketValueCents: p.marketValueCents,
+            costBasisCents: p.costBasisCents,
+            gainCents: p.costBasisCents === null ? null : p.marketValueCents - p.costBasisCents,
+          }))
+    ).sort((x, y) => y.marketValueCents - x.marketValueCents);
     const holdingsCents = positions.reduce((s, p) => s + p.marketValueCents, 0);
     const byDay = new Map(holdingTotals.filter((h) => h.accountId === a.id).map((h) => [h.on, h.cents]));
     return {
@@ -186,7 +219,8 @@ export async function investmentsSummary(db: Db, { today = new Date() }: { today
       balanceAt: a.balanceAt,
       holdingsOn,
       positions,
-      cashAndOtherCents: holdingsOn ? a.balanceCents! - holdingsCents : null,
+      // For a hand-entered account, what its balance holds beyond its positions at the owner's prices (usually nothing).
+      cashAndOtherCents: own.length ? (live.get(a.id)?.cashAndOtherCents ?? 0) : holdingsOn ? a.balanceCents! - holdingsCents : null,
       series: dailySeries(
         balances.filter((b) => b.accountId === a.id),
         byDay,

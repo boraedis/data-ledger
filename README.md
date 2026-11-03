@@ -785,7 +785,7 @@ kind relabels its history. Dividends and interest that paid money in are
 the Net worth page), never mixed into budget income.
 
 **Investments page** (#27), display only, never advice:
-- **Totals and freshness:** the total across brokerage and retirement accounts, each account's value with the day its balance and positions are as of.
+- **Totals and freshness:** the total across brokerage and retirement accounts, and any manual account holding hand-entered positions (#271) whatever its kind (a crypto wallet is usually "Other asset"), each account's value with the day its balance and positions are as of. A hand-entered position is worth its quantity at the latest fresh market price, else at the owner's own price, and the day shown is the newest of those prices. A manual account with only a value stays off the page.
 - **Unrealized gain or loss:** market value minus cost basis, per position and in total. It covers only positions with a cost basis, and says how many are left out, so the gain is never overstated.
 - **Allocation:** by account, and by holding. A holding in several accounts is combined, and the part of a balance the position list doesn't cover shows as "cash and other". An account whose provider doesn't report positions appears whole.
 - **Value over time:** per account, from balance snapshots, with that day's position total from holding snapshots.

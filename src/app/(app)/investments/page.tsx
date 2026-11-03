@@ -170,7 +170,7 @@ export default async function InvestmentsPage() {
         <h1 className="text-2xl font-semibold">Investments</h1>
         <p className="text-3xl font-semibold tabular-nums">{formatCents(summary.totalCents)}</p>
         <p className="text-sm text-muted-foreground">
-          Brokerage and retirement accounts. Balances and positions come from the daily bank sync (SimpleFIN), or from
+          Brokerage and retirement accounts, and any manual account holding positions you&apos;ve entered. Balances and positions come from the daily bank sync (SimpleFIN), or from
           your own entries for manual accounts, and each is shown with the day it&apos;s as of. Display only — not
           investment advice.
         </p>
