@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { elapsedShare } from "@/lib/pace";
-import { paceFor, paceSegments, paceTone, singleColour } from "./pace-colour";
+import { totalsTone, paceFor, paceSegments, paceTone, singleColour } from "./pace-colour";
 
 // A $300 monthly Dining budget, 10 days into a 30-day month: pace $100.
 const pace = paceFor(30_000, elapsedShare("2026-09-01", "2026-09-30", "2026-09-10"));
@@ -49,5 +49,27 @@ describe("pace colours (#159)", () => {
     expect(paceSegments(0, 30_000, pace)).toEqual([]);
     expect(paceSegments(-2_000, 30_000, pace)).toEqual([]);
     expect(paceSegments(5_000, 0, null)).toEqual([{ colour: "red", cents: 5_000 }]);
+  });
+});
+
+describe("totalsTone (#267)", () => {
+  // A $1,000 month, half gone.
+  it("keeps Under green at or below pace", () => {
+    expect(totalsTone(40_000, 100_000, 0.5)).toEqual({ tone: "within", headingOverCents: null });
+    expect(totalsTone(50_000, 100_000, 0.5)).toEqual({ tone: "within", headingOverCents: null });
+  });
+
+  it("turns Under yellow when it's under the target but ahead of pace, with where it's heading", () => {
+    // $600 spent halfway: on course for $1,200, so $200 over.
+    expect(totalsTone(60_000, 100_000, 0.5)).toEqual({ tone: "ahead", headingOverCents: 20_000 });
+  });
+
+  it("keeps Over red", () => {
+    expect(totalsTone(110_000, 100_000, 0.5)).toEqual({ tone: "over", headingOverCents: null });
+  });
+
+  it("gives a finished period green or red only", () => {
+    expect(totalsTone(99_000, 100_000, 1)).toEqual({ tone: "within", headingOverCents: null });
+    expect(totalsTone(101_000, 100_000, 1)).toEqual({ tone: "over", headingOverCents: null });
   });
 });

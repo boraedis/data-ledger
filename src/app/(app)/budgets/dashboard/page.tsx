@@ -2,6 +2,8 @@ import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { formatCents } from "@/lib/money";
 import { budgetDashboard, type Overspend } from "@/lib/budgets/dashboard";
+import { totalsTone } from "@/lib/budgets/pace-colour";
+import { elapsedShare } from "@/lib/pace";
 import { budgetHref, budgetView, itemHref } from "@/lib/budgets/tabs";
 import type { YearTotal } from "@/lib/budgets/year";
 import { budgetMonthly, budgetPay, budgetPayYear } from "@/operations/budgets";
@@ -48,16 +50,22 @@ function PayLine({ summary, basis, none }: { summary: Summary | null; basis: str
   );
 }
 
+// Under's colour by pace, as the rest of Budgets (#159, #267).
+const TONE_CLASS = { within: "text-positive", ahead: "text-warning", over: "text-negative" } as const;
+
 function Totals({
   title,
   total,
   partial,
+  share,
   empty,
   pay,
 }: {
   title: string;
   total: YearTotal | null;
   partial: boolean;
+  // How far through the period it is, 0–1; 1 once it's over (no pace then).
+  share: number;
   empty: React.ReactNode;
   pay: React.ReactNode;
 }) {
@@ -71,6 +79,7 @@ function Totals({
     );
   }
   const diff = total.targetCents - total.spentCents;
+  const { tone, headingOverCents } = totalsTone(total.spentCents, total.targetCents, share);
   return (
     <section className="space-y-2 rounded-lg border p-3">
       <h2 className="font-medium">{title}</h2>
@@ -85,9 +94,13 @@ function Totals({
         </div>
         <div>
           <dt className="text-xs text-muted-foreground">{diff < 0 ? "Over" : "Under"}</dt>
-          <dd className={`text-lg font-semibold tabular-nums ${diff < 0 ? "text-negative" : "text-positive"}`}>{formatCents(Math.abs(diff))}</dd>
+          <dd className={`text-lg font-semibold tabular-nums ${TONE_CLASS[tone]}`}>{formatCents(Math.abs(diff))}</dd>
         </div>
       </dl>
+      {/* Colour is never the only cue: yellow says why. */}
+      {headingOverCents !== null ? (
+        <p className="text-xs text-warning tabular-nums">Under so far, but heading {formatCents(headingOverCents)} over at this pace.</p>
+      ) : null}
       {pay}
     </section>
   );
@@ -139,6 +152,10 @@ export default async function BudgetDashboardPage(props: PageProps<"/budgets/das
     read(db, budgetPayYear, { on, gross, months }),
   ]);
   const d = budgetDashboard(rows);
+  // How far through each period it is, for Under's colour (#267). A past month is finished.
+  const monthEnd = new Date(Date.UTC(Number(year), months, 0)).toISOString().slice(0, 10);
+  const monthShare = isCurrent ? elapsedShare(`${month}-01`, monthEnd, today) : 1;
+  const yearShare = isCurrent ? elapsedShare(`${year}-01-01`, monthEnd, today) : 1;
 
   const targetsHref = budgetHref("/budgets/targets", view);
   // A month's overspend opens its target's page (#174); a year's, its row on the Year view
@@ -164,6 +181,7 @@ export default async function BudgetDashboardPage(props: PageProps<"/budgets/das
             title={monthName(month)}
             total={d.month}
             partial={isCurrent}
+            share={monthShare}
             pay={
               <PayLine
                 summary={pay.summary}
@@ -193,6 +211,7 @@ export default async function BudgetDashboardPage(props: PageProps<"/budgets/das
             title={`${year}${isCurrent ? " so far" : ` through ${monthName(month, false)}`}`}
             total={d.year}
             partial={isCurrent}
+            share={yearShare}
             pay={
               <PayLine
                 summary={payYear.summary}

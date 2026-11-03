@@ -13,7 +13,7 @@
 // Where a split won't fit (a year-grid square), one colour stands for the
 // whole: green, yellow or red.
 
-import { evenPace } from "@/lib/pace";
+import { evenPace, projectAtEnd } from "@/lib/pace";
 
 export type PaceTone = "within" | "ahead" | "over";
 export type Colour = "green" | "yellow" | "red";
@@ -53,4 +53,18 @@ export function paceSegments(spentCents: number, budgetCents: number, paceCents:
     }
   })();
   return runs.filter((r) => r.cents > 0);
+}
+
+/**
+ * A totals figure's tone (#267): the dashboard's Under or Over for a month
+ * or the year so far. In progress (`share` strictly between 0 and 1), Under
+ * is yellow when spending is ahead of pace, with how far over it's heading
+ * by the end at this pace (the Month view's "heading $X over", #147). A
+ * finished period has no pace, so it's only within (green) or over (red).
+ */
+export function totalsTone(spentCents: number, targetCents: number, share: number): { tone: PaceTone; headingOverCents: number | null } {
+  const tone = paceTone(spentCents, targetCents, paceFor(targetCents, share));
+  if (tone !== "ahead") return { tone, headingOverCents: null };
+  const projected = projectAtEnd(spentCents, share);
+  return { tone, headingOverCents: projected !== null && projected > targetCents ? projected - targetCents : null };
 }
