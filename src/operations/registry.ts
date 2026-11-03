@@ -29,10 +29,10 @@ import { investmentIncome } from "@/operations/investments";
 import { createCategory, deleteCategory, listCategories, moveCategory, renameCategory } from "@/operations/categories";
 import { createRule, deleteRule, listRules, reapplyPreview, reapplyRule, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
-import { merchantDetail, merchantOverviewRead } from "@/operations/merchant-views";
-import { addMerchantType, createMerchant, listMerchants, listMerchantTypes, mergeMerchants, renameMerchant, setMerchantType, splitAlias } from "@/operations/merchants";
+import { merchantDetail, merchantOverviewRead, mergeSuggestions } from "@/operations/merchant-views";
+import { addMerchantType, createMerchant, dismissMerge, listMerchants, listMerchantTypes, mergeMerchants, renameMerchant, setMerchantType, splitAlias } from "@/operations/merchants";
 import type { Operation } from "@/operations/define";
-import { merchants, merchantAliases, merchantTypes, taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, trades, tallyPromotions, quotes, dailyPrices, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { merchants, merchantAliases, merchantMergeDismissals, merchantTypes, taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, trades, tallyPromotions, quotes, dailyPrices, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -189,6 +189,8 @@ export const operations: Operation[] = [
   listMerchantTypes,
   merchantOverviewRead,
   merchantDetail,
+  mergeSuggestions,
+  dismissMerge,
   createMerchant,
   renameMerchant,
   mergeMerchants,
@@ -259,4 +261,5 @@ export const trackedTables = {
   merchants,
   merchant_aliases: merchantAliases,
   merchant_types: merchantTypes,
+  merchant_merge_dismissals: merchantMergeDismissals,
 } as const;

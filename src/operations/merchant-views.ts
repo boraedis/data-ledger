@@ -1,7 +1,8 @@
-import { and, count, desc, eq, isNotNull } from "drizzle-orm";
+import { and, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, categories, transactions } from "@/db/schema";
+import { accounts, categories, merchantMergeDismissals, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
+import { nearDuplicates, REASON_TEXT } from "@/lib/merchants/near";
 import { merchantOverview, spendByMonth } from "@/lib/merchants/overview";
 import { defineRead } from "@/operations/define";
 import { listMerchants } from "@/operations/merchants";
@@ -120,3 +121,79 @@ export const merchantDetail = defineRead({
     };
   },
 });
+
+const SUGGESTION_DESCRIPTORS = 3;
+
+/** Each merchant's most seen raw descriptions, up to `n`. */
+async function descriptorsOf(db: Db, ids: string[], n: number) {
+  if (!ids.length) return new Map<string, string[]>();
+  const rows = await db
+    .select({ merchantId: transactions.merchantId, description: transactions.description, n: count() })
+    .from(transactions)
+    .where(inArray(transactions.merchantId, ids))
+    .groupBy(transactions.merchantId, transactions.description)
+    .orderBy(desc(count()), transactions.description);
+  const out = new Map<string, string[]>();
+  for (const r of rows) {
+    const list = out.get(r.merchantId!) ?? [];
+    if (list.length < n) list.push(r.description);
+    out.set(r.merchantId!, list);
+  }
+  return out;
+}
+
+export const mergeSuggestions = defineRead({
+  name: "merchants.mergeSuggestions",
+  description:
+    "Pairs of merchants that are probably the same business (one name is the other with words added, the same " +
+    "apart from punctuation, or spelled almost the same), with why and each one's names and raw bank descriptions. " +
+    "Pairs the owner rejected aren't included. Propose merchants.merge for a pair to suggest merging it.",
+  input: z.object({}),
+  run: async (db) => {
+    // Names and descriptions only (#287): what goes to the model when Tally reads this.
+    const [all, dismissed] = await Promise.all([
+      listMerchants.run(db, {}),
+      db.select({ a: merchantMergeDismissals.merchantAId, b: merchantMergeDismissals.merchantBId }).from(merchantMergeDismissals),
+    ]);
+    const pairs = nearDuplicates(
+      all.map((m) => ({ id: m.id, name: m.name, aliases: m.aliases.map((a) => a.alias) })),
+      new Set(dismissed.map((d) => `${d.a}|${d.b}`)),
+    );
+    const descriptors = await descriptorsOf(db, [...new Set(pairs.flatMap((p) => [p.aId, p.bId]))], SUGGESTION_DESCRIPTORS);
+    const byId = new Map(all.map((m) => [m.id, m]));
+    const side = (id: string) => ({ id, name: byId.get(id)!.name, names: byId.get(id)!.aliases.map((a) => a.alias), descriptions: descriptors.get(id) ?? [] });
+    return pairs.map((p) => ({ reason: REASON_TEXT[p.reason], a: side(p.aId), b: side(p.bId) }));
+  },
+});
+
+/**
+ * The rest of the evidence the Merchants page shows beside a suggestion:
+ * each merchant's transaction count, spend and the accounts it's seen in, by
+ * name. Not an operation, so it never becomes one of Tally's tools: the
+ * model gets names and descriptions only (#287).
+ */
+export async function suggestionEvidence(db: Db, ids: string[]) {
+  if (!ids.length) return new Map<string, { transactions: number; amountCents: number; accounts: string[]; lastOn: string | null }>();
+  const rows = await db
+    .select({
+      merchantId: transactions.merchantId,
+      accountName: sql<string>`coalesce(${accounts.displayName}, ${accounts.name})`,
+      n: count(),
+      amountCents: sql<number>`coalesce(sum(${transactions.amountCents}), 0)::bigint`,
+      lastOn: sql<string>`max(${transactions.postedOn})::text`,
+    })
+    .from(transactions)
+    .innerJoin(accounts, eq(accounts.id, transactions.accountId))
+    .where(inArray(transactions.merchantId, ids))
+    .groupBy(transactions.merchantId, accounts.id);
+  const out = new Map<string, { transactions: number; amountCents: number; accounts: string[]; lastOn: string | null }>();
+  for (const r of rows) {
+    const e = out.get(r.merchantId!) ?? { transactions: 0, amountCents: 0, accounts: [], lastOn: null };
+    e.transactions += r.n;
+    e.amountCents += Number(r.amountCents);
+    e.accounts.push(r.accountName);
+    if (!e.lastOn || r.lastOn > e.lastOn) e.lastOn = r.lastOn;
+    out.set(r.merchantId!, e);
+  }
+  return out;
+}

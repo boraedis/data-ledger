@@ -1,6 +1,6 @@
 import { and, asc, count, eq, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { merchantAliases, merchants, merchantTypes, transactions } from "@/db/schema";
+import { merchantAliases, merchantMergeDismissals, merchants, merchantTypes, transactions } from "@/db/schema";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { defineRead, defineWrite } from "@/operations/define";
 import { NotFoundError, type WriteContext } from "@/operations/tracked";
@@ -139,8 +139,34 @@ export const mergeMerchants = defineWrite({
     for (const a of aliases) await ctx.update(merchantAliases, a.id, { merchantId: keepId });
     const moved = await moveLinks(ctx, eq(transactions.merchantId, mergeId), keepId);
     if (!keep.typeId && gone.typeId) await ctx.update(merchants, keepId, { typeId: gone.typeId });
+    // Its rejected pairs (#287) go with it, as tracked writes rather than the
+    // FK cascade, so undoing the merge brings them back too.
+    const dismissals = await ctx.db
+      .select({ id: merchantMergeDismissals.id })
+      .from(merchantMergeDismissals)
+      .where(or(eq(merchantMergeDismissals.merchantAId, mergeId), eq(merchantMergeDismissals.merchantBId, mergeId)));
+    for (const d of dismissals) await ctx.remove(merchantMergeDismissals, d.id);
     await ctx.remove(merchants, mergeId);
     return { aliases: aliases.length, transactions: moved };
+  },
+});
+
+export const dismissMerge = defineWrite({
+  name: "merchants.dismissMerge",
+  description: "Say two merchants aren't the same business, so they aren't suggested for merging again.",
+  input: z.object({ merchantId: z.uuid(), otherId: z.uuid() }),
+  apply: async (ctx, { merchantId, otherId }) => {
+    if (merchantId === otherId) throw new Error("Pick two different merchants");
+    await getMerchant(ctx, merchantId);
+    await getMerchant(ctx, otherId);
+    const [a, b] = merchantId < otherId ? [merchantId, otherId] : [otherId, merchantId];
+    const [already] = await ctx.db
+      .select({ id: merchantMergeDismissals.id })
+      .from(merchantMergeDismissals)
+      .where(and(eq(merchantMergeDismissals.merchantAId, a), eq(merchantMergeDismissals.merchantBId, b)));
+    if (already) return { dismissalId: already.id };
+    const row = await ctx.insert(merchantMergeDismissals, { merchantAId: a, merchantBId: b });
+    return { dismissalId: row.id };
   },
 });
 

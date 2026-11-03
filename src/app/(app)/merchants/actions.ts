@@ -41,3 +41,7 @@ export async function mergeMerchants(keepId: string, mergeId: string) {
 export async function splitAlias(aliasId: string) {
   return run("merchants.splitAlias", { aliasId }, "Split a name out into a merchant of its own");
 }
+
+export async function dismissMerge(merchantId: string, otherId: string) {
+  return run("merchants.dismissMerge", { merchantId, otherId }, "Said two merchants aren't the same");
+}
