@@ -219,7 +219,8 @@ export const listTransactions = defineRead({
     "is true for money in that looks like a paycheck (the category or payer of linked ones) but has none. " +
     "`flagged` is true while a suspicious-charge alert on it waits for a verdict or was marked suspicious. " +
     "`provisionalSource` is set on a provisional transaction: one from a purchase alert that the bank hasn't " +
-    "reported yet (see transactions.provisional). `manual` is true for one the owner added by hand, `imported` for one backfilled from a CSV export.",
+    "reported yet (see transactions.provisional). `manual` is true for one the owner added by hand, `imported` for one backfilled from a CSV export. " +
+    "`merchantType` is the type of the merchant it's linked to (Restaurant, Grocery…), when that merchant has one.",
   input: z.object({
     ...listFilterInput,
     uncategorized: z.boolean().optional(),
@@ -241,6 +242,9 @@ export const listTransactions = defineRead({
         amountCents: transactions.amountCents,
         description: transactions.description,
         merchant: transactions.merchant,
+        // Set only when the row is linked to a merchant the owner has given a
+        // type: the type's name ("Restaurant"). Null for an unlinked or untyped one.
+        merchantType: merchantTypeName,
         pending: transactions.pending,
         provisionalSource: transactions.provisionalSource,
         manual: sql<boolean>`${transactions.source} is not distinct from 'manual'`,

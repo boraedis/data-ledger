@@ -1,13 +1,13 @@
 import { readFileSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { accounts, alerts, categories, merchantAliases, merchants, recurringSeries, transactions } from "@/db/schema";
+import { accounts, alerts, categories, merchantAliases, merchants, merchantTypes, recurringSeries, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
 import { listRecurring } from "@/operations/recurring";
 import { execute, read, undoCommand } from "@/operations/runtime";
-import { spendingLines } from "@/operations/transactions";
+import { listTransactions, spendingLines } from "@/operations/transactions";
 
 // One merchant everywhere (#292), on the synthetic seed with invented
 // merchants: a merchant spelled two ways is one merchant to recurring
@@ -114,6 +114,21 @@ describe("Spending", () => {
     await db.update(transactions).set({ categoryId: cat }).where(sql`${transactions.id} in (${a.id}, ${b.id})`);
     const lines = (await spendingLines.run(db, { budgetOnly: false, gross: true })).filter((l) => [a.id, b.id].includes(l.transactionId));
     expect(lines.map((l) => l.merchant)).toEqual(["Lumen Streaming", "Lumen Streaming"]);
+  });
+});
+
+describe("the transactions list", () => {
+  it("names the type of a linked merchant that has one, and nothing otherwise", async () => {
+    const typed = await charge("2026-06-12", 12, "Lumen Streaming");
+    const loose = await charge("2026-06-13", 9, "Corner Kiosk", null);
+    const byId = async () => new Map((await read(db, listTransactions, { from: "2026-06-12", to: "2026-06-13" })).map((t) => [t.id, t.merchantType]));
+    expect((await byId()).get(typed.id)).toBeNull();
+
+    const [{ id: typeId }] = await db.select({ id: merchantTypes.id }).from(merchantTypes).where(eq(merchantTypes.name, "Subscription"));
+    await run("merchants.setType", { merchantId: lumen, typeId });
+    const types = await byId();
+    expect(types.get(typed.id)).toBe("Subscription");
+    expect(types.get(loose.id)).toBeNull();
   });
 });
 
