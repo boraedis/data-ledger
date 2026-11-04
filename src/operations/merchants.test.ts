@@ -6,7 +6,7 @@ import { backfillMerchantsIfNeeded } from "@/lib/categorize/pipeline";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
 import { mergeSuggestions } from "@/operations/merchant-views";
-import { listMerchants } from "@/operations/merchants";
+import { listMerchants, rederivePreviewRead } from "@/operations/merchants";
 import { execute, read, undoCommand } from "@/operations/runtime";
 
 // Merchants as rows (#285), on the synthetic seed. Invented merchants and
@@ -182,5 +182,44 @@ describe("merge suggestions (#287)", () => {
     expect(await db.select().from(merchantMergeDismissals)).toHaveLength(0);
     await undoCommand(db, merged.commandId);
     expect(await db.select().from(merchantMergeDismissals)).toHaveLength(1);
+  });
+});
+
+describe("re-running the cleanup (#288)", () => {
+  // Rows as an older cleanup left them: named with the town still on.
+  const stale = async (externalId: string, description: string, merchant: string, extra: Partial<typeof transactions.$inferInsert> = {}) =>
+    (await db.insert(transactions).values({ accountId: p2p, postedOn: "2026-06-22", amountCents: -800, description, merchant, externalId, ...extra }).returning())[0];
+
+  it("previews, then applies in one undoable change, keeping merges and pinned merchants", async () => {
+    const a = await stale("s1", "HOLLOWAY BOOKS      SPRINGFIELD   IL", "Holloway Books Springfield Il");
+    const b = await stale("s2", "HOLLOWAY BOOKS, RIVERTON, WA", "Holloway Books, Riverton, Wa");
+    const pinned = await stale("s3", "HOLLOWAY BOOKS      SPRINGFIELD   IL", "Holloway Books Springfield Il", { merchantPinned: true });
+    await backfillMerchantsIfNeeded(db);
+    // The owner had merged the two town spellings under one merchant, and renamed it.
+    const first = (await txn(a.id)).merchantId!;
+    await run("merchants.merge", { keepId: first, mergeId: (await txn(b.id)).merchantId! });
+    await run("merchants.rename", { merchantId: first, name: "Holloway Books" });
+
+    const preview = await read(db, rederivePreviewRead, {});
+    // One example per old spelling, both arriving at the same new name.
+    const holloway = preview.examples.filter((e) => e.after === "Holloway Books");
+    expect(holloway.map((e) => [e.before, e.transactions]).sort()).toEqual([
+      ["Holloway Books Springfield Il", 1],
+      ["Holloway Books, Riverton, Wa", 1],
+    ]);
+    expect(preview.pinned).toBe(1);
+    expect(await txn(a.id)).toMatchObject({ merchant: "Holloway Books Springfield Il" });
+
+    const applied = await run("merchants.rederive", {});
+    expect(await txn(a.id)).toMatchObject({ merchant: "Holloway Books", merchantId: first });
+    expect(await txn(b.id)).toMatchObject({ merchant: "Holloway Books", merchantId: first });
+    expect(await txn(pinned.id)).toMatchObject({ merchant: "Holloway Books Springfield Il" });
+    expect(await aliasesOf(first)).toContain("Holloway Books");
+    // The raw description is never touched.
+    expect((await txn(a.id)).description).toBe("HOLLOWAY BOOKS      SPRINGFIELD   IL");
+
+    await undoCommand(db, applied.commandId);
+    expect(await txn(a.id)).toMatchObject({ merchant: "Holloway Books Springfield Il", merchantId: first });
+    expect(await aliasesOf(first)).not.toContain("Holloway Books");
   });
 });

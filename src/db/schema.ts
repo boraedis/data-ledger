@@ -532,6 +532,9 @@ export const transactions = pgTable(
     // arrives; the nightly merchant backfill links any that arrived without
     // one. SET NULL is a backstop: merging moves links as tracked writes.
     merchantId: uuid("merchant_id").references((): AnyPgColumn => merchants.id, { onDelete: "set null" }),
+    // The owner chose this transaction's merchant by hand (#291): re-running
+    // the cleanup over history (#288) leaves it alone.
+    merchantPinned: boolean("merchant_pinned").notNull().default(false),
     // True when the transaction is divided into transaction_splits, each
     // with its own category; categoryId is then null. A split transaction
     // counts as categorized (it's out of the inbox and the pipeline).

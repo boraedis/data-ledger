@@ -1,0 +1,1 @@
+ALTER TABLE "transactions" ADD COLUMN "merchant_pinned" boolean DEFAULT false NOT NULL;
