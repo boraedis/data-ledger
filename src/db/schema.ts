@@ -438,6 +438,19 @@ export const merchants = pgTable(
   (t) => [uniqueIndex("merchants_name_idx").on(sql`lower(${t.name})`)],
 );
 
+// The owner's choice of name for one raw text (#305): what the cleanup
+// would make of it is replaced by this, everywhere a name is derived (sync,
+// CSV history, hand entry, the cleanup re-run). Keyed by the exact text the
+// cleaner works from (the provider's payee, else the bank's description),
+// no patterns. "Leave this one alone" in the cleanup preview is one too: the
+// name it had.
+export const merchantNameOverrides = pgTable("merchant_name_overrides", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  source: text("source").notNull().unique(),
+  name: text("name").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // A cleaned name (normalizeMerchant's output) and the merchant it belongs
 // to. Each cleaned name belongs to one merchant; a merchant has one or
 // more. Its own id so it can be tracked (and so undone) like any row.

@@ -2,12 +2,14 @@ import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { rederivePreviewRead } from "@/operations/merchants";
 import { read } from "@/operations/runtime";
-import { ApplyCleanup } from "./apply";
+import { ChoiceList, CleanupForm } from "./apply";
 
 // Re-running the merchant name cleanup over history (#288): what it would
 // change, read before applying. Only the cleaned name moves (and with it the
 // merchant); the bank's description is never touched. A new name joins the
 // merchant the old one belonged to, so merges the owner made stay made.
+// The owner ticks which changes to make and can rename any (#305); what
+// they chose is remembered per raw text, listed under Your choices.
 
 const MATCH: Record<string, string> = { equals: "is", contains: "contains", starts_with: "starts with" };
 
@@ -29,48 +31,13 @@ export default async function MerchantCleanupPage() {
       </div>
 
       {preview.transactions === 0 ? (
-        <p className="text-muted-foreground">Nothing to change: every name is already what the cleanup gives.</p>
+        <p className="text-muted-foreground">Nothing to change: every name is already what the cleanup gives, or what you chose.</p>
       ) : (
         <>
           <p>
             <span className="font-medium tabular-nums">{preview.transactions}</span> transaction{preview.transactions === 1 ? "" : "s"} would get a different
             merchant name{preview.namesGone ? `, and ${preview.namesGone} name${preview.namesGone === 1 ? "" : "s"} would no longer be used` : ""}.
           </p>
-
-          <section className="space-y-2">
-            <h2 className="text-lg font-medium">What changes</h2>
-            <table className="w-full table-fixed text-sm">
-              <caption className="sr-only">Names before and after, most transactions first</caption>
-              <thead>
-                <tr className="text-xs text-muted-foreground">
-                  <th scope="col" className="pb-1 text-left font-normal">
-                    Now
-                  </th>
-                  <th scope="col" className="pb-1 text-left font-normal">
-                    After
-                  </th>
-                  <th scope="col" className="w-16 pb-1 text-right font-normal">
-                    Count
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {preview.examples.map((e) => (
-                  <tr key={`${e.before}→${e.after}`} className="border-t align-top">
-                    <td className="py-2 pr-2">
-                      <span className="block break-words">{e.before ?? "No name"}</span>
-                      <span className="block break-all font-mono text-[11px] text-muted-foreground">{e.description}</span>
-                    </td>
-                    <td className="break-words py-2 pr-2 font-medium">{e.after}</td>
-                    <td className="py-2 text-right tabular-nums">{e.transactions}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {preview.examples.length === 20 ? (
-              <p className="text-xs text-muted-foreground">The 20 biggest; Apply changes all of them.</p>
-            ) : null}
-          </section>
 
           {preview.rules.length ? (
             <section className="space-y-2">
@@ -110,9 +77,11 @@ export default async function MerchantCleanupPage() {
             </section>
           ) : null}
 
-          <ApplyCleanup transactions={preview.transactions} />
+          <CleanupForm examples={preview.examples} unlisted={preview.unlisted} />
         </>
       )}
+
+      {preview.choices.length ? <ChoiceList choices={preview.choices} /> : null}
     </div>
   );
 }

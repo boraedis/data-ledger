@@ -1,4 +1,4 @@
-import { normalizeMerchant } from "@/lib/categorize/merchant";
+import { merchantSource, nameFor } from "@/lib/categorize/merchant";
 import { ruleMatches, type RuleLike } from "@/lib/categorize/match";
 
 // Re-running the merchant cleanup over history (#288): what it would
@@ -6,7 +6,8 @@ import { ruleMatches, type RuleLike } from "@/lib/categorize/match";
 // and pure. The raw description and payee are the input and are never
 // changed; only the derived name (and, when applied, its merchant) is.
 // A transaction whose merchant the owner chose by hand (pinned, #291) is
-// left out entirely.
+// left out entirely. A name the owner chose for a raw text (#305) is what
+// the cleanup gives for it: once chosen, the re-run agrees with it.
 
 export type RederiveRow = {
   id: string;
@@ -21,13 +22,17 @@ export type RederiveRow = {
 
 export type RederiveChange = { id: string; before: string | null; after: string };
 
-const EXAMPLES = 20;
+// Every change is listed, so each can be ticked or edited (#305); this many
+// at most, and Apply touches only what was listed.
+const EXAMPLES = 300;
+
+export const groupKey = (g: { before: string | null; after: string }) => `${g.before ?? ""}\u0000${g.after}`;
 
 /** The transactions whose cleaned name would change, and to what. */
-export function rederive(rows: RederiveRow[]): RederiveChange[] {
+export function rederive(rows: RederiveRow[], overrides: ReadonlyMap<string, string> = new Map()): RederiveChange[] {
   return rows.flatMap((r) => {
     if (r.pinned) return [];
-    const after = normalizeMerchant(r.description, r.payee);
+    const after = nameFor(r.description, r.payee, overrides);
     return after === r.merchant ? [] : [{ id: r.id, before: r.merchant, after }];
   });
 }
@@ -35,7 +40,9 @@ export function rederive(rows: RederiveRow[]): RederiveChange[] {
 export type RederivePreview = {
   transactions: number;
   /** Each before → after, most transactions first, with one raw description as evidence. */
-  examples: { before: string | null; after: string; transactions: number; description: string }[];
+  examples: { key: string; before: string | null; after: string; transactions: number; description: string }[];
+  /** Changes past the list's length, which Apply leaves for another run. */
+  unlisted: number;
   /** Names no transaction will be under any more. */
   namesGone: number;
   /** Merchant rules whose matches change: how many transactions they'd start and stop matching. */
@@ -47,14 +54,14 @@ export type RederivePreview = {
 
 export function rederivePreview(
   rows: RederiveRow[],
-  { rules, series }: { rules: (RuleLike & { pattern: string })[]; series: { merchant: string; status: string }[] },
+  { rules, series, overrides = new Map() }: { rules: (RuleLike & { pattern: string })[]; series: { merchant: string; status: string }[]; overrides?: ReadonlyMap<string, string> },
 ): RederivePreview {
-  const changes = rederive(rows);
+  const changes = rederive(rows, overrides);
   const byId = new Map(rows.map((r) => [r.id, r]));
-  const groups = new Map<string, { before: string | null; after: string; transactions: number; description: string }>();
+  const groups = new Map<string, { key: string; before: string | null; after: string; transactions: number; description: string }>();
   for (const c of changes) {
-    const key = `${c.before}\u0000${c.after}`;
-    const g = groups.get(key) ?? { before: c.before, after: c.after, transactions: 0, description: byId.get(c.id)!.description };
+    const key = groupKey(c);
+    const g = groups.get(key) ?? { key, before: c.before, after: c.after, transactions: 0, description: byId.get(c.id)!.description };
     g.transactions++;
     groups.set(key, g);
   }
@@ -64,9 +71,12 @@ export function rederivePreview(
   const before = new Set(changes.map((c) => c.before).filter((m): m is string => !!m));
   const gone = [...before].filter((m) => !remaining.has(m));
   const merchantRules = rules.filter((r) => r.enabled && r.matchField === "merchant");
+  const sorted = [...groups.values()].sort((a, b) => b.transactions - a.transactions || a.after.localeCompare(b.after));
+  const listed = sorted.slice(0, EXAMPLES);
   return {
     transactions: changes.length,
-    examples: [...groups.values()].sort((a, b) => b.transactions - a.transactions || a.after.localeCompare(b.after)).slice(0, EXAMPLES),
+    examples: listed,
+    unlisted: changes.length - listed.reduce((s, g) => s + g.transactions, 0),
     namesGone: gone.length,
     rules: merchantRules
       .map((rule) => {
@@ -87,4 +97,10 @@ export function rederivePreview(
     series: series.filter((s) => gone.includes(s.merchant)),
     pinned: rows.filter((r) => r.pinned).length,
   };
+}
+
+/** The distinct raw texts behind one before → after, for remembering the owner's choice on each (#305). */
+export function sourcesOf(rows: RederiveRow[], changes: RederiveChange[], key: string): string[] {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return [...new Set(changes.filter((c) => groupKey(c) === key).map((c) => merchantSource(byId.get(c.id)!.description, byId.get(c.id)!.payee)))];
 }

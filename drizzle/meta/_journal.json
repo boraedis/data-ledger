@@ -309,6 +309,13 @@
       "when": 1793811397965,
       "tag": "0043_merchant_type_asked",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1793814084378,
+      "tag": "0044_merchant_name_overrides",
+      "breakpoints": true
     }
   ]
 }

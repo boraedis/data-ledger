@@ -54,10 +54,13 @@ export async function dismissMerge(merchantId: string, otherId: string) {
   return run("merchants.dismissMerge", { merchantId, otherId }, "Said two merchants aren't the same");
 }
 
-export async function rederiveMerchants() {
+type Group = { before: string | null; after: string };
+
+/** The cleanup re-run (#288), as the owner shaped it (#305): the ticked changes, each under its name, and the unticked left alone. */
+export async function rederiveMerchants(choices: { apply: (Group & { name?: string })[]; skip: Group[] }) {
   try {
     const changed = await asOwner(async (db) => {
-      const result = await execute(db, { operation: "merchants.rederive", input: {}, actor: "user", reason: "Re-ran the merchant name cleanup over history" });
+      const result = await execute(db, { operation: "merchants.rederive", input: choices, actor: "user", reason: "Re-ran the merchant name cleanup over history" });
       return result.status === "applied" ? ((result.output as { changed: number }).changed ?? 0) : 0;
     });
     revalidatePath("/", "layout");
@@ -87,4 +90,8 @@ export async function decideTypeSuggestion(commandId: string, approve: boolean) 
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Something went wrong" };
   }
+}
+
+export async function removeNameChoice(choiceId: string) {
+  return run("merchants.removeNameChoice", { choiceId }, "Forgot a merchant name chosen in the cleanup");
 }

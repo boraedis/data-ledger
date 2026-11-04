@@ -127,6 +127,17 @@ export function explainMerchant(description: string, payee?: string | null): Mer
   return { source: fromPayee ? "payee" : "description", input: trimmed, removed: fellBack ? [] : removed, fellBack, name: titleCase(text) };
 }
 
+/** The text the cleaner works from: the provider's payee when it has one, else the bank's description (#305 keys the owner's names on it). */
+export function merchantSource(description: string, payee?: string | null): string {
+  return explainMerchant(description, payee).input;
+}
+
+/** The cleaned name, unless the owner chose one for this exact text (#305). */
+export function nameFor(description: string, payee: string | null | undefined, overrides: ReadonlyMap<string, string>): string {
+  const e = explainMerchant(description, payee);
+  return overrides.get(e.input) ?? e.name;
+}
+
 export function normalizeMerchant(description: string, payee?: string | null): string {
   return explainMerchant(description, payee).name;
 }
