@@ -1,10 +1,11 @@
 import { and, eq, isNotNull, isNull, ne } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { accounts, merchantAliases, merchants, merchantTypes, transactions } from "@/db/schema";
+import { accounts, merchantAliases, merchantMergeDismissals, merchants, merchantTypes, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { backfillMerchantsIfNeeded } from "@/lib/categorize/pipeline";
 import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
+import { mergeSuggestions } from "@/operations/merchant-views";
 import { listMerchants } from "@/operations/merchants";
 import { execute, read, undoCommand } from "@/operations/runtime";
 
@@ -152,5 +153,34 @@ describe("the owner's operations", () => {
     await run("merchants.merge", { keepId: a, mergeId: b });
     const list = (await read(db, listMerchants, {})) as { name: string; aliases: { alias: string }[]; transactions: number }[];
     expect(list.find((m) => m.name === "Fernwood Bakery")).toMatchObject({ transactions: 2, aliases: [{ alias: "Fernwood Bakery" }, { alias: "Fernwood Bakery Cafe" }] });
+  });
+});
+
+describe("merge suggestions (#287)", () => {
+  const suggestions = () => read(db, mergeSuggestions, {});
+  it("suggests a near-duplicate with names and descriptions only, and not again once rejected; undo brings it back", async () => {
+    await addManual("Corner Bean");
+    const [pair] = (await suggestions()).filter((s) => [s.a.name, s.b.name].includes("Corner Bean"));
+    expect([pair.a.name, pair.b.name].sort()).toEqual(["Corner Bean", "Corner Bean Cafe"]);
+    // What Tally would see: no amounts, accounts or ids beyond the merchants'.
+    expect(Object.keys(pair.a).sort()).toEqual(["descriptions", "id", "name", "names"]);
+    expect(pair.a.descriptions.length).toBeGreaterThan(0);
+
+    const dismissed = await run("merchants.dismissMerge", { merchantId: pair.b.id, otherId: pair.a.id });
+    expect((await suggestions()).some((s) => s.a.id === pair.a.id && s.b.id === pair.b.id)).toBe(false);
+    await undoCommand(db, dismissed.commandId);
+    expect((await suggestions()).some((s) => s.a.id === pair.a.id && s.b.id === pair.b.id)).toBe(true);
+  });
+
+  it("takes a merged merchant's rejections with it, and undo brings them back", async () => {
+    await addManual("Corner Bean");
+    await addManual("Corner Bean Cafe Downtown");
+    const id = async (name: string) => (await merchantNamed(name)).id;
+    const [bean, cafe, downtown] = [await id("Corner Bean"), await id("Corner Bean Cafe"), await id("Corner Bean Cafe Downtown")];
+    await run("merchants.dismissMerge", { merchantId: bean, otherId: downtown });
+    const merged = await run("merchants.merge", { keepId: cafe, mergeId: downtown });
+    expect(await db.select().from(merchantMergeDismissals)).toHaveLength(0);
+    await undoCommand(db, merged.commandId);
+    expect(await db.select().from(merchantMergeDismissals)).toHaveLength(1);
   });
 });

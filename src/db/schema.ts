@@ -451,6 +451,24 @@ export const merchantAliases = pgTable(
   (t) => [index("merchant_aliases_merchant_idx").on(t.merchantId)],
 );
 
+// A pair of merchants the owner said aren't the same business (#287), so
+// the pair isn't suggested for merging again. Stored with the lower id
+// first, so a pair has one row whichever way round it was dismissed.
+export const merchantMergeDismissals = pgTable(
+  "merchant_merge_dismissals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    merchantAId: uuid("merchant_a_id")
+      .notNull()
+      .references(() => merchants.id, { onDelete: "cascade" }),
+    merchantBId: uuid("merchant_b_id")
+      .notNull()
+      .references(() => merchants.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("merchant_merge_dismissals_pair_idx").on(t.merchantAId, t.merchantBId)],
+);
+
 export const categoryKind = pgEnum("category_kind", ["expense", "income", "transfer"]);
 
 // The owner's own category tree (#6) — nothing is inherited from a bank.

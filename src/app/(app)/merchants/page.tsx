@@ -2,9 +2,10 @@ import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { filterMerchants, SORTS, type Sort } from "@/lib/merchants/overview";
 import { formatCents } from "@/lib/money";
-import { merchantOverviewRead } from "@/operations/merchant-views";
+import { merchantOverviewRead, mergeSuggestions, suggestionEvidence } from "@/operations/merchant-views";
 import { listMerchantTypes } from "@/operations/merchants";
 import { read } from "@/operations/runtime";
+import { MergeSuggestions } from "./suggestions";
 
 // Merchants (#286): every merchant, with what it's cost over all history,
 // how often and how lately it's been seen, its usual category, whether it
@@ -12,6 +13,10 @@ import { read } from "@/operations/runtime";
 // so a view can be linked to and the page works without JavaScript, as on
 // Spending. A merchant opens its own page, where it's renamed, typed and
 // merged. Net spend by default, the lines Spending and Budgets count.
+// Above the list, merchants that are probably one business (#287), for the
+// owner to merge or reject.
+
+const SUGGESTIONS = 10;
 
 const SORT_LABELS: Record<Sort, string> = { spent: "Spent", transactions: "Transactions", last: "Last seen", name: "Name" };
 
@@ -26,7 +31,10 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
   const gross = one(sp.gross) === "1";
 
   const db = getDb();
-  const [rows, types] = await Promise.all([read(db, merchantOverviewRead, { gross }), read(db, listMerchantTypes, {})]);
+  const [rows, types, pairs] = await Promise.all([read(db, merchantOverviewRead, { gross }), read(db, listMerchantTypes, {}), read(db, mergeSuggestions, {})]);
+  const shownPairs = pairs.slice(0, SUGGESTIONS);
+  const evidence = await suggestionEvidence(db, [...new Set(shownPairs.flatMap((p) => [p.a.id, p.b.id]))]);
+  const withEvidence = (side: (typeof pairs)[number]["a"]) => ({ ...side, transactions: 0, amountCents: 0, accounts: [], lastOn: null, ...evidence.get(side.id) });
   const shown = filterMerchants(rows, { q, type, sort });
 
   const href = (next: { sort?: Sort; gross?: boolean }) => {
@@ -53,6 +61,10 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
           </Link>
         </p>
       </div>
+
+      {shownPairs.length ? (
+        <MergeSuggestions suggestions={shownPairs.map((p) => ({ reason: p.reason, a: withEvidence(p.a), b: withEvidence(p.b) }))} total={pairs.length} />
+      ) : null}
 
       {/* A plain GET form: the search goes in the URL like everything else. */}
       <form action="/merchants" className="flex flex-wrap items-end gap-2 text-sm">
