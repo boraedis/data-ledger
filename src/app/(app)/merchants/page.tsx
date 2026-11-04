@@ -6,6 +6,7 @@ import { merchantOverviewRead, mergeSuggestions, suggestionEvidence } from "@/op
 import { listMerchantTypes } from "@/operations/merchants";
 import { read } from "@/operations/runtime";
 import { pendingTypeSuggestions } from "@/lib/merchants/suggest-types";
+import { MergeSelection, SelectBox } from "./merge-selection";
 import { MergeSuggestions } from "./suggestions";
 import { TypeSuggestions } from "./type-suggestions";
 
@@ -163,58 +164,66 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
       ) : shown.length === 0 ? (
         <p className="text-muted-foreground">No merchant matches that.</p>
       ) : (
-        <table className="w-full table-fixed text-sm">
-          <caption className="sr-only">
-            {shown.length} merchants, sorted by {SORT_LABELS[sort].toLowerCase()}
-          </caption>
-          <thead>
-            <tr className="text-xs text-muted-foreground">
-              <th scope="col" className="pb-1 text-left font-normal">
-                Merchant
-              </th>
-              <th scope="col" className="hidden w-28 pb-1 text-left font-normal md:table-cell">
-                Type
-              </th>
-              <th scope="col" className="hidden w-32 pb-1 text-left font-normal md:table-cell">
-                Usual category
-              </th>
-              <th scope="col" className="w-24 pb-1 text-right font-normal sm:w-28">
-                Spent
-              </th>
-              <th scope="col" className="hidden w-16 pb-1 text-right font-normal sm:table-cell">
-                Count
-              </th>
-              <th scope="col" className="hidden w-28 pb-1 text-right font-normal sm:table-cell">
-                Last seen
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((m) => (
-              <tr key={m.id} className="border-t align-top">
-                <td className="py-2 pr-2">
-                  <Link href={withGross(`/merchants/${m.id}`)} className="block truncate font-medium underline-offset-2 hover:underline">
-                    {m.name}
-                  </Link>
-                  <span className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
-                    <span className="md:hidden">{m.type ?? "No type"}</span>
-                    {m.aliases.length > 1 ? <span>{m.aliases.length} spellings</span> : null}
-                    {m.recurs ? <span className="rounded-sm border px-1">recurring</span> : null}
-                    {/* What the hidden columns hold, on a phone. */}
-                    <span className="sm:hidden">
-                      {m.transactions} · {m.lastSeen ? day(m.lastSeen) : "never"}
-                    </span>
-                  </span>
-                </td>
-                <td className="hidden truncate py-2 pr-2 text-muted-foreground md:table-cell">{m.type ?? "—"}</td>
-                <td className="hidden truncate py-2 pr-2 text-muted-foreground md:table-cell">{m.usualCategory?.name ?? "—"}</td>
-                <td className="py-2 pr-2 text-right tabular-nums">{formatCents(m.spentCents)}</td>
-                <td className="hidden py-2 pr-2 text-right tabular-nums sm:table-cell">{m.transactions}</td>
-                <td className="hidden py-2 text-right tabular-nums text-muted-foreground sm:table-cell">{m.lastSeen ? day(m.lastSeen) : "—"}</td>
+        <MergeSelection merchants={shown.map((m) => ({ id: m.id, name: m.name, transactions: m.transactions }))}>
+          <table className="w-full table-fixed text-sm">
+            <caption className="sr-only">
+              {shown.length} merchants, sorted by {SORT_LABELS[sort].toLowerCase()}
+            </caption>
+            <thead>
+              <tr className="text-xs text-muted-foreground">
+                <th scope="col" className="w-7 pb-1 text-left font-normal">
+                  <span className="sr-only">Select to merge</span>
+                </th>
+                <th scope="col" className="pb-1 text-left font-normal">
+                  Merchant
+                </th>
+                <th scope="col" className="hidden w-28 pb-1 text-left font-normal md:table-cell">
+                  Type
+                </th>
+                <th scope="col" className="hidden w-32 pb-1 text-left font-normal md:table-cell">
+                  Usual category
+                </th>
+                <th scope="col" className="w-24 pb-1 text-right font-normal sm:w-28">
+                  Spent
+                </th>
+                <th scope="col" className="hidden w-16 pb-1 text-right font-normal sm:table-cell">
+                  Count
+                </th>
+                <th scope="col" className="hidden w-28 pb-1 text-right font-normal sm:table-cell">
+                  Last seen
+                </th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {shown.map((m) => (
+                <tr key={m.id} className="border-t align-top">
+                  <td className="py-2.5 pr-1">
+                    <SelectBox id={m.id} name={m.name} />
+                  </td>
+                  <td className="py-2 pr-2">
+                    <Link href={withGross(`/merchants/${m.id}`)} className="block truncate font-medium underline-offset-2 hover:underline">
+                      {m.name}
+                    </Link>
+                    <span className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
+                      <span className="md:hidden">{m.type ?? "No type"}</span>
+                      {m.aliases.length > 1 ? <span>{m.aliases.length} spellings</span> : null}
+                      {m.recurs ? <span className="rounded-sm border px-1">recurring</span> : null}
+                      {/* What the hidden columns hold, on a phone. */}
+                      <span className="sm:hidden">
+                        {m.transactions} · {m.lastSeen ? day(m.lastSeen) : "never"}
+                      </span>
+                    </span>
+                  </td>
+                  <td className="hidden truncate py-2 pr-2 text-muted-foreground md:table-cell">{m.type ?? "—"}</td>
+                  <td className="hidden truncate py-2 pr-2 text-muted-foreground md:table-cell">{m.usualCategory?.name ?? "—"}</td>
+                  <td className="py-2 pr-2 text-right tabular-nums">{formatCents(m.spentCents)}</td>
+                  <td className="hidden py-2 pr-2 text-right tabular-nums sm:table-cell">{m.transactions}</td>
+                  <td className="hidden py-2 text-right tabular-nums text-muted-foreground sm:table-cell">{m.lastSeen ? day(m.lastSeen) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </MergeSelection>
       )}
     </div>
   );

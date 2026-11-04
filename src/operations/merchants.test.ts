@@ -106,7 +106,7 @@ describe("the owner's operations", () => {
 
   it("merges: aliases and transactions move to the one kept; undo restores both", async () => {
     const merged = await run("merchants.merge", { keepId: a, mergeId: b });
-    expect(merged.output).toEqual({ aliases: 1, transactions: 1 });
+    expect(merged.output).toEqual({ merchantId: a, merged: 1, aliases: 1, transactions: 1 });
     expect(await aliasesOf(a)).toEqual(["Fernwood Bakery", "Fernwood Bakery Cafe"]);
     expect((await txn(tb)).merchantId).toBe(a);
     expect(await merchantNamed("Fernwood Bakery Cafe")).toBeUndefined();
@@ -126,6 +126,37 @@ describe("the owner's operations", () => {
     expect((await txn(later.id)).merchantId).toBe(a);
     await backfillMerchantsIfNeeded(db);
     expect((await txn(later.id)).merchantId).toBe(b);
+  });
+
+  it("merges under a chosen name, even the merged one's, in one undoable command (#304)", async () => {
+    // Keep a ("Fernwood Bakery"), but call it what b was called.
+    const merged = await run("merchants.merge", { keepId: a, mergeId: b, name: "Fernwood Bakery Cafe" });
+    expect(await merchantNamed("Fernwood Bakery Cafe")).toMatchObject({ id: a });
+    expect(await aliasesOf(a)).toEqual(["Fernwood Bakery", "Fernwood Bakery Cafe"]);
+    await undoCommand(db, merged.commandId);
+    expect(await merchantNamed("Fernwood Bakery")).toMatchObject({ id: a });
+    expect(await merchantNamed("Fernwood Bakery Cafe")).toMatchObject({ id: b });
+  });
+
+  it("merges several into one under one name, and undoes as one (#304)", async () => {
+    const tc = await addManual("Fernwood Bake Shop");
+    const c = (await merchantNamed("Fernwood Bake Shop")).id;
+    const merged = await run("merchants.merge", { keepId: b, mergeIds: [a, c], name: "Fernwood" });
+    expect(merged.output).toMatchObject({ merchantId: b, merged: 2, transactions: 2 });
+    expect(await aliasesOf(b)).toEqual(["Fernwood Bake Shop", "Fernwood Bakery", "Fernwood Bakery Cafe"]);
+    for (const t of [ta, tb, tc]) expect((await txn(t)).merchantId).toBe(b);
+    expect((await db.select().from(merchants).where(eq(merchants.id, a))).length).toBe(0);
+    await undoCommand(db, merged.commandId);
+    expect((await txn(ta)).merchantId).toBe(a);
+    expect((await txn(tc)).merchantId).toBe(c);
+    expect(await merchantNamed("Fernwood Bakery Cafe")).toMatchObject({ id: b });
+  });
+
+  it("refuses another merchant's name, merging nothing (#304)", async () => {
+    await addManual("Juniper Hardware");
+    await expect(run("merchants.merge", { keepId: a, mergeId: b, name: "juniper hardware" })).rejects.toThrow(/merge the two/);
+    expect(await merchantNamed("Fernwood Bakery Cafe")).toMatchObject({ id: b });
+    await expect(run("merchants.merge", { keepId: a, mergeIds: [b, a] })).rejects.toThrow(/two different/);
   });
 
   it("splits an alias back out with its transactions, but never a merchant's only name", async () => {

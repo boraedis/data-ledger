@@ -168,35 +168,57 @@ export const renameMerchant = defineWrite({
   },
 });
 
+/** One merchant into another: everything that belongs to it moves to the one kept, and it goes. */
+async function mergeOne(ctx: WriteContext, keepId: string, mergeId: string) {
+  const keep = await getMerchant(ctx, keepId);
+  const gone = await getMerchant(ctx, mergeId);
+  const aliases = await ctx.db.select({ id: merchantAliases.id }).from(merchantAliases).where(eq(merchantAliases.merchantId, mergeId));
+  for (const a of aliases) await ctx.update(merchantAliases, a.id, { merchantId: keepId });
+  const moved = await moveLinks(ctx, eq(transactions.merchantId, mergeId), keepId);
+  if (!keep.typeId && gone.typeId) await ctx.update(merchants, keepId, { typeId: gone.typeId });
+  // Its rules (#289) now apply to the one kept, every spelling included.
+  const merchantRules = await ctx.db.select({ id: rules.id }).from(rules).where(eq(rules.merchantId, mergeId));
+  for (const r of merchantRules) await ctx.update(rules, r.id, { merchantId: keepId });
+  // Its rejected pairs (#287) go with it, as tracked writes rather than the
+  // FK cascade, so undoing the merge brings them back too.
+  const dismissals = await ctx.db
+    .select({ id: merchantMergeDismissals.id })
+    .from(merchantMergeDismissals)
+    .where(or(eq(merchantMergeDismissals.merchantAId, mergeId), eq(merchantMergeDismissals.merchantBId, mergeId)));
+  for (const d of dismissals) await ctx.remove(merchantMergeDismissals, d.id);
+  // Its recurring decisions and alerts now the kept one's (#292), before
+  // it goes: the FK would otherwise just clear them.
+  await moveDecisions(ctx, mergeId, keepId);
+  await ctx.remove(merchants, mergeId);
+  return { aliases: aliases.length, transactions: moved };
+}
+
 export const mergeMerchants = defineWrite({
   name: "merchants.merge",
   description:
-    "Merge one merchant into another: its aliases and transactions move to the one kept, which keeps its own name, " +
-    "and takes the other's type if it has none. The merged merchant is removed.",
-  input: z.object({ keepId: z.uuid(), mergeId: z.uuid() }),
-  apply: async (ctx, { keepId, mergeId }) => {
-    if (keepId === mergeId) throw new Error("Pick two different merchants to merge");
-    const keep = await getMerchant(ctx, keepId);
-    const gone = await getMerchant(ctx, mergeId);
-    const aliases = await ctx.db.select({ id: merchantAliases.id }).from(merchantAliases).where(eq(merchantAliases.merchantId, mergeId));
-    for (const a of aliases) await ctx.update(merchantAliases, a.id, { merchantId: keepId });
-    const moved = await moveLinks(ctx, eq(transactions.merchantId, mergeId), keepId);
-    if (!keep.typeId && gone.typeId) await ctx.update(merchants, keepId, { typeId: gone.typeId });
-    // Its rules (#289) now apply to the one kept, every spelling included.
-    const merchantRules = await ctx.db.select({ id: rules.id }).from(rules).where(eq(rules.merchantId, mergeId));
-    for (const r of merchantRules) await ctx.update(rules, r.id, { merchantId: keepId });
-    // Its rejected pairs (#287) go with it, as tracked writes rather than the
-    // FK cascade, so undoing the merge brings them back too.
-    const dismissals = await ctx.db
-      .select({ id: merchantMergeDismissals.id })
-      .from(merchantMergeDismissals)
-      .where(or(eq(merchantMergeDismissals.merchantAId, mergeId), eq(merchantMergeDismissals.merchantBId, mergeId)));
-    for (const d of dismissals) await ctx.remove(merchantMergeDismissals, d.id);
-    // Its recurring decisions and alerts now the kept one's (#292), before
-    // it goes: the FK would otherwise just clear them.
-    await moveDecisions(ctx, mergeId, keepId);
-    await ctx.remove(merchants, mergeId);
-    return { aliases: aliases.length, transactions: moved };
+    "Merge merchants into one: each merged merchant's aliases and transactions move to the one kept, which takes a " +
+    "merged one's type if it has none. Give mergeId for one, or mergeIds for several. With name, the merchant kept " +
+    "is also renamed (to any name, including a merged one's). The merged merchants are removed. One undoable change.",
+  input: z
+    .object({ keepId: z.uuid(), mergeId: z.uuid().optional(), mergeIds: z.array(z.uuid()).min(1).max(50).optional(), name: merchantName.optional() })
+    .refine((i) => !!i.mergeId !== !!i.mergeIds, "Give mergeId or mergeIds"),
+  apply: async (ctx, { keepId, mergeId, mergeIds, name }) => {
+    const ids = [...new Set(mergeIds ?? [mergeId!])];
+    if (ids.includes(keepId)) throw new Error("Pick two different merchants to merge");
+    let aliases = 0;
+    let moved = 0;
+    for (const id of ids) {
+      const r = await mergeOne(ctx, keepId, id);
+      aliases += r.aliases;
+      moved += r.transactions;
+    }
+    // The name last (#304): the merged merchants are gone by now, so the kept
+    // one can take one of their names; any other merchant's is still refused.
+    if (name && name !== (await getMerchant(ctx, keepId)).name) {
+      await assertNameFree(ctx, name, keepId);
+      await ctx.update(merchants, keepId, { name });
+    }
+    return { merchantId: keepId, merged: ids.length, aliases, transactions: moved };
   },
 });
 
