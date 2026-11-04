@@ -58,6 +58,10 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
           owe, the same as Spending.{" "}
           <Link href={href({ gross: !gross })} className="underline">
             {gross ? "Show your share" : "Show gross"}
+          </Link>{" "}
+          ·{" "}
+          <Link href="/merchants/cleanup" className="underline">
+            Clean up names
           </Link>
         </p>
       </div>

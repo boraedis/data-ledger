@@ -1,7 +1,8 @@
 import { and, asc, count, eq, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { merchantAliases, merchantMergeDismissals, merchants, merchantTypes, transactions } from "@/db/schema";
+import { merchantAliases, merchantMergeDismissals, merchants, merchantTypes, recurringSeries, rules, transactions } from "@/db/schema";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
+import { rederive, rederivePreview } from "@/lib/merchants/rederive";
 import { defineRead, defineWrite } from "@/operations/define";
 import { NotFoundError, type WriteContext } from "@/operations/tracked";
 
@@ -237,3 +238,68 @@ export async function linkUnlinked(ctx: WriteContext, limit: number): Promise<nu
   return rows.length;
 }
 
+
+// --- Re-running the cleanup over history (#288) ----------------------------
+
+async function rederiveInputs(db: WriteContext["db"]) {
+  const [rows, ruleRows, series] = await Promise.all([
+    db
+      .select({
+        id: transactions.id,
+        accountId: transactions.accountId,
+        amountCents: transactions.amountCents,
+        description: transactions.description,
+        payee: transactions.payee,
+        merchant: transactions.merchant,
+        merchantId: transactions.merchantId,
+        pinned: transactions.merchantPinned,
+      })
+      .from(transactions),
+    db.select().from(rules),
+    db.select({ merchant: recurringSeries.merchant, status: recurringSeries.status }).from(recurringSeries),
+  ]);
+  return { rows, rules: ruleRows, series };
+}
+
+export const rederivePreviewRead = defineRead({
+  name: "merchants.rederivePreview",
+  description:
+    "Preview re-running the merchant name cleanup over every transaction: how many would get a different merchant " +
+    "name, examples (before and after), merchant rules whose matches would change, and recurring decisions on names " +
+    "that would go away. Transactions whose merchant was chosen by hand are left alone. Changes nothing.",
+  allowedActors: ["user"],
+  input: z.object({}),
+  run: async (db) => {
+    const { rows, rules: ruleRows, series } = await rederiveInputs(db);
+    return rederivePreview(rows, { rules: ruleRows, series });
+  },
+});
+
+export const rederiveMerchants = defineWrite({
+  name: "merchants.rederive",
+  description:
+    "Re-run the merchant name cleanup over every transaction, as merchants.rederivePreview showed, in one undoable " +
+    "change. A new name joins the merchant it's already a name of, else the merchant the transaction's old name " +
+    "belonged to (so merges stay), else a new one. Transactions whose merchant was chosen by hand are left alone.",
+  allowedActors: ["user"],
+  input: z.object({}),
+  apply: async (ctx) => {
+    const { rows } = await rederiveInputs(ctx.db);
+    const changes = rederive(rows);
+    const oldMerchant = new Map(rows.map((r) => [r.id, r.merchantId]));
+    const joined = new Map<string, string>();
+    for (const c of changes) {
+      let merchantId = joined.get(c.after);
+      if (!merchantId) {
+        const [alias] = await ctx.db.select({ merchantId: merchantAliases.merchantId }).from(merchantAliases).where(eq(merchantAliases.alias, c.after));
+        const old = oldMerchant.get(c.id);
+        if (alias) merchantId = alias.merchantId;
+        else if (old) merchantId = (await ctx.insert(merchantAliases, { alias: c.after, merchantId: old })).merchantId;
+        else merchantId = (await merchantFor(ctx, c.after))!;
+        joined.set(c.after, merchantId);
+      }
+      await ctx.update(transactions, c.id, { merchant: c.after, merchantId });
+    }
+    return { changed: changes.length };
+  },
+});

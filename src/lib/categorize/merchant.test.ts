@@ -21,6 +21,28 @@ describe("normalizeMerchant", () => {
     expect(normalizeMerchant(description)).toBe(merchant);
   });
 
+  // #288: the same business in another town, and more processors.
+  it.each([
+    ["CORNER BEAN CAFE      SPRINGFIELD   IL", "Corner Bean Cafe"],
+    ["SQ *CORNER BEAN CAFE    RIVERTON WA", "Corner Bean Cafe"],
+    ["CORNER BEAN CAFE, SPRINGFIELD, IL", "Corner Bean Cafe"],
+    ["CORNER BEAN CAFE, NEW HAVEN CT", "Corner Bean Cafe"],
+    ["LUMEN BISTRO TX", "Lumen Bistro"],
+    ["FS *PIXELFORGE APP", "Pixelforge App"],
+    ["SQSP* INKWELL STUDIO", "Inkwell Studio"],
+    ["BT*HOLLOWAY BOOKS", "Holloway Books"],
+  ])("%s → %s", (description, merchant) => {
+    expect(normalizeMerchant(description)).toBe(merchant);
+  });
+
+  it("keeps a code that could be a word, unless a location is clearly marked", () => {
+    expect(normalizeMerchant("STARLIGHT DRIVE IN")).toBe("Starlight Drive in");
+    expect(normalizeMerchant("HOLLOWAY & CO")).toBe("Holloway & Co");
+    expect(normalizeMerchant("STARLIGHT DRIVE IN    MAPLETON  OR")).toBe("Starlight Drive in");
+    // One word left isn't enough to tell a name from a town.
+    expect(normalizeMerchant("ZIPRIDE TX")).toBe("Zipride Tx");
+  });
+
   it("prefers a provider payee when there is one", () => {
     expect(normalizeMerchant("POS 4821 XXXX1234", "Corner Bean Cafe")).toBe("Corner Bean Cafe");
     expect(normalizeMerchant("CORNER BEAN CAFE #12", " ")).toBe("Corner Bean Cafe");

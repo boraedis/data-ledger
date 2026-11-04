@@ -18,8 +18,9 @@ const LEADING_NOISE = [
   /^(online|electronic)\s+(pmt|payment|transfer)\s+/i,
   /^ach\s+(debit|credit)\s+/i,
   /^apl\s?pay\s+/i,
-  // Payment-processor prefixes: Square, Toast, Shopify, PayPal, etc.
-  /^(sq|tst|sp|pp|dd|in|py|pos|ck)\s?\*\s*/i,
+  // Payment-processor prefixes: Square, Toast, Shopify, PayPal, FastSpring,
+  // Braintree, WePay, Checkout.com, Squarespace, Eventbrite, SumUp, Clover…
+  /^(sq|tst|sp|pp|dd|in|py|pos|ck|fs|bt|wpy|cko|sqsp|eb|sumup|clv)\s?\*\s*/i,
   /^paypal\s?\*\s*/i,
 ];
 
@@ -33,6 +34,33 @@ const NOISE = [
   /\b\d{4,}\b/g, // long bare numbers
   /\b(autopay|auto pay|online pmt|web pmt|ppd|ccd|web id:?)\b/gi,
 ];
+
+// US state and territory codes, for a location the bank put after the name
+// (#288): "CORNER BEAN CAFE    SPRINGFIELD  IL", "CORNER BEAN CAFE,
+// SPRINGFIELD, IL". The same business in two towns is one merchant.
+const STATES = new Set(
+  "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY DC PR".split(" "),
+);
+// Codes that are also words at the end of a name ("DRIVE IN", "& CO"): only
+// taken as a state with a clear sign of a location before them.
+const AMBIGUOUS_STATES = new Set(["AL", "CO", "DE", "HI", "ID", "IN", "LA", "MA", "ME", "OH", "OK", "OR", "PA"]);
+
+/**
+ * The text without a trailing location, when there's a clear sign of one: a
+ * column gap (two or more spaces) or a comma before a town and a state code.
+ * Without either, a state code alone at the end goes only when it can't be
+ * a word and the name keeps two words; the town before it stays, since
+ * nothing tells it from the name.
+ */
+function withoutLocation(text: string): string {
+  const column = text.match(/^(.*?\S)\s{2,}[A-Za-z][A-Za-z .'-]*?\s+([A-Za-z]{2})\s*$/);
+  if (column && STATES.has(column[2].toUpperCase())) return column[1];
+  const comma = text.match(/^(.*?\S)\s*,\s*[A-Za-z][A-Za-z .'-]*?,?\s+([A-Za-z]{2})\s*$/);
+  if (comma && STATES.has(comma[2].toUpperCase())) return comma[1];
+  const bare = text.match(/^(\S+\s+\S+.*?)\s+([A-Za-z]{2})\s*$/);
+  if (bare && STATES.has(bare[2].toUpperCase()) && !AMBIGUOUS_STATES.has(bare[2].toUpperCase())) return bare[1];
+  return text;
+}
 
 const SMALL_WORDS = new Set(["and", "of", "the", "at", "on", "in", "for", "to", "a", "&"]);
 
@@ -48,7 +76,8 @@ export function normalizeMerchant(description: string, payee?: string | null): s
   // A payee from the provider is usually already a clean name.
   const source = payee && payee.trim().length >= 2 ? payee : description;
 
-  let text = source.replace(/\s+/g, " ").trim();
+  // The location first, while a column gap can still be seen.
+  let text = withoutLocation(source.trim()).replace(/\s+/g, " ").trim();
   for (const pattern of LEADING_NOISE) text = text.replace(pattern, "");
   for (const pattern of NOISE) text = text.replace(pattern, " ");
   text = text

@@ -281,6 +281,13 @@
       "when": 1793742056118,
       "tag": "0039_merchant_merge_dismissals",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1793742713081,
+      "tag": "0040_merchant_pinned",
+      "breakpoints": true
     }
   ]
 }
