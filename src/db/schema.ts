@@ -430,6 +430,9 @@ export const merchants = pgTable(
     // case: two merchants with one name should be merged instead.
     name: text("name").notNull(),
     typeId: uuid("type_id").references(() => merchantTypes.id, { onDelete: "set null" }),
+    // When the model was last asked for its type from the name (#293), so a
+    // name it couldn't place isn't sent again on every run.
+    typeAskedAt: timestamp("type_asked_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [uniqueIndex("merchants_name_idx").on(sql`lower(${t.name})`)],

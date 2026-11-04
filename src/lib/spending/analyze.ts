@@ -8,9 +8,10 @@
 // count, and uncategorized transactions aren't lines at all (the page
 // totals those separately so they aren't hidden).
 
-export type SpendLine = { transactionId: string; date: string; amountCents: number; categoryId: string; accountId: string; merchant: string | null };
+// merchantType is the merchant's type (#293), by name; absent where a caller doesn't load it.
+export type SpendLine = { transactionId: string; date: string; amountCents: number; categoryId: string; accountId: string; merchant: string | null; merchantType?: string | null };
 export type CategoryInfo = { id: string; name: string; kind: string; parentId: string | null };
-export type Grouping = "category" | "merchant" | "account";
+export type Grouping = "category" | "merchant" | "type" | "account";
 
 export type Row = { key: string; label: string; spentCents: number; prevCents: number; children: Row[] };
 
@@ -122,6 +123,12 @@ const SELF = ":self";
  */
 export function keysFor(line: SpendLine, by: Grouping, lookup: Lookup): { key: string; label: string; child?: { key: string; label: string } } {
   if (by === "merchant") return { key: line.merchant ?? "", label: line.merchant ?? "No merchant" };
+  // By merchant type (#293), each type opening into its merchants.
+  if (by === "type") {
+    const type = line.merchantType ?? "";
+    const merchant = line.merchant ?? "No merchant";
+    return { key: `type:${type}`, label: line.merchantType ?? "No type yet", child: { key: `type:${type}|${merchant}`, label: merchant } };
+  }
   if (by === "account") return { key: line.accountId, label: lookup.accountNames.get(line.accountId) ?? "Unknown account" };
   const category = lookup.categories.get(line.categoryId)!;
   const parent = category.parentId ? lookup.categories.get(category.parentId) : undefined;

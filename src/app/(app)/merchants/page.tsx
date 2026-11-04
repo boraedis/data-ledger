@@ -5,7 +5,9 @@ import { formatCents } from "@/lib/money";
 import { merchantOverviewRead, mergeSuggestions, suggestionEvidence } from "@/operations/merchant-views";
 import { listMerchantTypes } from "@/operations/merchants";
 import { read } from "@/operations/runtime";
+import { pendingTypeSuggestions } from "@/lib/merchants/suggest-types";
 import { MergeSuggestions } from "./suggestions";
+import { TypeSuggestions } from "./type-suggestions";
 
 // Merchants (#286): every merchant, with what it's cost over all history,
 // how often and how lately it's been seen, its usual category, whether it
@@ -14,7 +16,8 @@ import { MergeSuggestions } from "./suggestions";
 // Spending. A merchant opens its own page, where it's renamed, typed and
 // merged. Net spend by default, the lines Spending and Budgets count.
 // Above the list, merchants that are probably one business (#287), for the
-// owner to merge or reject.
+// owner to merge or reject. Then types (#293): spending by type, and types
+// suggested for merchants without one, for the owner to approve.
 
 const SUGGESTIONS = 10;
 
@@ -31,7 +34,23 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
   const gross = one(sp.gross) === "1";
 
   const db = getDb();
-  const [rows, types, pairs] = await Promise.all([read(db, merchantOverviewRead, { gross }), read(db, listMerchantTypes, {}), read(db, mergeSuggestions, {})]);
+  const [rows, types, pairs, typeSuggestions] = await Promise.all([
+    read(db, merchantOverviewRead, { gross }),
+    read(db, listMerchantTypes, {}),
+    read(db, mergeSuggestions, {}),
+    pendingTypeSuggestions(db),
+  ]);
+  // What each type has cost, over every merchant of it: the same net spend as the list.
+  const byType = new Map<string, { id: string; name: string; spentCents: number; merchants: number }>();
+  for (const m of rows) {
+    const key = m.typeId ?? "none";
+    const t = byType.get(key) ?? { id: key, name: m.type ?? "No type yet", spentCents: 0, merchants: 0 };
+    t.spentCents += m.spentCents;
+    t.merchants++;
+    byType.set(key, t);
+  }
+  const typeTotals = [...byType.values()].sort((a, b) => b.spentCents - a.spentCents);
+  const untyped = rows.filter((m) => !m.typeId).length;
   const shownPairs = pairs.slice(0, SUGGESTIONS);
   const evidence = await suggestionEvidence(db, [...new Set(shownPairs.flatMap((p) => [p.a.id, p.b.id]))]);
   const withEvidence = (side: (typeof pairs)[number]["a"]) => ({ ...side, transactions: 0, amountCents: 0, accounts: [], lastOn: null, ...evidence.get(side.id) });
@@ -68,6 +87,30 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
 
       {shownPairs.length ? (
         <MergeSuggestions suggestions={shownPairs.map((p) => ({ reason: p.reason, a: withEvidence(p.a), b: withEvidence(p.b) }))} total={pairs.length} />
+      ) : null}
+
+      <TypeSuggestions suggestions={typeSuggestions} untyped={untyped} />
+
+      {typeTotals.length > 1 || (typeTotals.length === 1 && typeTotals[0].id !== "none") ? (
+        <section aria-label="Spending by type" className="space-y-1">
+          <h2 className="text-sm font-medium">By type</h2>
+          <ul className="flex flex-wrap gap-2 text-sm">
+            {typeTotals.map((t) => (
+              <li key={t.id}>
+                <Link
+                  href={`/merchants?type=${t.id}${gross ? "&gross=1" : ""}`}
+                  aria-current={type === t.id ? "page" : undefined}
+                  className={`inline-flex gap-2 rounded border px-2 py-1 hover:bg-muted ${type === t.id ? "border-primary" : ""}`}
+                >
+                  <span>{t.name}</span>
+                  <span className="tabular-nums text-muted-foreground">
+                    {formatCents(t.spentCents)} · {t.merchants}
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       {/* A plain GET form: the search goes in the URL like everything else. */}

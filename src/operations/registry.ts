@@ -30,7 +30,7 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, matchPreview, reapplyPreview, reapplyRule, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import { merchantDetail, merchantOverviewRead, mergeSuggestions } from "@/operations/merchant-views";
-import { addMerchantType, createMerchant, dismissMerge, rederiveMerchants, rederivePreviewRead, listMerchants, listMerchantTypes, mergeMerchants, renameMerchant, setMerchantType, splitAlias, setTransactionMerchant, similarTransactions, unpinTransactionMerchant } from "@/operations/merchants";
+import { addMerchantType, createMerchant, dismissMerge, rederiveMerchants, rederivePreviewRead, listMerchants, listMerchantTypes, mergeMerchants, renameMerchant, setMerchantType, splitAlias, setTransactionMerchant, similarTransactions, unpinTransactionMerchant, recordTypeAsks } from "@/operations/merchants";
 import type { Operation } from "@/operations/define";
 import { merchants, merchantAliases, merchantMergeDismissals, merchantTypes, taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, trades, tallyPromotions, quotes, dailyPrices, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
@@ -197,6 +197,7 @@ export const operations: Operation[] = [
   similarTransactions,
   setTransactionMerchant,
   unpinTransactionMerchant,
+  recordTypeAsks,
   createMerchant,
   renameMerchant,
   mergeMerchants,

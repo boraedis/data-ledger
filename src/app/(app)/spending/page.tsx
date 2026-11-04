@@ -41,6 +41,7 @@ import { SplitChart } from "./split-chart";
 const GROUPINGS: { id: Grouping; label: string }[] = [
   { id: "category", label: "Category" },
   { id: "merchant", label: "Merchant" },
+  { id: "type", label: "Merchant type" },
   { id: "account", label: "Account" },
 ];
 
@@ -323,7 +324,7 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
               }),
               by,
             )}
-            title={`Spending in ${period.label} by ${by === "account" ? "kind of account and account" : by === "category" ? "category and subcategory" : "merchant"}`}
+            title={`Spending in ${period.label} by ${by === "account" ? "kind of account and account" : by === "category" ? "category and subcategory" : by === "type" ? "merchant type and merchant" : "merchant"}`}
             groupLabel={GROUPINGS.find((g) => g.id === by)!.label}
           />
         </div>
@@ -355,7 +356,7 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
             {rest.length ? (
               <tr className="border-t text-muted-foreground">
                 <td className="py-2 pr-2">
-                  {rest.length} more {by === "merchant" ? "merchants" : by === "account" ? "accounts" : "categories"}
+                  {rest.length} more {by === "merchant" ? "merchants" : by === "type" ? "types" : by === "account" ? "accounts" : "categories"}
                 </td>
                 <td className="py-2 pr-2 text-right tabular-nums">{formatCents(rest.reduce((s, r) => s + r.spentCents, 0))}</td>
                 <td />

@@ -15,7 +15,7 @@ import {
   transactionTags,
   transactions,
 } from "@/db/schema";
-import { canonicalMerchant, linkUnlinked, merchantFields } from "@/operations/merchants";
+import { canonicalMerchant, linkUnlinked, merchantFields, merchantTypeName } from "@/operations/merchants";
 import { merchantMemory } from "@/lib/categorize/match";
 import { FLAG_KINDS } from "@/lib/suspicious/checks";
 import { searchTerms } from "@/lib/transactions/search";
@@ -663,8 +663,9 @@ export const spendingLines = defineRead({
           amountCents: transactions.amountCents,
           categoryId: transactions.categoryId,
           accountId: transactions.accountId,
-          // One merchant, however it's spelled (#292).
+          // One merchant, however it's spelled (#292), and its type (#293).
           merchant: canonicalMerchant,
+          merchantType: merchantTypeName,
         })
         .from(transactions)
         .where(and(isNotNull(transactions.categoryId), ...filters)),
@@ -675,8 +676,9 @@ export const spendingLines = defineRead({
           amountCents: transactionSplits.amountCents,
           categoryId: transactionSplits.categoryId,
           accountId: transactions.accountId,
-          // One merchant, however it's spelled (#292).
+          // One merchant, however it's spelled (#292), and its type (#293).
           merchant: canonicalMerchant,
+          merchantType: merchantTypeName,
         })
         .from(transactionSplits)
         .innerJoin(transactions, eq(transactions.id, transactionSplits.transactionId))

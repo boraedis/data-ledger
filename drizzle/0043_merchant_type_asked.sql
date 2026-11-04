@@ -1,0 +1,1 @@
+ALTER TABLE "merchants" ADD COLUMN "type_asked_at" timestamp with time zone;
