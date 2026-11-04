@@ -725,7 +725,11 @@ export const recurringSeries = pgTable(
   "recurring_series",
   {
     id: uuid("id").primaryKey().defaultRandom(),
+    // The name when decided, for display. The merchant (#292) is what the
+    // decision is about, every spelling of it, through renames; only a
+    // decision on a name with no merchant goes by the name.
     merchant: text("merchant").notNull(),
+    merchantId: uuid("merchant_id").references(() => merchants.id, { onDelete: "set null" }),
     accountId: uuid("account_id")
       .notNull()
       .references(() => accounts.id, { onDelete: "cascade" }),
@@ -742,7 +746,11 @@ export const recurringSeries = pgTable(
     stillActiveAfter: date("still_active_after"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [uniqueIndex("recurring_series_merchant_account_idx").on(t.merchant, t.accountId)],
+  (t) => [
+    // One decision per merchant and account; by name only for a name with no merchant.
+    uniqueIndex("recurring_series_merchant_id_account_idx").on(t.merchantId, t.accountId),
+    uniqueIndex("recurring_series_merchant_account_idx").on(t.merchant, t.accountId).where(sql`${t.merchantId} is null`),
+  ],
 );
 
 export const alertKind = pgEnum("alert_kind", [
@@ -777,6 +785,9 @@ export const alerts = pgTable(
     kind: alertKind("kind").notNull(),
     dedupeKey: text("dedupe_key").notNull(),
     merchant: text("merchant").notNull(),
+    // The merchant it's about (#292), when there is one: the owner's verdicts
+    // tune the checks per merchant, every spelling of it.
+    merchantId: uuid("merchant_id").references(() => merchants.id, { onDelete: "set null" }),
     accountId: uuid("account_id").references(() => accounts.id, { onDelete: "cascade" }),
     transactionId: uuid("transaction_id").references(() => transactions.id, { onDelete: "set null" }),
     title: text("title").notNull(),

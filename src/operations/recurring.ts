@@ -1,10 +1,10 @@
 import { and, desc, eq, gte, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
 import { canonicalMerchant } from "@/operations/merchants";
-import { accounts, alerts, categories, recurringSeries, transactions } from "@/db/schema";
+import { accounts, alerts, categories, merchants, recurringSeries, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { formatCents } from "@/lib/money";
-import { alertsFor, cancelGraceDays, chargesAfterCancel, detectSeries, seriesKey, type AlertDraft, type Series, type SeriesStatus } from "@/lib/recurring/detect";
+import { alertsFor, cancelGraceDays, chargesAfterCancel, detectSeries, merchantKey, seriesKey, type AlertDraft, type Series, type SeriesStatus } from "@/lib/recurring/detect";
 import { budgetAccountIds } from "@/operations/accounts";
 import { defineRead, defineWrite } from "@/operations/define";
 import { NotFoundError, type WriteContext } from "@/operations/tracked";
@@ -27,7 +27,7 @@ async function loadCharges(db: Db, on: string) {
   const since = new Date(Date.parse(on) - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const transferCategories = db.select({ id: categories.id }).from(categories).where(eq(categories.kind, "transfer"));
   const rows = await db
-    .select({ id: transactions.id, accountId: transactions.accountId, merchant: canonicalMerchant, date: transactions.postedOn, amountCents: transactions.amountCents })
+    .select({ id: transactions.id, accountId: transactions.accountId, merchant: canonicalMerchant, merchantId: transactions.merchantId, date: transactions.postedOn, amountCents: transactions.amountCents })
     .from(transactions)
     .where(
       and(
@@ -47,29 +47,53 @@ async function loadCharges(db: Db, on: string) {
   return rows.filter((r) => r.merchant).map((r) => ({ ...r, merchant: r.merchant!, amountCents: -r.amountCents }));
 }
 
+// A decision is about a merchant (#292): keyed like detection, by merchant
+// id, or by name for a name with no merchant.
+const decisionKey = (r: { merchant: string; merchantId: string | null; accountId: string }) => seriesKey(merchantKey(r), r.accountId);
+
 async function decisions(db: Db) {
   const rows = await db.select().from(recurringSeries);
-  return new Map(rows.map((r) => [seriesKey(r.merchant, r.accountId), r.status]));
+  return new Map(rows.map((r) => [decisionKey(r), r.status]));
+}
+
+/**
+ * The merchant a decision from the Subscriptions page or Tally is about:
+ * the id when given, else the merchant called that (names are unique),
+ * else none — a name not linked to a merchant yet.
+ */
+async function merchantRef(db: Db, merchant: string, merchantId?: string | null) {
+  if (merchantId) return { merchant, merchantId };
+  const [named] = await db.select({ id: merchants.id }).from(merchants).where(sql`lower(${merchants.name}) = lower(${merchant})`);
+  return { merchant, merchantId: named?.id ?? null };
+}
+
+const sameMerchant = (ref: { merchant: string; merchantId: string | null }) =>
+  ref.merchantId ? eq(recurringSeries.merchantId, ref.merchantId) : and(isNull(recurringSeries.merchantId), eq(recurringSeries.merchant, ref.merchant));
+
+async function existingDecision(db: Db, ref: { merchant: string; merchantId: string | null }, accountId: string) {
+  const [row] = await db.select().from(recurringSeries).where(and(sameMerchant(ref), eq(recurringSeries.accountId, accountId)));
+  return row;
 }
 
 /** Per series, the last charge as of the owner saying an ended bill is still active. */
 async function stillActive(db: Db) {
   const rows = await db.select().from(recurringSeries);
-  return new Map(rows.filter((r) => r.stillActiveAfter).map((r) => [seriesKey(r.merchant, r.accountId), r.stillActiveAfter!]));
+  return new Map(rows.filter((r) => r.stillActiveAfter).map((r) => [decisionKey(r), r.stillActiveAfter!]));
 }
 
 /** Clears a series' open "stopped charging" alert once the owner has answered it. */
-async function settleEndedAlerts(ctx: WriteContext, merchant: string, accountId: string) {
+async function settleEndedAlerts(ctx: WriteContext, ref: { merchant: string; merchantId: string | null }, accountId: string) {
+  const about = ref.merchantId ? eq(alerts.merchantId, ref.merchantId) : and(isNull(alerts.merchantId), eq(alerts.merchant, ref.merchant));
   const open = await ctx.db
     .select({ id: alerts.id })
     .from(alerts)
-    .where(and(eq(alerts.kind, "missing_charge"), eq(alerts.merchant, merchant), eq(alerts.accountId, accountId), isNull(alerts.dismissedAt)));
+    .where(and(eq(alerts.kind, "missing_charge"), about, eq(alerts.accountId, accountId), isNull(alerts.dismissedAt)));
   for (const row of open) await ctx.update(alerts, row.id, { dismissedAt: new Date() });
 }
 
 async function cancellations(db: Db) {
   const rows = await db.select().from(recurringSeries).where(eq(recurringSeries.status, "cancelled"));
-  return rows.map((r) => ({ merchant: r.merchant, accountId: r.accountId, cancelledOn: r.cancelledOn!, graceDays: r.cancelGraceDays ?? 7 }));
+  return rows.map((r) => ({ merchant: r.merchant, merchantId: r.merchantId, accountId: r.accountId, cancelledOn: r.cancelledOn!, graceDays: r.cancelGraceDays ?? 7 }));
 }
 
 export async function accountNames(db: Db) {
@@ -80,6 +104,7 @@ export async function accountNames(db: Db) {
 function describe(series: Series, status: SeriesStatus | undefined, accountName: string, stillActiveAfter: string | undefined) {
   return {
     merchant: series.merchant,
+    merchantId: series.merchantId,
     accountId: series.accountId,
     accountName,
     status: status ?? ("suggested" as const),
@@ -129,12 +154,10 @@ export const setRecurringStatus = defineWrite({
   description:
     "Confirm a detected recurring charge as a subscription or bill to track (alerts include a missing charge), " +
     "dismiss it (no list entry, no alerts), or clear the decision (status null).",
-  input: z.object({ merchant: z.string().min(1), accountId: z.uuid(), status: z.enum(["confirmed", "dismissed"]).nullable() }),
-  apply: async (ctx, { merchant, accountId, status }) => {
-    const [existing] = await ctx.db
-      .select()
-      .from(recurringSeries)
-      .where(and(eq(recurringSeries.merchant, merchant), eq(recurringSeries.accountId, accountId)));
+  input: z.object({ merchant: z.string().min(1), merchantId: z.uuid().nullable().optional(), accountId: z.uuid(), status: z.enum(["confirmed", "dismissed"]).nullable() }),
+  apply: async (ctx, { merchant, merchantId, accountId, status }) => {
+    const ref = await merchantRef(ctx.db, merchant, merchantId);
+    const existing = await existingDecision(ctx.db, ref, accountId);
     if (status === null) {
       if (existing) await ctx.remove(recurringSeries, existing.id);
       return { status: "suggested" };
@@ -142,7 +165,7 @@ export const setRecurringStatus = defineWrite({
     // A new decision starts clean: no cancellation snapshot, no "still
     // active" from an earlier quiet spell.
     if (existing) await ctx.update(recurringSeries, existing.id, { status, cancelledOn: null, cancelledAnnualCents: null, cancelGraceDays: null, stillActiveAfter: null });
-    else await ctx.insert(recurringSeries, { merchant, accountId, status });
+    else await ctx.insert(recurringSeries, { ...ref, accountId, status });
     return { status };
   },
 });
@@ -153,20 +176,18 @@ export const cancelRecurring = defineWrite({
     "Mark a recurring charge as cancelled by the owner, as of a date (default today). It leaves the tracked list, " +
     "its yearly cost counts as saved, and any charge from that merchant and account after the date (and a short " +
     "grace window for a final bill) raises a \"charged after you cancelled\" alert.",
-  input: z.object({ merchant: z.string().min(1), accountId: z.uuid(), cancelledOn: z.iso.date().optional() }),
-  apply: async (ctx, { merchant, accountId, cancelledOn = today() }) => {
+  input: z.object({ merchant: z.string().min(1), merchantId: z.uuid().nullable().optional(), accountId: z.uuid(), cancelledOn: z.iso.date().optional() }),
+  apply: async (ctx, { merchant, merchantId, accountId, cancelledOn = today() }) => {
+    const ref = await merchantRef(ctx.db, merchant, merchantId);
     // The cost and grace window are what it was as of the cancel date, kept.
-    const series = detectSeries(await loadCharges(ctx.db, cancelledOn), cancelledOn).find((s) => s.key === seriesKey(merchant, accountId));
+    const series = detectSeries(await loadCharges(ctx.db, cancelledOn), cancelledOn).find((s) => s.key === seriesKey(merchantKey(ref), accountId));
     if (!series) throw new NotFoundError(`No recurring charge from ${merchant} in that account`);
     const values = { status: "cancelled" as const, cancelledOn, cancelledAnnualCents: series.annualizedCents, cancelGraceDays: cancelGraceDays(series), stillActiveAfter: null };
-    const [existing] = await ctx.db
-      .select()
-      .from(recurringSeries)
-      .where(and(eq(recurringSeries.merchant, merchant), eq(recurringSeries.accountId, accountId)));
+    const existing = await existingDecision(ctx.db, ref, accountId);
     if (existing) await ctx.update(recurringSeries, existing.id, values);
-    else await ctx.insert(recurringSeries, { merchant, accountId, ...values });
+    else await ctx.insert(recurringSeries, { ...ref, accountId, ...values });
     // Cancelling answers a "stopped charging" alert.
-    await settleEndedAlerts(ctx, merchant, accountId);
+    await settleEndedAlerts(ctx, ref, accountId);
     return { status: "cancelled", cancelledOn, annualizedCents: series.annualizedCents };
   },
 });
@@ -176,18 +197,16 @@ export const markStillActive = defineWrite({
   description:
     "For a tracked bill that stopped charging: the owner says it's still active (a card problem, say), so keep " +
     "tracking it and stop alerting about this quiet spell. A new charge later ends the acknowledgement.",
-  input: z.object({ merchant: z.string().min(1), accountId: z.uuid(), on: z.iso.date().optional() }),
-  apply: async (ctx, { merchant, accountId, on = today() }) => {
-    const series = detectSeries(await loadCharges(ctx.db, on), on).find((s) => s.key === seriesKey(merchant, accountId));
+  input: z.object({ merchant: z.string().min(1), merchantId: z.uuid().nullable().optional(), accountId: z.uuid(), on: z.iso.date().optional() }),
+  apply: async (ctx, { merchant, merchantId, accountId, on = today() }) => {
+    const ref = await merchantRef(ctx.db, merchant, merchantId);
+    const series = detectSeries(await loadCharges(ctx.db, on), on).find((s) => s.key === seriesKey(merchantKey(ref), accountId));
     if (!series) throw new NotFoundError(`No recurring charge from ${merchant} in that account`);
     const values = { status: "confirmed" as const, stillActiveAfter: series.lastOn, cancelledOn: null, cancelledAnnualCents: null, cancelGraceDays: null };
-    const [existing] = await ctx.db
-      .select()
-      .from(recurringSeries)
-      .where(and(eq(recurringSeries.merchant, merchant), eq(recurringSeries.accountId, accountId)));
+    const existing = await existingDecision(ctx.db, ref, accountId);
     if (existing) await ctx.update(recurringSeries, existing.id, values);
-    else await ctx.insert(recurringSeries, { merchant, accountId, ...values });
-    await settleEndedAlerts(ctx, merchant, accountId);
+    else await ctx.insert(recurringSeries, { ...ref, accountId, ...values });
+    await settleEndedAlerts(ctx, ref, accountId);
     return { status: "confirmed", stillActiveAfter: series.lastOn };
   },
 });
@@ -278,6 +297,7 @@ export const refreshAlerts = defineWrite({
         kind: draft.kind,
         dedupeKey: draft.dedupeKey,
         merchant: draft.merchant,
+        merchantId: draft.merchantId,
         accountId: draft.accountId,
         transactionId: draft.transactionId,
         occurredOn: draft.occurredOn,

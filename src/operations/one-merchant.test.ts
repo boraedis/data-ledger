@@ -11,7 +11,8 @@ import { spendingLines } from "@/operations/transactions";
 
 // One merchant everywhere (#292), on the synthetic seed with invented
 // merchants: a merchant spelled two ways is one merchant to recurring
-// charges, the suspicious-charge checks and Spending.
+// charges, the suspicious-charge checks and Spending, and what the owner
+// decided is stored by merchant id.
 
 let db: Db;
 let card: string;
@@ -41,6 +42,17 @@ beforeEach(async () => {
 });
 
 const lumenSeries = async () => (await read(db, listRecurring, { on: "2026-06-30" })).filter((s) => s.merchant.startsWith("Lumen"));
+const missingAlert = (merchantId: string) => ({
+  kind: "missing_charge" as const,
+  dedupeKey: `missing_charge|${merchantId}|${card}|2026-05-03`,
+  merchant: "Lumen Streaming",
+  merchantId,
+  accountId: card,
+  title: "t",
+  detail: "d",
+  occurredOn: "2026-05-03",
+  dismissedAt: new Date(),
+});
 
 describe("recurring charges", () => {
   it("are one series for a bill charged under two spellings", async () => {
@@ -48,24 +60,31 @@ describe("recurring charges", () => {
       await charge(on, 15.99, i % 2 ? "Lumen Streaming Svc" : "Lumen Streaming");
     const series = await lumenSeries();
     expect(series).toHaveLength(1);
-    expect(series[0]).toMatchObject({ merchant: "Lumen Streaming", cadence: "monthly" });
+    expect(series[0]).toMatchObject({ merchant: "Lumen Streaming", merchantId: lumen, cadence: "monthly" });
   });
 
-  it("keep the owner's decision through a rename and a merge, and undo puts it back", async () => {
+  it("keep the owner's decision by merchant: through a rename, onto the kept one in a merge, and back on undo", async () => {
     for (const on of ["2026-03-03", "2026-04-03", "2026-05-03", "2026-06-03"]) await charge(on, 15.99, "Lumen Streaming");
     await run("recurring.setStatus", { merchant: "Lumen Streaming", accountId: card, status: "confirmed" });
-    const renamed = await run("merchants.rename", { merchantId: lumen, name: "Lumen" });
-    expect((await lumenSeries())[0]).toMatchObject({ merchant: "Lumen", status: "confirmed" });
+    expect(await db.select({ merchantId: recurringSeries.merchantId }).from(recurringSeries)).toEqual([{ merchantId: lumen }]);
 
-    // Merged into another merchant, the decision goes with the series.
+    // Renamed: nothing stored changes, and the series shows the new name.
+    await run("merchants.rename", { merchantId: lumen, name: "Lumen" });
+    expect((await lumenSeries())[0]).toMatchObject({ merchant: "Lumen", merchantId: lumen, status: "confirmed" });
+
     const [{ id: other }] = await db.insert(merchants).values({ name: "Lumen Media" }).returning();
     const merged = await run("merchants.merge", { keepId: other, mergeId: lumen });
-    expect((await lumenSeries())[0]).toMatchObject({ merchant: "Lumen Media", status: "confirmed" });
+    expect((await lumenSeries())[0]).toMatchObject({ merchant: "Lumen Media", merchantId: other, status: "confirmed" });
     await undoCommand(db, merged.commandId);
-    await undoCommand(db, renamed.commandId);
-    expect(await db.select({ merchant: recurringSeries.merchant }).from(recurringSeries).where(eq(recurringSeries.accountId, card))).toEqual([
-      { merchant: "Lumen Streaming" },
-    ]);
+    expect(await db.select({ merchantId: recurringSeries.merchantId }).from(recurringSeries)).toEqual([{ merchantId: lumen }]);
+  });
+
+  it("move an answered alert's dedupe key in a merge, so it isn't raised again", async () => {
+    const [{ id: other }] = await db.insert(merchants).values({ name: "Lumen Media" }).returning();
+    await db.insert(alerts).values(missingAlert(lumen));
+    await run("merchants.merge", { keepId: other, mergeId: lumen });
+    const [moved] = await db.select().from(alerts).where(eq(alerts.kind, "missing_charge"));
+    expect(moved).toMatchObject({ merchantId: other, dedupeKey: `missing_charge|${other}|${card}|2026-05-03` });
   });
 });
 
@@ -76,6 +95,13 @@ describe("the suspicious-charge checks", () => {
     await run("alerts.checkSuspicious", { on: "2026-07-04" }, "matcher");
     const flags = await db.select().from(alerts).where(eq(alerts.transactionId, big.id));
     expect(flags.filter((f) => f.kind === "new_merchant")).toHaveLength(0);
+  });
+
+  it("store a flag with its merchant, so a verdict tunes every spelling", async () => {
+    const big = await charge("2026-07-02", 320, "Lumen Streaming Svc");
+    await run("alerts.checkSuspicious", { on: "2026-07-04" }, "matcher");
+    const [flag] = await db.select().from(alerts).where(eq(alerts.transactionId, big.id));
+    expect(flag).toMatchObject({ kind: "new_merchant", merchantId: lumen, merchant: "Lumen Streaming" });
   });
 });
 
@@ -92,30 +118,26 @@ describe("Spending", () => {
 });
 
 describe("the migration", () => {
-  it("moves decisions and alerts from a spelling to its merchant, keeping one decision per account", async () => {
+  it("ties decisions and alerts to the merchant their name is a spelling of, keeping one decision per account", async () => {
+    // As before it ran: by name only, with two spellings deciding in one account.
+    await db.execute(sql`drop index "recurring_series_merchant_id_account_idx"`);
     await db.insert(recurringSeries).values([
       { merchant: "Lumen Streaming Svc", accountId: card, status: "dismissed", createdAt: new Date("2026-01-01") },
       { merchant: "Lumen Streaming", accountId: card, status: "confirmed", createdAt: new Date("2025-01-01") },
     ]);
-    await db.insert(alerts).values({
-      kind: "unusual_amount",
-      dedupeKey: "missing_charge|Lumen Streaming Svc|x|2026-05-03",
-      merchant: "Lumen Streaming Svc",
-      accountId: card,
-      title: "t",
-      detail: "d",
-      occurredOn: "2026-05-03",
-      verdict: "fine",
-      dismissedAt: new Date(),
-      amountCents: 1599,
-    });
-    const file = readFileSync("drizzle/0042_one_merchant.sql", "utf8");
-    for (const statement of file.split("--> statement-breakpoint")) await db.execute(sql.raw(statement));
-    // The one already under the merchant's name won.
-    expect(await db.select({ merchant: recurringSeries.merchant, status: recurringSeries.status }).from(recurringSeries)).toEqual([
-      { merchant: "Lumen Streaming", status: "confirmed" },
+    await db.insert(alerts).values({ ...missingAlert(lumen), merchantId: null, merchant: "Lumen Streaming Svc", dedupeKey: `missing_charge|Lumen Streaming Svc|${card}|2026-05-03` });
+
+    // The data statements, between adding the columns and creating the new indexes.
+    const statements = readFileSync("drizzle/0042_one_merchant.sql", "utf8").split("--> statement-breakpoint");
+    const data = statements.filter((st) => /^(UPDATE|DELETE|WITH)\b/m.test(st));
+    expect(data).toHaveLength(4);
+    for (const statement of data) await db.execute(sql.raw(statement));
+
+    // The one under the merchant's name won.
+    expect(await db.select({ merchantId: recurringSeries.merchantId, status: recurringSeries.status }).from(recurringSeries)).toEqual([
+      { merchantId: lumen, status: "confirmed" },
     ]);
-    const [moved] = await db.select().from(alerts).where(eq(alerts.amountCents, 1599));
-    expect(moved).toMatchObject({ merchant: "Lumen Streaming", dedupeKey: "missing_charge|Lumen Streaming|x|2026-05-03", verdict: "fine" });
+    const [moved] = await db.select().from(alerts).where(eq(alerts.kind, "missing_charge"));
+    expect(moved).toMatchObject({ merchantId: lumen, dedupeKey: `missing_charge|${lumen}|${card}|2026-05-03` });
   });
 });

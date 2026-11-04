@@ -1,9 +1,9 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, notExists, notInArray, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, notExists, notInArray, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { canonicalMerchant } from "@/operations/merchants";
 import { alerts, categories, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
-import { FLAG_KINDS, LOOKBACK_DAYS, flagsFor, isFlagKind, type Charge, type FlagKind } from "@/lib/suspicious/checks";
+import { FLAG_KINDS, LOOKBACK_DAYS, flagsFor, isFlagKind, merchantKey, type Charge, type FlagKind } from "@/lib/suspicious/checks";
 import { budgetAccountIds } from "@/operations/accounts";
 import { defineRead, defineWrite } from "@/operations/define";
 import { accountNames } from "@/operations/recurring";
@@ -43,8 +43,10 @@ function chargeConditions(db: Db) {
 const chargeColumns = {
   id: transactions.id,
   accountId: transactions.accountId,
-  // The merchant's whole history, every spelling (#292).
+  // The merchant's name as shown, and the merchant itself: history and
+  // verdicts are per merchant, every spelling of it (#292).
   merchant: canonicalMerchant,
+  merchantId: transactions.merchantId,
   description: transactions.description,
   date: transactions.postedOn,
   amountCents: transactions.amountCents,
@@ -57,6 +59,7 @@ type ChargeRow = {
   id: string;
   accountId: string;
   merchant: string | null;
+  merchantId: string | null;
   description: string;
   date: string;
   amountCents: number;
@@ -69,6 +72,7 @@ const toCharge = (r: ChargeRow): Charge => ({
   id: r.id,
   accountId: r.accountId,
   merchant: r.merchant,
+  merchantId: r.merchantId,
   description: r.description,
   date: r.date,
   amountCents: -r.amountCents,
@@ -122,7 +126,15 @@ export const checkSuspicious = defineWrite({
     ).map(toCharge);
     if (subjects.length === 0) return { raised: 0, alertIds: [] as string[] };
 
-    const merchants = [...new Set(subjects.map((s) => s.merchant).filter((m): m is string => m !== null))];
+    // The subjects' merchants: linked ones by id, any not linked yet by name.
+    const merchantIds = [...new Set(subjects.map((s) => s.merchantId).filter((m): m is string => !!m))];
+    const unlinked = [...new Set(subjects.filter((s) => !s.merchantId).map((s) => s.merchant).filter((m): m is string => m !== null))];
+    const atSubjects = or(
+      merchantIds.length ? inArray(transactions.merchantId, merchantIds) : undefined,
+      unlinked.length ? and(isNull(transactions.merchantId), inArray(transactions.merchant, unlinked)) : undefined,
+    );
+    const anyMerchant = merchantIds.length + unlinked.length > 0;
+    const keyOf = sql<string>`coalesce(${transactions.merchantId}::text, ${transactions.merchant})`;
     const categoryIds = [...new Set(subjects.map((s) => s.categoryId).filter((c): c is string => c !== null))];
     const dates = subjects.map((s) => s.date).sort();
     const from = shift(dates[0], -LOOKBACK_DAYS);
@@ -131,23 +143,23 @@ export const checkSuspicious = defineWrite({
 
     const ranked = db
       .select({
-        merchant: canonicalMerchant.as("merchant"),
+        key: keyOf.as("key"),
         id: transactions.id,
         date: transactions.postedOn,
-        rank: sql<number>`row_number() over (partition by ${canonicalMerchant} order by ${transactions.postedOn}, ${transactions.id})`.as("rank"),
+        rank: sql<number>`row_number() over (partition by ${keyOf} order by ${transactions.postedOn}, ${transactions.id})`.as("rank"),
       })
       .from(transactions)
       // Any transaction at all counts as having been there before, a refund
       // included. Not a provisional one: its synced copy will be the record.
-      .where(and(merchants.length ? inArray(canonicalMerchant, merchants) : sql`false`, isNull(transactions.provisionalSource)))
+      .where(and(anyMerchant ? atSubjects : sql`false`, isNull(transactions.provisionalSource)))
       .as("ranked");
 
     const [atMerchants, inCategories, earliest, verdicts, names, cats] = await Promise.all([
-      merchants.length ? db.select(chargeColumns).from(transactions).where(and(window, inArray(canonicalMerchant, merchants))) : [],
+      anyMerchant ? db.select(chargeColumns).from(transactions).where(and(window, atSubjects)) : [],
       categoryIds.length ? db.select(chargeColumns).from(transactions).where(and(window, inArray(transactions.categoryId, categoryIds))) : [],
-      merchants.length ? db.select().from(ranked).where(lte(ranked.rank, 2)) : [],
+      anyMerchant ? db.select().from(ranked).where(lte(ranked.rank, 2)) : [],
       db
-        .select({ kind: alerts.kind, merchant: alerts.merchant, amountCents: alerts.amountCents, verdict: alerts.verdict, at: alerts.dismissedAt })
+        .select({ kind: alerts.kind, merchant: alerts.merchant, merchantId: alerts.merchantId, amountCents: alerts.amountCents, verdict: alerts.verdict, at: alerts.dismissedAt })
         .from(alerts)
         .where(and(isNotNull(alerts.verdict), isNotNull(alerts.dismissedAt))),
       accountNames(db),
@@ -156,14 +168,14 @@ export const checkSuspicious = defineWrite({
     const categoryName = new Map(cats.map((c) => [c.id, c.name]));
 
     const drafts = flagsFor(subjects, {
-      byMerchant: groupBy(atMerchants.map(toCharge), (c) => c.merchant),
+      byMerchant: groupBy(atMerchants.map(toCharge), merchantKey),
       byCategory: groupBy(inCategories.map(toCharge), (c) => c.categoryId),
-      earliest: groupBy(earliest, (e) => e.merchant),
+      earliest: groupBy(earliest, (e) => e.key),
       accountName: (id) => names.get(id) ?? "",
       categoryName: (id) => categoryName.get(id) ?? "this category",
       verdicts: verdicts
         .filter((v) => isFlagKind(v.kind))
-        .map((v) => ({ kind: v.kind as FlagKind, merchant: v.merchant, amountCents: v.amountCents, verdict: v.verdict!, at: v.at! })),
+        .map((v) => ({ kind: v.kind as FlagKind, merchant: v.merchant, merchantId: v.merchantId, amountCents: v.amountCents, verdict: v.verdict!, at: v.at! })),
     });
     if (drafts.length === 0) return { raised: 0, alertIds: [] as string[] };
 

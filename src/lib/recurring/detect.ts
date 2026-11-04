@@ -9,7 +9,13 @@
 // its median; anything wider is flagged variable (a utility bill), which
 // still recurs but gets no price-increase alerts.
 
-export type Charge = { id: string; accountId: string; merchant: string; date: string; amountCents: number }; // amountCents > 0 = spent
+// merchant is the name shown; merchantId, when the charge is linked to one,
+// is what makes it one merchant (#292): every spelling of it is one series,
+// and a rename changes nothing stored. An unlinked charge goes by its name.
+export type Charge = { id: string; accountId: string; merchant: string; merchantId?: string | null; date: string; amountCents: number }; // amountCents > 0 = spent
+
+/** What groups charges as one merchant: its id, else (not linked yet) its name. */
+export const merchantKey = (c: { merchant: string; merchantId?: string | null }) => c.merchantId ?? c.merchant;
 
 export const CADENCES = [
   { name: "weekly", days: 7, tolerance: 2, perYear: 52 },
@@ -48,8 +54,9 @@ function median(values: number[]): number {
 export type Occurrence = { date: string; amountCents: number; chargeIds: string[]; duplicates: Charge[] };
 
 export type Series = {
-  key: string; // `${merchant}|${accountId}`
+  key: string; // `${merchantKey}|${accountId}`
   merchant: string;
+  merchantId: string | null;
   accountId: string;
   cadence: Cadence;
   occurrences: Occurrence[];
@@ -123,7 +130,7 @@ export function detectSeries(charges: Charge[], today: string): Series[] {
   const groups = new Map<string, Charge[]>();
   for (const c of charges) {
     if (c.amountCents <= 0 || !c.merchant) continue;
-    const key = seriesKey(c.merchant, c.accountId);
+    const key = seriesKey(merchantKey(c), c.accountId);
     groups.set(key, [...(groups.get(key) ?? []), c]);
   }
   const series: Series[] = [];
@@ -141,7 +148,9 @@ export function detectSeries(charges: Charge[], today: string): Series[] {
     const last = occurrences.at(-1)!;
     series.push({
       key,
+      // Loaders give a linked charge its merchant's current name, so it's the same on all of them.
       merchant: group[0].merchant,
+      merchantId: group[0].merchantId ?? null,
       accountId: group[0].accountId,
       cadence,
       occurrences,
@@ -165,6 +174,7 @@ export type AlertDraft = {
   kind: "price_increase" | "duplicate_charge" | "overlapping_subscriptions" | "trial_converted" | "missing_charge" | "charged_after_cancel" | "upcoming_renewal";
   dedupeKey: string;
   merchant: string;
+  merchantId: string | null;
   accountId: string | null;
   transactionId: string | null;
   occurredOn: string;
@@ -209,6 +219,7 @@ export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, t
             kind: "price_increase",
             dedupeKey: `price_increase|${s.key}|${o.date}`,
             merchant: s.merchant,
+            merchantId: s.merchantId,
             accountId: s.accountId,
             transactionId: o.chargeIds[0],
             occurredOn: o.date,
@@ -228,6 +239,7 @@ export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, t
             kind: "duplicate_charge",
             dedupeKey: `duplicate_charge|${dup.id}`,
             merchant: s.merchant,
+            merchantId: s.merchantId,
             accountId: s.accountId,
             transactionId: dup.id,
             occurredOn: dup.date,
@@ -247,6 +259,7 @@ export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, t
           kind: "trial_converted",
           dedupeKey: `trial_converted|${s.key}|${occ[firstFull].date}`,
           merchant: s.merchant,
+            merchantId: s.merchantId,
           accountId: s.accountId,
           transactionId: occ[firstFull].chargeIds[0],
           occurredOn: occ[firstFull].date,
@@ -267,6 +280,7 @@ export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, t
         kind: "missing_charge",
         dedupeKey: `missing_charge|${s.key}|${due}`,
         merchant: s.merchant,
+            merchantId: s.merchantId,
         accountId: s.accountId,
         transactionId: null,
         occurredOn: due,
@@ -288,6 +302,7 @@ export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, t
       kind: "upcoming_renewal",
       dedupeKey: `upcoming_renewal|${s.key}|${s.nextExpectedOn}`,
       merchant: s.merchant,
+            merchantId: s.merchantId,
       accountId: s.accountId,
       transactionId: null,
       occurredOn: s.nextExpectedOn,
@@ -300,14 +315,15 @@ export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, t
   // Overlapping: the same merchant billing in two accounts at once.
   const active = live.filter((s) => s.active);
   const byMerchant = new Map<string, Series[]>();
-  for (const s of active) byMerchant.set(s.merchant, [...(byMerchant.get(s.merchant) ?? []), s]);
-  for (const [merchant, list] of byMerchant) {
+  for (const s of active) byMerchant.set(merchantKey(s), [...(byMerchant.get(merchantKey(s)) ?? []), s]);
+  for (const [key, list] of byMerchant) {
     if (list.length < 2) continue;
     const accounts = list.map((s) => s.accountId).sort();
     drafts.push({
       kind: "overlapping_subscriptions",
-      dedupeKey: `overlapping_subscriptions|${merchant}|${accounts.join(",")}`,
-      merchant,
+      dedupeKey: `overlapping_subscriptions|${key}|${accounts.join(",")}`,
+      merchant: list[0].merchant,
+      merchantId: list[0].merchantId,
       accountId: null,
       transactionId: null,
       occurredOn: list.map((s) => s.lastOn).sort().at(-1)!,
@@ -319,7 +335,7 @@ export function alertsFor(series: Series[], status: Map<string, SeriesStatus>, t
 
 // --- Cancelled (#82) ------------------------------------------------------------
 
-export type Cancellation = { merchant: string; accountId: string; cancelledOn: string; graceDays: number };
+export type Cancellation = { merchant: string; merchantId?: string | null; accountId: string; cancelledOn: string; graceDays: number };
 
 /**
  * Days after cancelling during which a charge is still expected, not an
@@ -336,15 +352,16 @@ export const cancelGraceDays = (series: Pick<Series, "variable">) => (series.var
  * single stray charge after months of quiet no longer looks like a series.
  */
 export function chargesAfterCancel(charges: Charge[], cancelled: Cancellation[]): AlertDraft[] {
-  const byKey = new Map(cancelled.map((c) => [seriesKey(c.merchant, c.accountId), c]));
+  const byKey = new Map(cancelled.map((c) => [seriesKey(merchantKey(c), c.accountId), c]));
   return charges.flatMap((charge): AlertDraft[] => {
-    const c = byKey.get(seriesKey(charge.merchant, charge.accountId));
+    const c = byKey.get(seriesKey(merchantKey(charge), charge.accountId));
     if (!c || charge.amountCents <= 0 || charge.date <= addDays(c.cancelledOn, c.graceDays)) return [];
     return [
       {
         kind: "charged_after_cancel",
         dedupeKey: `charged_after_cancel|${charge.id}`,
         merchant: charge.merchant,
+        merchantId: charge.merchantId ?? null,
         accountId: charge.accountId,
         transactionId: charge.id,
         occurredOn: charge.date,
