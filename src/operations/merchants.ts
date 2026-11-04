@@ -1,6 +1,6 @@
 import { and, asc, count, eq, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { merchantAliases, merchantMergeDismissals, merchants, merchantTypes, recurringSeries, rules, transactions } from "@/db/schema";
+import { alerts, merchantAliases, merchantMergeDismissals, merchants, merchantTypes, recurringSeries, rules, transactions } from "@/db/schema";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { rederive, rederivePreview } from "@/lib/merchants/rederive";
 import { defineRead, defineWrite } from "@/operations/define";
@@ -17,6 +17,17 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 // later issue, and the owner approves them (#284).
 
 const merchantName = z.string().trim().min(1).max(80);
+
+/**
+ * A transaction's merchant as every feature shows it (#292): the linked
+ * merchant's current name, so every spelling reads as one merchant. The
+ * cleaned name only for one not linked yet (the nightly run links it).
+ * Spending and the budget breakdowns group by it (names are unique).
+ * Recurring charges and the suspicious-charge checks only show it: they
+ * group, and store the owner's decisions, by merchant id (merchantKey in
+ * lib/recurring and lib/suspicious), so a rename changes nothing stored.
+ */
+export const canonicalMerchant = sql<string | null>`coalesce((select ${merchants.name} from ${merchants} where ${merchants.id} = ${transactions.merchantId}), ${transactions.merchant})`;
 
 // One import can bring hundreds of rows with the same few merchants: the
 // lookups are remembered for the life of the write.
@@ -49,6 +60,32 @@ export async function merchantFor(ctx: WriteContext, name: string | null): Promi
 export async function merchantFields(ctx: WriteContext, description: string, payee: string | null = null) {
   const merchant = normalizeMerchant(description, payee);
   return { merchant, merchantId: await merchantFor(ctx, merchant) };
+}
+
+/**
+ * A merged merchant's recurring decisions and alerts (#292) become the
+ * kept one's, with the alerts' dedupe keys (which name the merchant by id),
+ * so an alert already answered isn't raised again. A decision the kept
+ * merchant already has for the same account wins and the other goes.
+ * Tracked writes, so undoing the merge puts them back. A rename needs
+ * nothing: they're stored by id.
+ */
+async function moveDecisions(ctx: WriteContext, from: string, to: string) {
+  const series = await ctx.db.select().from(recurringSeries).where(eq(recurringSeries.merchantId, from));
+  for (const row of series) {
+    const [taken] = await ctx.db
+      .select({ id: recurringSeries.id })
+      .from(recurringSeries)
+      .where(and(eq(recurringSeries.merchantId, to), eq(recurringSeries.accountId, row.accountId)));
+    if (taken) await ctx.remove(recurringSeries, row.id);
+    else await ctx.update(recurringSeries, row.id, { merchantId: to });
+  }
+  const flagged = await ctx.db.select({ id: alerts.id, dedupeKey: alerts.dedupeKey }).from(alerts).where(eq(alerts.merchantId, from));
+  for (const row of flagged) {
+    const key = row.dedupeKey.split(`|${from}|`).join(`|${to}|`);
+    const [clash] = key === row.dedupeKey ? [] : await ctx.db.select({ id: alerts.id }).from(alerts).where(eq(alerts.dedupeKey, key));
+    await ctx.update(alerts, row.id, clash ? { merchantId: to } : { merchantId: to, dedupeKey: key });
+  }
 }
 
 async function getMerchant(ctx: WriteContext, id: string) {
@@ -150,6 +187,9 @@ export const mergeMerchants = defineWrite({
       .from(merchantMergeDismissals)
       .where(or(eq(merchantMergeDismissals.merchantAId, mergeId), eq(merchantMergeDismissals.merchantBId, mergeId)));
     for (const d of dismissals) await ctx.remove(merchantMergeDismissals, d.id);
+    // Its recurring decisions and alerts now the kept one's (#292), before
+    // it goes: the FK would otherwise just clear them.
+    await moveDecisions(ctx, mergeId, keepId);
     await ctx.remove(merchants, mergeId);
     return { aliases: aliases.length, transactions: moved };
   },

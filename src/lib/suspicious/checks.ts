@@ -61,7 +61,10 @@ export const isFlagKind = (kind: string): kind is FlagKind => (FLAG_KINDS as str
 export type Charge = {
   id: string;
   accountId: string;
+  // The name shown, and (when linked) the merchant it belongs to: history and
+  // the owner's verdicts are per merchant, every spelling of it (#292).
   merchant: string | null;
+  merchantId?: string | null;
   description: string;
   date: string;
   // Money out, as a positive number.
@@ -74,10 +77,13 @@ export type Charge = {
   manual: boolean;
 };
 
-export type Verdict = { kind: FlagKind; merchant: string; amountCents: number | null; verdict: "fine" | "suspicious"; at: Date };
+export type Verdict = { kind: FlagKind; merchant: string; merchantId?: string | null; amountCents: number | null; verdict: "fine" | "suspicious"; at: Date };
+
+/** What a charge's history and verdicts are keyed by: its merchant, else (not linked) its name. */
+export const merchantKey = (c: { merchant: string | null; merchantId?: string | null }) => c.merchantId ?? c.merchant;
 
 export type Context = {
-  // Charges at each subject's merchant, and in each subject's category, from
+  // Charges at each subject's merchant (by merchantKey), and in each subject's category, from
   // LOOKBACK_DAYS before the earliest subject to a day after the latest.
   // Subjects themselves may be in here; each rule leaves them out.
   byMerchant: Map<string, Charge[]>;
@@ -94,6 +100,7 @@ export type FlagDraft = {
   kind: FlagKind;
   dedupeKey: string;
   merchant: string;
+  merchantId: string | null;
   accountId: string;
   transactionId: string;
   occurredOn: string;
@@ -116,7 +123,8 @@ function fineCeilings(verdicts: Verdict[]): Map<string, number> {
   const ceilings = new Map<string, number>();
   for (const v of verdicts) {
     if (v.verdict !== "fine" || v.amountCents === null || (v.kind !== "unusual_amount" && v.kind !== "new_merchant")) continue;
-    ceilings.set(v.merchant, Math.max(ceilings.get(v.merchant) ?? 0, v.amountCents));
+    const key = merchantKey(v)!;
+    ceilings.set(key, Math.max(ceilings.get(key) ?? 0, v.amountCents));
   }
   return ceilings;
 }
@@ -147,10 +155,10 @@ const before = (list: Charge[], c: Charge) =>
   list.filter((h) => h.id !== c.id && !h.provisional && h.date < c.date && h.date >= shift(c.date, -LOOKBACK_DAYS));
 
 function duplicate(c: Charge, ctx: Context, repeatsFine: Set<string>): FlagDraft | null {
-  if (!c.merchant || c.provisional || c.manual || c.amountCents < DUPLICATE_MIN_CENTS || repeatsFine.has(c.merchant)) return null;
+  if (!c.merchant || c.provisional || c.manual || c.amountCents < DUPLICATE_MIN_CENTS || repeatsFine.has(merchantKey(c)!)) return null;
   // The later of the two is the one flagged, so a pair raises one flag. On
   // the same day, the id breaks the tie: arbitrary, but the same every run.
-  const first = (ctx.byMerchant.get(c.merchant) ?? []).find(
+  const first = (ctx.byMerchant.get(merchantKey(c)!) ?? []).find(
     (d) =>
       d.id !== c.id &&
       !d.provisional &&
@@ -171,12 +179,12 @@ function duplicate(c: Charge, ctx: Context, repeatsFine: Set<string>): FlagDraft
 
 function unusual(c: Charge, ctx: Context, ceilings: Map<string, number>): FlagDraft | null {
   if (!c.merchant) return null;
-  const ceiling = ceilings.get(c.merchant);
+  const ceiling = ceilings.get(merchantKey(c)!);
   if (ceiling !== undefined && c.amountCents <= ceiling * FINE_HEADROOM) return null;
 
   // The merchant's own history first; a category stands in only for a
   // merchant too new to have a usual.
-  const atMerchant = before(ctx.byMerchant.get(c.merchant) ?? [], c);
+  const atMerchant = before(ctx.byMerchant.get(merchantKey(c)!) ?? [], c);
   const inCategory = c.categoryId ? before(ctx.byCategory.get(c.categoryId) ?? [], c) : [];
   const basis =
     atMerchant.length >= MIN_MERCHANT_CHARGES
@@ -201,7 +209,7 @@ function unusual(c: Charge, ctx: Context, ceilings: Map<string, number>): FlagDr
 
 function firstTime(c: Charge, ctx: Context, bar: number): FlagDraft | null {
   if (!c.merchant || c.amountCents < bar) return null;
-  const seenBefore = (ctx.earliest.get(c.merchant) ?? []).some((e) => e.id !== c.id && e.date < c.date);
+  const seenBefore = (ctx.earliest.get(merchantKey(c)!) ?? []).some((e) => e.id !== c.id && e.date < c.date);
   if (seenBefore) return null;
   return {
     ...base(c, "new_merchant"),
@@ -225,6 +233,7 @@ function base(c: Charge, kind: FlagKind) {
     kind,
     dedupeKey: `${kind}|${c.id}`,
     merchant: c.merchant ?? c.description,
+    merchantId: c.merchantId ?? null,
     accountId: c.accountId,
     transactionId: c.id,
     occurredOn: c.date,
@@ -240,7 +249,7 @@ function base(c: Charge, kind: FlagKind) {
 export function flagsFor(subjects: Charge[], ctx: Context): FlagDraft[] {
   const ceilings = fineCeilings(ctx.verdicts);
   const bar = newMerchantBar(ctx.verdicts);
-  const repeatsFine = new Set(ctx.verdicts.filter((v) => v.kind === "possible_duplicate" && v.verdict === "fine").map((v) => v.merchant));
+  const repeatsFine = new Set(ctx.verdicts.filter((v) => v.kind === "possible_duplicate" && v.verdict === "fine").map((v) => merchantKey(v)!));
   const drafts: FlagDraft[] = [];
   for (const c of subjects) {
     const flag = foreignFee(c, ctx) ?? duplicate(c, ctx, repeatsFine) ?? unusual(c, ctx, ceilings) ?? firstTime(c, ctx, bar);

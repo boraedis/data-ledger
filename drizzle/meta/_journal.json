@@ -295,6 +295,13 @@
       "when": 1793806263846,
       "tag": "0041_rules_merchant",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1793810655661,
+      "tag": "0042_one_merchant",
+      "breakpoints": true
     }
   ]
 }
