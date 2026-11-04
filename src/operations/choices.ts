@@ -24,7 +24,7 @@ export const categoryChoices = defineRead({
   input: z.object({ transactionId: z.uuid() }),
   run: async (db, { transactionId }) => {
     const [txn] = await db
-      .select({ id: transactions.id, accountId: transactions.accountId, amountCents: transactions.amountCents, description: transactions.description, merchant: transactions.merchant })
+      .select({ id: transactions.id, accountId: transactions.accountId, amountCents: transactions.amountCents, description: transactions.description, merchant: transactions.merchant, merchantId: transactions.merchantId })
       .from(transactions)
       .where(eq(transactions.id, transactionId));
     if (!txn) throw new NotFoundError(`transactions ${transactionId} not found`);
@@ -32,11 +32,11 @@ export const categoryChoices = defineRead({
     const filed = and(isNotNull(transactions.categoryId), ne(transactions.id, transactionId));
     const [activeRules, history, [model], recent, kinds] = await Promise.all([
       db.select().from(rules).where(eq(rules.enabled, true)).orderBy(rules.priority, rules.createdAt),
-      txn.merchant
+      txn.merchantId
         ? db
             .select({ categoryId: transactions.categoryId })
             .from(transactions)
-            .where(and(filed, eq(transactions.merchant, txn.merchant)))
+            .where(and(filed, eq(transactions.merchantId, txn.merchantId)))
             .orderBy(desc(transactions.postedOn))
             .limit(MERCHANT_HISTORY)
         : Promise.resolve([]),

@@ -313,6 +313,7 @@ export async function runCategorization(
       amountCents: transactions.amountCents,
       description: transactions.description,
       merchant: transactions.merchant,
+      merchantId: transactions.merchantId,
       postedOn: transactions.postedOn,
       experiencedOn: transactions.experiencedOn,
     })
@@ -346,18 +347,19 @@ export async function runCategorization(
   // 2. Merchant memory, over what's already categorized (newest first). It
   // suggests (the inbox reads it the same way, transactions.inbox); here it
   // only decides what the model needn't be asked: a merchant with history
-  // already has the owner's own answer to offer.
-  const merchants = [...new Set(unmatched.map((t) => t.merchant).filter((m): m is string => Boolean(m)))];
+  // already has the owner's own answer to offer. Per merchant (#289), so
+  // a new spelling inherits what the others taught.
+  const merchants = [...new Set(unmatched.map((t) => t.merchantId).filter((m): m is string => Boolean(m)))];
   const history = merchants.length
     ? await db
-        .select({ merchant: transactions.merchant, categoryId: transactions.categoryId })
+        .select({ merchantId: transactions.merchantId, categoryId: transactions.categoryId })
         .from(transactions)
-        .where(and(inArray(transactions.merchant, merchants), isNotNull(transactions.categoryId)))
+        .where(and(inArray(transactions.merchantId, merchants), isNotNull(transactions.categoryId)))
         .orderBy(desc(transactions.postedOn), desc(transactions.createdAt))
     : [];
   const pastByMerchant = new Map<string, string[]>();
-  for (const h of history) pastByMerchant.set(h.merchant!, [...(pastByMerchant.get(h.merchant!) ?? []), h.categoryId!]);
-  const forModel = unmatched.filter((txn) => !txn.merchant || merchantMemory(pastByMerchant.get(txn.merchant) ?? []).kind === "none");
+  for (const h of history) pastByMerchant.set(h.merchantId!, [...(pastByMerchant.get(h.merchantId!) ?? []), h.categoryId!]);
+  const forModel = unmatched.filter((txn) => !txn.merchantId || merchantMemory(pastByMerchant.get(txn.merchantId) ?? []).kind === "none");
 
   // 3. The model, only if asked for and configured.
   const modelResult = model && modelIsConfigured() ? await modelStep(db, forModel, model) : { seen: 0, pending: 0 };

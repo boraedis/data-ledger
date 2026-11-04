@@ -823,6 +823,7 @@ export const listInbox = defineRead({
         amountCents: transactions.amountCents,
         description: transactions.description,
         merchant: transactions.merchant,
+        merchantId: transactions.merchantId,
         accountId: transactions.accountId,
         pending: transactions.pending,
         provisionalSource: transactions.provisionalSource,
@@ -834,16 +835,17 @@ awaitingCategory(db))
       .orderBy(desc(transactions.postedOn), transactions.id)
       .limit(limit);
 
-    const merchants = [...new Set(rows.map((r) => r.merchant).filter((m): m is string => Boolean(m)))];
+    // Memory is per merchant (#289), across its spellings.
+    const merchants = [...new Set(rows.map((r) => r.merchantId).filter((m): m is string => Boolean(m)))];
     const history = merchants.length
       ? await db
-          .select({ merchant: transactions.merchant, categoryId: transactions.categoryId })
+          .select({ merchantId: transactions.merchantId, categoryId: transactions.categoryId })
           .from(transactions)
-          .where(and(inArray(transactions.merchant, merchants), isNotNull(transactions.categoryId)))
+          .where(and(inArray(transactions.merchantId, merchants), isNotNull(transactions.categoryId)))
           .orderBy(desc(transactions.postedOn))
       : [];
     const byMerchant = new Map<string, string[]>();
-    for (const h of history) byMerchant.set(h.merchant!, [...(byMerchant.get(h.merchant!) ?? []), h.categoryId!]);
+    for (const h of history) byMerchant.set(h.merchantId!, [...(byMerchant.get(h.merchantId!) ?? []), h.categoryId!]);
 
     const modelRows = rows.length
       ? await db
@@ -855,7 +857,7 @@ awaitingCategory(db))
 
     return rows.map((row) => {
       // The owner's own history beats the model's guess.
-      const verdict = row.merchant ? merchantMemory(byMerchant.get(row.merchant) ?? []) : { kind: "none" as const };
+      const verdict = row.merchantId ? merchantMemory(byMerchant.get(row.merchantId) ?? []) : { kind: "none" as const };
       if (verdict.kind !== "none") {
         return { ...row, suggestedCategoryId: verdict.categoryId, suggestionSource: "memory" as const, suggestionConfidence: null, suggestionAgrees: verdict.kind === "apply" };
       }

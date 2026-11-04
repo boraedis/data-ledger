@@ -21,6 +21,7 @@ export default async function CategoriesPage() {
           categoryName: r.categoryName,
           enabled: r.enabled,
           hasLimits: r.accountId !== null || r.minAmountCents !== null || r.maxAmountCents !== null,
+          merchantName: r.merchantName,
         }))}
       />
     </div>

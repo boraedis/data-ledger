@@ -1121,6 +1121,11 @@ export const rules = pgTable("rules", {
   categoryId: uuid("category_id")
     .notNull()
     .references(() => categories.id, { onDelete: "restrict" }),
+  // A "merchant is …" rule is for a merchant (#289), so every spelling of
+  // it matches, not just the one typed. The pattern stays as typed, for
+  // display and as the fallback should the merchant ever go: merging moves
+  // the rule to the merchant kept, so only an undone merchant leaves it null.
+  merchantId: uuid("merchant_id").references(() => merchants.id, { onDelete: "set null" }),
   // Lower runs first; ties broken by age, oldest first.
   priority: integer("priority").notNull().default(100),
   enabled: boolean("enabled").notNull().default(true),

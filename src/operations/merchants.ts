@@ -140,6 +140,9 @@ export const mergeMerchants = defineWrite({
     for (const a of aliases) await ctx.update(merchantAliases, a.id, { merchantId: keepId });
     const moved = await moveLinks(ctx, eq(transactions.merchantId, mergeId), keepId);
     if (!keep.typeId && gone.typeId) await ctx.update(merchants, keepId, { typeId: gone.typeId });
+    // Its rules (#289) now apply to the one kept, every spelling included.
+    const merchantRules = await ctx.db.select({ id: rules.id }).from(rules).where(eq(rules.merchantId, mergeId));
+    for (const r of merchantRules) await ctx.update(rules, r.id, { merchantId: keepId });
     // Its rejected pairs (#287) go with it, as tracked writes rather than the
     // FK cascade, so undoing the merge brings them back too.
     const dismissals = await ctx.db
