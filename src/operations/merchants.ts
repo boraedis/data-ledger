@@ -188,7 +188,12 @@ export const splitAlias = defineWrite({
     await assertNameFree(ctx, alias.alias);
     const row = await ctx.insert(merchants, { name: alias.alias });
     await ctx.update(merchantAliases, aliasId, { merchantId: row.id });
-    const moved = await moveLinks(ctx, and(eq(transactions.merchantId, alias.merchantId), eq(transactions.merchant, alias.alias)), row.id);
+    // Ones the owner put here by hand (#291) stay here.
+    const moved = await moveLinks(
+      ctx,
+      and(eq(transactions.merchantId, alias.merchantId), eq(transactions.merchant, alias.alias), eq(transactions.merchantPinned, false)),
+      row.id,
+    );
     return { merchantId: row.id, transactions: moved };
   },
 });
@@ -226,6 +231,8 @@ export const addMerchantType = defineWrite({
  * merge that was then undone). The alias is the truth.
  */
 export const misLinked = and(
+  // A merchant the owner chose by hand (#291) is meant to disagree.
+  eq(transactions.merchantPinned, false),
   isNotNull(transactions.merchant),
   ne(transactions.merchant, ""),
   or(
@@ -304,5 +311,71 @@ export const rederiveMerchants = defineWrite({
       await ctx.update(transactions, c.id, { merchant: c.after, merchantId });
     }
     return { changed: changes.length };
+  },
+});
+
+// --- Fixing one transaction's merchant by hand (#291) ---------------------
+//
+// "This is actually …": the transaction (and, if asked, the others with the
+// same raw description) gets the merchant the owner picked, and is pinned
+// there. Its cleaned name stays what the bank's text gives, so the page can
+// still explain it (#290); the pin is what keeps the nightly relink, a
+// cleanup re-run and splitting a spelling out from moving it back. Merging
+// the merchant it's pinned to still carries it along, to the one kept.
+
+/** The others with the same raw description, not counting ones already pinned elsewhere. */
+async function similarTo(db: WriteContext["db"], transactionId: string) {
+  const [txn] = await db.select({ description: transactions.description }).from(transactions).where(eq(transactions.id, transactionId));
+  if (!txn) throw new NotFoundError("Transaction not found");
+  const rows = await db
+    .select({ id: transactions.id, pinned: transactions.merchantPinned })
+    .from(transactions)
+    .where(and(eq(transactions.description, txn.description), ne(transactions.id, transactionId)));
+  return { description: txn.description, ids: rows.filter((r) => !r.pinned).map((r) => r.id), pinned: rows.filter((r) => r.pinned).length };
+}
+
+export const similarTransactions = defineRead({
+  name: "merchants.similarTransactions",
+  description:
+    "Before fixing a transaction's merchant: how many other transactions have exactly the same bank description " +
+    "(and so would change too with similar: true), and how many of those already have a merchant chosen by hand.",
+  input: z.object({ transactionId: z.uuid() }),
+  run: async (db, { transactionId }) => {
+    const { ids, pinned } = await similarTo(db, transactionId);
+    return { transactions: ids.length, alreadyChosen: pinned };
+  },
+});
+
+export const setTransactionMerchant = defineWrite({
+  name: "merchants.setForTransaction",
+  description:
+    "Fix a transaction's merchant by hand: the merchant given by id, or by name (an existing one called that, else " +
+    "a new one). With similar: true, every other transaction with exactly the same bank description changes too, " +
+    "except ones whose merchant was already chosen by hand. Each is pinned, so cleanups and relinking leave it alone.",
+  input: z.object({ transactionId: z.uuid(), merchantId: z.uuid().optional(), name: merchantName.optional(), similar: z.boolean().default(false) }),
+  apply: async (ctx, { transactionId, merchantId, name, similar }) => {
+    if (!merchantId === !name) throw new Error("Pick a merchant or give a new one's name");
+    let target = merchantId;
+    if (target) await getMerchant(ctx, target);
+    else {
+      const [named] = await ctx.db.select({ id: merchants.id }).from(merchants).where(sql`lower(${merchants.name}) = lower(${name!})`);
+      target = named?.id ?? (await ctx.insert(merchants, { name: name! })).id;
+    }
+    const others = similar ? (await similarTo(ctx.db, transactionId)).ids : [];
+    for (const id of [transactionId, ...others]) await ctx.update(transactions, id, { merchantId: target, merchantPinned: true });
+    return { merchantId: target, transactions: 1 + others.length };
+  },
+});
+
+export const unpinTransactionMerchant = defineWrite({
+  name: "merchants.unpinTransaction",
+  description: "Undo a hand-chosen merchant on one transaction: it goes back to the merchant its cleaned name belongs to.",
+  input: z.object({ transactionId: z.uuid() }),
+  apply: async (ctx, { transactionId }) => {
+    const [txn] = await ctx.db.select({ merchant: transactions.merchant }).from(transactions).where(eq(transactions.id, transactionId));
+    if (!txn) throw new NotFoundError("Transaction not found");
+    const merchantId = await merchantFor(ctx, txn.merchant);
+    await ctx.update(transactions, transactionId, { merchantId, merchantPinned: false });
+    return { merchantId };
   },
 });

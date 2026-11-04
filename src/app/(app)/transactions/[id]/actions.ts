@@ -132,3 +132,16 @@ export async function mergeManual(manualId: string, transactionId: string) {
 export async function keepManual(transactionId: string) {
   return run(transactionId, "transactions.keepManual", {}, "Kept a transaction added by hand alongside the bank's");
 }
+
+/** "This is actually …" (#291): a merchant by id or a name, pinned, optionally on the same-description ones too. */
+export async function setMerchant(transactionId: string, choice: { merchantId?: string; name?: string }, similar: boolean) {
+  const result = await run(transactionId, "merchants.setForTransaction", { ...choice, similar }, similar ? "Fixed the merchant on a transaction and the same-description ones" : "Fixed a transaction's merchant");
+  if ("ok" in result) revalidatePath("/merchants", "layout");
+  return result;
+}
+
+export async function unpinMerchant(transactionId: string) {
+  const result = await run(transactionId, "merchants.unpinTransaction", {}, "Let a transaction's merchant follow its name again");
+  if ("ok" in result) revalidatePath("/merchants", "layout");
+  return result;
+}
