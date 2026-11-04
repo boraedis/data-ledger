@@ -141,6 +141,77 @@ describe("syncConnection", () => {
     expect(after).toMatchObject({ description: "CORNER BEAN CAFE #12", categoryId: cat.id });
   });
 
+  describe("the owner's cleanup choices (#305)", () => {
+    // A bank text with a town and state, stored under the older cleanup's name.
+    const located = "CORNER BEAN CAFE    SPRINGFIELD  IL";
+    type Preview = { examples: { before: string | null; after: string; transactions: number }[]; choices: { id: string; name: string }[] };
+    const preview = async () => ((await execute(db, { operation: "merchants.rederivePreview", input: {}, actor: "user", reason: "x" })) as { output: Preview }).output;
+    const rederive = (input: Record<string, unknown>) => execute(db, { operation: "merchants.rederive", input, actor: "user", reason: "x" }) as Promise<{ commandId: string; output: { changed: number } }>;
+    const t1 = async () => (await db.select().from(transactions).where(eq(transactions.externalId, "T1")))[0];
+
+    beforeEach(async () => {
+      snapshot.transactions = [txn("T1", { description: located })];
+      await sync();
+      await db.update(transactions).set({ merchant: "Corner Bean Cafe Springfield Il" }).where(eq(transactions.externalId, "T1"));
+    });
+
+    it("leaves an unticked change as it was, and the next sync does too; undo forgets the choice", async () => {
+      const [group] = (await preview()).examples;
+      expect(group).toMatchObject({ before: "Corner Bean Cafe Springfield Il", after: "Corner Bean Cafe" });
+      const skipped = await rederive({ apply: [], skip: [{ before: group.before, after: group.after }] });
+      expect(skipped.output.changed).toBe(0);
+
+      snapshot.transactions[0].memo = "TABLE 4";
+      await sync();
+      expect(await t1()).toMatchObject({ memo: "TABLE 4", merchant: "Corner Bean Cafe Springfield Il" });
+      // Remembered: the next run has nothing to change, and lists the choice.
+      expect((await preview()).examples).toHaveLength(0);
+      expect((await preview()).choices).toMatchObject([{ name: "Corner Bean Cafe Springfield Il" }]);
+
+      await undoCommand(db, skipped.commandId);
+      expect((await preview()).choices).toHaveLength(0);
+    });
+
+    it("keeps an edited name through syncs and later runs, and undo restores everything", async () => {
+      const [group] = (await preview()).examples;
+      const choice = { apply: [{ before: group.before, after: group.after, name: "Corner Bean" }], skip: [] };
+      const applied = await rederive(choice);
+      expect(applied.output.changed).toBe(1);
+      expect(await t1()).toMatchObject({ merchant: "Corner Bean" });
+      // Undone before anything else touches it: the name and the choice both go.
+      await undoCommand(db, applied.commandId);
+      expect(await t1()).toMatchObject({ merchant: "Corner Bean Cafe Springfield Il" });
+      expect((await preview()).choices).toHaveLength(0);
+
+      await rederive(choice);
+      snapshot.transactions[0].memo = "TABLE 4";
+      await sync();
+      expect(await t1()).toMatchObject({ memo: "TABLE 4", merchant: "Corner Bean" });
+      expect((await preview()).examples).toHaveLength(0);
+    });
+
+    it("forgets a choice on request, and the next run offers the cleanup's name again", async () => {
+      const [group] = (await preview()).examples;
+      await rederive({ apply: [], skip: [{ before: group.before, after: group.after }] });
+      const [choice] = (await preview()).choices;
+      await execute(db, { operation: "merchants.removeNameChoice", input: { choiceId: choice.id }, actor: "user", reason: "x" });
+      expect((await preview()).examples).toMatchObject([{ after: "Corner Bean Cafe" }]);
+    });
+
+    it("applies only the listed changes", async () => {
+      snapshot.transactions.push(txn("T3", { description: "SQ *JUNIPER HARDWARE" }));
+      await sync();
+      // That sync brought T1 up to date as well; both stale again, as before the cleanup improved.
+      await db.update(transactions).set({ merchant: "Sq Juniper Hardware" }).where(eq(transactions.externalId, "T3"));
+      await db.update(transactions).set({ merchant: "Corner Bean Cafe Springfield Il" }).where(eq(transactions.externalId, "T1"));
+      const juniper = (await preview()).examples.find((e) => e.after === "Juniper Hardware")!;
+      await rederive({ apply: [{ before: juniper.before, after: juniper.after }], skip: [] });
+      expect(await t1()).toMatchObject({ merchant: "Corner Bean Cafe Springfield Il" });
+      const [t3] = await db.select().from(transactions).where(eq(transactions.externalId, "T3"));
+      expect(t3.merchant).toBe("Juniper Hardware");
+    });
+  });
+
   it("replaces a vanished pending transaction with its posted version, carrying the category", async () => {
     snapshot.transactions = [txn("P1", { pending: true, postedOn: "2026-06-27", amountCents: -999 })];
     await sync();

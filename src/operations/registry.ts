@@ -30,9 +30,9 @@ import { createCategory, deleteCategory, listCategories, moveCategory, renameCat
 import { createRule, deleteRule, listRules, matchPreview, reapplyPreview, reapplyRule, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import { merchantDetail, merchantOverviewRead, mergeSuggestions } from "@/operations/merchant-views";
-import { addMerchantType, createMerchant, dismissMerge, rederiveMerchants, rederivePreviewRead, listMerchants, listMerchantTypes, mergeMerchants, renameMerchant, setMerchantType, splitAlias, setTransactionMerchant, similarTransactions, unpinTransactionMerchant, recordTypeAsks } from "@/operations/merchants";
+import { addMerchantType, createMerchant, dismissMerge, rederiveMerchants, rederivePreviewRead, listMerchants, listMerchantTypes, mergeMerchants, renameMerchant, setMerchantType, splitAlias, setTransactionMerchant, similarTransactions, unpinTransactionMerchant, recordTypeAsks, removeNameChoice } from "@/operations/merchants";
 import type { Operation } from "@/operations/define";
-import { merchants, merchantAliases, merchantMergeDismissals, merchantTypes, taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, trades, tallyPromotions, quotes, dailyPrices, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { merchants, merchantAliases, merchantMergeDismissals, merchantNameOverrides, merchantTypes, taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, trades, tallyPromotions, quotes, dailyPrices, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -198,6 +198,7 @@ export const operations: Operation[] = [
   setTransactionMerchant,
   unpinTransactionMerchant,
   recordTypeAsks,
+  removeNameChoice,
   createMerchant,
   renameMerchant,
   mergeMerchants,
@@ -269,4 +270,5 @@ export const trackedTables = {
   merchant_aliases: merchantAliases,
   merchant_types: merchantTypes,
   merchant_merge_dismissals: merchantMergeDismissals,
+  merchant_name_overrides: merchantNameOverrides,
 } as const;

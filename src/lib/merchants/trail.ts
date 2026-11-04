@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { commandLog, merchantAliases, merchants, transactions, type RowChange } from "@/db/schema";
+import { commandLog, merchantAliases, merchantNameOverrides, merchants, transactions, type RowChange } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { explainMerchant } from "@/lib/categorize/merchant";
 
@@ -94,8 +94,12 @@ export async function merchantExplanation(db: Db, transactionId: string) {
   const [alias] = row.merchant
     ? await db.select({ merchantId: merchantAliases.merchantId }).from(merchantAliases).where(eq(merchantAliases.alias, row.merchant))
     : [];
+  const explanation = explainMerchant(row.description, row.payee);
+  // The owner's name for this exact text (#305), which wins over the cleanup.
+  const [choice] = await db.select({ name: merchantNameOverrides.name }).from(merchantNameOverrides).where(eq(merchantNameOverrides.source, explanation.input));
   return {
-    explanation: explainMerchant(row.description, row.payee),
+    explanation,
+    choice: choice?.name ?? null,
     stored: row.merchant,
     merchant: row.merchantId ? { id: row.merchantId, name: row.merchantName } : null,
     aliasMatched: !!alias && alias.merchantId === row.merchantId,

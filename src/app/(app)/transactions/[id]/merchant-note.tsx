@@ -28,8 +28,10 @@ export function MerchantNote({
   merchants: { id: string; name: string }[];
   similar: { transactions: number; alreadyChosen: number };
 }) {
-  const { explanation: e, stored, merchant, aliasMatched, pinned, trail } = info;
-  const differs = stored !== null && stored !== e.name;
+  const { explanation: e, stored, merchant, aliasMatched, pinned, trail, choice } = info;
+  // What the name should be now: the owner's choice for this text (#305), else the cleanup's.
+  const expected = choice ?? e.name;
+  const differs = stored !== null && stored !== expected;
   return (
     <details className="rounded-lg border px-3 py-2 text-sm">
       <summary className="cursor-pointer text-muted-foreground">
@@ -62,9 +64,17 @@ export function MerchantNote({
           <dt className="text-muted-foreground">Name</dt>
           <dd>
             {stored ?? "None"}
+            {choice && !differs ? (
+              <span className="block text-xs text-muted-foreground">
+                Your choice for this bank text, kept by syncs and cleanups.{" "}
+                <Link href="/merchants/cleanup" className="underline">
+                  Change it
+                </Link>
+              </span>
+            ) : null}
             {differs ? (
               <span className="block text-xs text-muted-foreground">
-                {pinned ? "Chosen by hand" : "Cleaning gives “" + e.name + "” now: the cleanup has changed since."}{" "}
+                {pinned ? "Chosen by hand" : "“" + expected + "” is what it would get now: " + (choice ? "your choice for this bank text." : "the cleanup has changed since.")}{" "}
                 {!pinned ? (
                   <Link href="/merchants/cleanup" className="underline">
                     Clean up names

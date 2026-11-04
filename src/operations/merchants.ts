@@ -1,8 +1,8 @@
 import { and, asc, count, eq, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { alerts, merchantAliases, merchantMergeDismissals, merchants, merchantTypes, recurringSeries, rules, transactions } from "@/db/schema";
-import { normalizeMerchant } from "@/lib/categorize/merchant";
-import { rederive, rederivePreview } from "@/lib/merchants/rederive";
+import { alerts, merchantAliases, merchantMergeDismissals, merchantNameOverrides, merchants, merchantTypes, recurringSeries, rules, transactions } from "@/db/schema";
+import { merchantSource, nameFor } from "@/lib/categorize/merchant";
+import { groupKey, rederive, rederivePreview, sourcesOf } from "@/lib/merchants/rederive";
 import { defineRead, defineWrite } from "@/operations/define";
 import { NotFoundError, type WriteContext } from "@/operations/tracked";
 
@@ -61,9 +61,21 @@ export async function merchantFor(ctx: WriteContext, name: string | null): Promi
   return id;
 }
 
-/** A transaction's derived merchant fields, from its raw ones: the cleaned name and the merchant it belongs to. */
+// The owner's names for raw texts (#305), read once per write.
+const overridesSeen = new WeakMap<WriteContext, Promise<Map<string, string>>>();
+async function nameOverrides(db: WriteContext["db"]) {
+  const rows = await db.select({ source: merchantNameOverrides.source, name: merchantNameOverrides.name }).from(merchantNameOverrides);
+  return new Map(rows.map((r) => [r.source, r.name]));
+}
+
+/**
+ * A transaction's derived merchant fields, from its raw ones: the cleaned
+ * name (or the owner's name for this exact text, #305) and the merchant it
+ * belongs to.
+ */
 export async function merchantFields(ctx: WriteContext, description: string, payee: string | null = null) {
-  const merchant = normalizeMerchant(description, payee);
+  if (!overridesSeen.has(ctx)) overridesSeen.set(ctx, nameOverrides(ctx.db));
+  const merchant = nameFor(description, payee, await overridesSeen.get(ctx)!);
   return { merchant, merchantId: await merchantFor(ctx, merchant) };
 }
 
@@ -340,7 +352,7 @@ async function rederiveInputs(db: WriteContext["db"]) {
     db.select().from(rules),
     db.select({ merchant: recurringSeries.merchant, status: recurringSeries.status }).from(recurringSeries),
   ]);
-  return { rows, rules: ruleRows, series };
+  return { rows, rules: ruleRows, series, overrides: await nameOverrides(db) };
 }
 
 export const rederivePreviewRead = defineRead({
@@ -348,41 +360,97 @@ export const rederivePreviewRead = defineRead({
   description:
     "Preview re-running the merchant name cleanup over every transaction: how many would get a different merchant " +
     "name, examples (before and after), merchant rules whose matches would change, and recurring decisions on names " +
-    "that would go away. Transactions whose merchant was chosen by hand are left alone. Changes nothing.",
+    "that would go away, and the names the owner chose for raw texts. Transactions whose merchant was chosen by " +
+    "hand are left alone. Changes nothing.",
   allowedActors: ["user"],
   input: z.object({}),
   run: async (db) => {
-    const { rows, rules: ruleRows, series } = await rederiveInputs(db);
-    return rederivePreview(rows, { rules: ruleRows, series });
+    const { rows, rules: ruleRows, series, overrides } = await rederiveInputs(db);
+    const [preview, chosen] = await Promise.all([
+      rederivePreview(rows, { rules: ruleRows, series, overrides }),
+      db.select().from(merchantNameOverrides).orderBy(asc(merchantNameOverrides.name)),
+    ]);
+    // Each choice with how many transactions it covers now.
+    const bySource = new Map<string, number>();
+    for (const r of rows) {
+      const source = merchantSource(r.description, r.payee);
+      if (overrides.has(source)) bySource.set(source, (bySource.get(source) ?? 0) + 1);
+    }
+    return { ...preview, choices: chosen.map((o) => ({ id: o.id, source: o.source, name: o.name, transactions: bySource.get(o.source) ?? 0 })) };
   },
 });
+
+const groupRef = z.object({ before: z.string().nullable(), after: z.string() });
 
 export const rederiveMerchants = defineWrite({
   name: "merchants.rederive",
   description:
     "Re-run the merchant name cleanup over every transaction, as merchants.rederivePreview showed, in one undoable " +
     "change. A new name joins the merchant it's already a name of, else the merchant the transaction's old name " +
-    "belonged to (so merges stay), else a new one. Transactions whose merchant was chosen by hand are left alone.",
+    "belonged to (so merges stay), else a new one. Transactions whose merchant was chosen by hand are left alone. " +
+    "With apply, only those before → after changes are made, each optionally under a name of the owner's own; with " +
+    "skip, those are left as they are. Both are remembered for the raw texts behind them, so syncs and later " +
+    "re-runs keep them.",
   allowedActors: ["user"],
-  input: z.object({}),
-  apply: async (ctx) => {
-    const { rows } = await rederiveInputs(ctx.db);
-    const changes = rederive(rows);
+  input: z.object({
+    apply: z.array(groupRef.extend({ name: merchantName.optional() })).max(1000).optional(),
+    skip: z.array(groupRef).max(1000).optional(),
+  }),
+  apply: async (ctx, { apply, skip = [] }) => {
+    const { rows, overrides } = await rederiveInputs(ctx.db);
+    const changes = rederive(rows, overrides);
+    // Which changes to make, and under what name: all as cleaned, unless the
+    // owner listed them (#305), then only those, each as named.
+    const wanted = apply ? new Map(apply.map((g) => [groupKey(g), g.name ?? g.after])) : null;
+    const skipped = new Set(skip.map(groupKey));
+
+    // Remembered per raw text, so the sync and later re-runs give the same.
+    const remember = async (key: string, name: string) => {
+      for (const source of sourcesOf(rows, changes, key)) {
+        const [existing] = await ctx.db.select().from(merchantNameOverrides).where(eq(merchantNameOverrides.source, source));
+        if (existing) await ctx.update(merchantNameOverrides, existing.id, { name });
+        else await ctx.insert(merchantNameOverrides, { source, name });
+      }
+    };
+    for (const g of skip) if (g.before) await remember(groupKey(g), g.before);
+    for (const g of apply ?? []) if (g.name && g.name !== g.after) await remember(groupKey(g), g.name);
+
     const oldMerchant = new Map(rows.map((r) => [r.id, r.merchantId]));
     const joined = new Map<string, string>();
+    let changed = 0;
     for (const c of changes) {
-      let merchantId = joined.get(c.after);
+      const key = groupKey(c);
+      if (skipped.has(key) || (wanted && !wanted.has(key))) continue;
+      const name = wanted?.get(key) ?? c.after;
+      let merchantId = joined.get(name);
       if (!merchantId) {
-        const [alias] = await ctx.db.select({ merchantId: merchantAliases.merchantId }).from(merchantAliases).where(eq(merchantAliases.alias, c.after));
+        const [alias] = await ctx.db.select({ merchantId: merchantAliases.merchantId }).from(merchantAliases).where(eq(merchantAliases.alias, name));
         const old = oldMerchant.get(c.id);
         if (alias) merchantId = alias.merchantId;
-        else if (old) merchantId = (await ctx.insert(merchantAliases, { alias: c.after, merchantId: old })).merchantId;
-        else merchantId = (await merchantFor(ctx, c.after))!;
-        joined.set(c.after, merchantId);
+        else if (old) merchantId = (await ctx.insert(merchantAliases, { alias: name, merchantId: old })).merchantId;
+        else merchantId = (await merchantFor(ctx, name))!;
+        joined.set(name, merchantId);
       }
-      await ctx.update(transactions, c.id, { merchant: c.after, merchantId });
+      await ctx.update(transactions, c.id, { merchant: name, merchantId });
+      changed++;
     }
-    return { changed: changes.length };
+    return { changed };
+  },
+});
+
+export const removeNameChoice = defineWrite({
+  name: "merchants.removeNameChoice",
+  description:
+    "Forget a name the owner chose for a raw text in the cleanup (#305). Nothing changes now: transactions keep " +
+    "their name until the next cleanup run (which previews what the cleaner makes of it) or a sync that brings one " +
+    "of them in again.",
+  allowedActors: ["user"],
+  input: z.object({ choiceId: z.uuid() }),
+  apply: async (ctx, { choiceId }) => {
+    const [row] = await ctx.db.select({ id: merchantNameOverrides.id }).from(merchantNameOverrides).where(eq(merchantNameOverrides.id, choiceId));
+    if (!row) throw new NotFoundError("That choice is already gone");
+    await ctx.remove(merchantNameOverrides, choiceId);
+    return { removed: 1 };
   },
 });
 
