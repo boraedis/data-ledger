@@ -13,7 +13,8 @@ import { decideTypeSuggestion, suggestTypes } from "./actions";
 
 export type TypeSuggestion = { commandId: string; merchantId: string; merchantName: string; typeName: string; source: "category" | "name"; reason: string };
 
-export function TypeSuggestions({ suggestions, untyped }: { suggestions: TypeSuggestion[]; untyped: number }) {
+/** Without `untyped` (on the Inbox, #303) it lists what's waiting, with no button to ask for more. */
+export function TypeSuggestions({ suggestions, untyped }: { suggestions: TypeSuggestion[]; untyped?: number }) {
   const [pending, start] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
   const router = useRouter();
@@ -29,10 +30,16 @@ export function TypeSuggestions({ suggestions, untyped }: { suggestions: TypeSug
     <section aria-label="Merchant types" className="space-y-2 rounded-lg border p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-medium">
-          Types{" "}
-          <span className="font-normal text-muted-foreground">
-            · {untyped} merchant{untyped === 1 ? "" : "s"} without one
-          </span>
+          {untyped === undefined ? (
+            <>Suggested merchant types · {suggestions.length}</>
+          ) : (
+            <>
+              Types{" "}
+              <span className="font-normal text-muted-foreground">
+                · {untyped} merchant{untyped === 1 ? "" : "s"} without one
+              </span>
+            </>
+          )}
         </h2>
         {untyped ? (
           <Button

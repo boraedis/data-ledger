@@ -63,6 +63,9 @@ export function summaryView(content: string, facts: unknown): SummaryView {
     .filter((b) => b.over === true)
     .map((b) => ({ name: text(b.name), overBy: text(b.overBy) }));
   const owed = text(f.owedToYou);
+  // Merchant suggestions (#303): a nudge, not a problem, so no effect on the tone.
+  const duplicates = count(record(f.merchants).duplicates);
+  const merchantTypes = count(record(f.merchants).types);
   const moves = record(record(f.fixed).investments);
   const holdings = typeof moves.changePct === "number" && Number.isFinite(moves.changePct) ? moves.changePct : null;
 
@@ -84,6 +87,8 @@ export function summaryView(content: string, facts: unknown): SummaryView {
   if (overBudgets.length > MAX_OVER_LINES) lines.push({ label: `${overBudgets.length - MAX_OVER_LINES} more over budget`, value: "", tone: "over" });
   if (alerts) lines.push({ label: "Open alerts", value: String(alerts), tone: "look", count: alerts });
   for (const p of problems.slice(0, MAX_PROBLEM_LINES)) lines.push({ label: clip(p), value: "", tone: "over" });
+  if (duplicates) lines.push({ label: "Merchants that look alike", value: String(duplicates), tone: "look", count: duplicates });
+  if (merchantTypes) lines.push({ label: "Merchant types to approve", value: String(merchantTypes), tone: "look", count: merchantTypes });
   if (owed) lines.push({ label: "Owed to you", value: owed, tone: "good" });
   if (holdings !== null) {
     lines.push({ label: `Holdings since ${text(moves.from) || "last time"}`, value: moveText(holdings), tone: holdings >= 0.05 ? "good" : "plain" });
@@ -98,6 +103,8 @@ export function summaryView(content: string, facts: unknown): SummaryView {
   if (inbox) chips.push({ label: `${inbox} in inbox`, tone: "plain" });
   if (flagged) chips.push({ label: `${flagged} flagged`, tone: "over" });
   if (overBudgets.length) chips.push({ label: `${overBudgets.length} over budget`, tone: "over" });
+  if (duplicates) chips.push({ label: `${duplicates} merchant${duplicates === 1 ? "" : "s"} look${duplicates === 1 ? "s" : ""} duplicated`, tone: "plain" });
+  if (merchantTypes) chips.push({ label: `${merchantTypes} type${merchantTypes === 1 ? "" : "s"} to approve`, tone: "plain" });
   if (owed) chips.push({ label: `${owed} owed to you`, tone: "good" });
 
   return { tone, mood, headline, body, chips, lines, needs: flagged + overBudgets.length + alerts + problems.length };
