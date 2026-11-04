@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { merchantExplanation } from "@/lib/merchants/trail";
+import { MerchantFix } from "./merchant-fix";
 
 // How this transaction's merchant was chosen (#290): where the name came
 // from, what cleaning took out, the spelling that matched and its merchant,
@@ -16,12 +17,25 @@ type Info = NonNullable<Awaited<ReturnType<typeof merchantExplanation>>>;
 const merchantLink = (m: { id: string; name: string | null } | null) =>
   !m ? "no merchant" : m.name ? <Link href={`/merchants/${m.id}`} className="underline">{m.name}</Link> : "a merchant since merged away";
 
-export function MerchantNote({ info }: { info: Info }) {
+export function MerchantNote({
+  info,
+  transactionId,
+  merchants,
+  similar,
+}: {
+  info: Info;
+  transactionId: string;
+  merchants: { id: string; name: string }[];
+  similar: { transactions: number; alreadyChosen: number };
+}) {
   const { explanation: e, stored, merchant, aliasMatched, pinned, trail } = info;
   const differs = stored !== null && stored !== e.name;
   return (
     <details className="rounded-lg border px-3 py-2 text-sm">
-      <summary className="cursor-pointer text-muted-foreground">How this merchant was chosen</summary>
+      <summary className="cursor-pointer text-muted-foreground">
+        Merchant: <span className="text-foreground">{merchant?.name ?? "none"}</span>
+        {pinned ? " (chosen by you)" : ""} · how it was chosen, or change it
+      </summary>
       <div className="mt-2 space-y-3">
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
           <dt className="text-muted-foreground">From</dt>
@@ -92,6 +106,7 @@ export function MerchantNote({ info }: { info: Info }) {
         ) : (
           <p className="text-xs text-muted-foreground">No logged changes to its merchant: it&apos;s as it arrived, from before merchants were tracked.</p>
         )}
+        <MerchantFix transactionId={transactionId} current={merchant?.name ?? null} pinned={pinned} merchants={merchants} similar={similar} />
       </div>
     </details>
   );
