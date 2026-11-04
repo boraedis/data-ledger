@@ -108,7 +108,8 @@ function Pair({ s }: { s: Suggestion }) {
   );
 }
 
-export function MergeSuggestions({ suggestions, total }: { suggestions: Suggestion[]; total: number }) {
+/** `seeAll`: shown elsewhere (the Inbox, #303), a link to the rest on the Merchants page. */
+export function MergeSuggestions({ suggestions, total, seeAll = false }: { suggestions: Suggestion[]; total: number; seeAll?: boolean }) {
   return (
     <section aria-label="Possible duplicates" className="space-y-2">
       <h2 className="text-lg font-medium">
@@ -117,6 +118,14 @@ export function MergeSuggestions({ suggestions, total }: { suggestions: Suggesti
       <p className="text-xs text-muted-foreground">
         Merchants that look like one business written two ways. Merging moves one&apos;s names and transactions to the other; it&apos;s undoable in
         Activity.{total > suggestions.length ? ` The first ${suggestions.length} are shown.` : ""}
+        {seeAll && total > suggestions.length ? (
+          <>
+            {" "}
+            <Link href="/merchants" className="underline">
+              See all {total} on Merchants
+            </Link>
+          </>
+        ) : null}
       </p>
       <ul className="divide-y rounded-lg border">
         {suggestions.map((s) => (

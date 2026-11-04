@@ -2,7 +2,8 @@ import Link from "next/link";
 import { getDb } from "@/lib/db";
 import { filterMerchants, SORTS, type Sort } from "@/lib/merchants/overview";
 import { formatCents } from "@/lib/money";
-import { merchantOverviewRead, mergeSuggestions, suggestionEvidence } from "@/operations/merchant-views";
+import { merchantReview } from "@/lib/merchants/review";
+import { merchantOverviewRead } from "@/operations/merchant-views";
 import { listMerchantTypes } from "@/operations/merchants";
 import { read } from "@/operations/runtime";
 import { pendingTypeSuggestions } from "@/lib/merchants/suggest-types";
@@ -35,12 +36,8 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
   const gross = one(sp.gross) === "1";
 
   const db = getDb();
-  const [rows, types, pairs, typeSuggestions] = await Promise.all([
-    read(db, merchantOverviewRead, { gross }),
-    read(db, listMerchantTypes, {}),
-    read(db, mergeSuggestions, {}),
-    pendingTypeSuggestions(db),
-  ]);
+  const [rows, types, review] = await Promise.all([read(db, merchantOverviewRead, { gross }), read(db, listMerchantTypes, {}), merchantReview(db, { pairs: SUGGESTIONS })]);
+  const typeSuggestions = review.types;
   // What each type has cost, over every merchant of it: the same net spend as the list.
   const byType = new Map<string, { id: string; name: string; spentCents: number; merchants: number }>();
   for (const m of rows) {
@@ -52,9 +49,6 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
   }
   const typeTotals = [...byType.values()].sort((a, b) => b.spentCents - a.spentCents);
   const untyped = rows.filter((m) => !m.typeId).length;
-  const shownPairs = pairs.slice(0, SUGGESTIONS);
-  const evidence = await suggestionEvidence(db, [...new Set(shownPairs.flatMap((p) => [p.a.id, p.b.id]))]);
-  const withEvidence = (side: (typeof pairs)[number]["a"]) => ({ ...side, transactions: 0, amountCents: 0, accounts: [], lastOn: null, ...evidence.get(side.id) });
   const shown = filterMerchants(rows, { q, type, sort });
 
   const href = (next: { sort?: Sort; gross?: boolean }) => {
@@ -86,9 +80,7 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
         </p>
       </div>
 
-      {shownPairs.length ? (
-        <MergeSuggestions suggestions={shownPairs.map((p) => ({ reason: p.reason, a: withEvidence(p.a), b: withEvidence(p.b) }))} total={pairs.length} />
-      ) : null}
+      {review.pairs.length ? <MergeSuggestions suggestions={review.pairs} total={review.pairTotal} /> : null}
 
       <TypeSuggestions suggestions={typeSuggestions} untyped={untyped} />
 
