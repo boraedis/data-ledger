@@ -433,6 +433,9 @@ export type MonthBar = {
   targetCents: number | null;
   // Transactions behind spentCents (#139); a split counts once.
   transactions: number;
+  // Net spend on each day of the month, when asked for (the Year view's
+  // daily chart): the days add up to spentCents.
+  dailyCents?: number[];
 };
 
 /**
@@ -457,6 +460,8 @@ export function monthlySeries(input: {
   // Also targets in effect at some point in the window but not on `on`
   // (#108's grid, where a past month shows the target it had).
   includeEnded?: boolean;
+  // Each month also says what each of its days spent.
+  daily?: boolean;
 }): Map<TargetKey, MonthBar[]> {
   const months = input.months ?? SERIES_MONTHS;
   const end = monthIndex(input.on);
@@ -469,7 +474,14 @@ export function monthlySeries(input: {
     const bars: MonthBar[] = [];
     for (let m = start; m <= end; m++) {
       const v = versionAt(list, firstOfMonth(m));
-      bars.push({ month: firstOfMonth(m), spentCents: 0, targetCents: v ? Math.round(v.amountCents! / v.periodMonths) : null, transactions: 0 });
+      const month = firstOfMonth(m);
+      bars.push({
+        month,
+        spentCents: 0,
+        targetCents: v ? Math.round(v.amountCents! / v.periodMonths) : null,
+        transactions: 0,
+        ...(input.daily ? { dailyCents: new Array<number>(Number(lastOfMonth(m).slice(8))).fill(0) } : {}),
+      });
     }
     const current = Boolean(versionAt(list, input.on));
     if (current || (input.includeEnded && bars.some((b) => b.targetCents !== null))) result.set(key, bars);
@@ -487,6 +499,7 @@ export function monthlySeries(input: {
       // In effect then: what status counted. Not yet: what it would cover now.
       if ((bar.targetCents !== null ? onItsDate : today) !== key) continue;
       bar.spentCents -= line.amountCents;
+      if (bar.dailyCents) bar.dailyCents[Number(line.date.slice(8)) - 1] -= line.amountCents;
       if (line.transactionId) counted.set(bar, (counted.get(bar) ?? new Set()).add(line.transactionId));
     }
   }
