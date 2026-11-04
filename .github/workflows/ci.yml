@@ -12,8 +12,17 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request's branch makes its older run pointless:
+# stacked PRs get main merged in often, and the old runs used to queue up
+# behind each other. Runs on main are never cancelled, so every commit
+# there is checked.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  check:
+  # Lint, types and the build don't need the tests, so they run beside them.
+  static:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,32 +35,44 @@ jobs:
       # `next typegen` writes the route types (LayoutProps etc.) that tsc
       # needs on a fresh checkout — far cheaper than a full build.
       - run: npm run typecheck
-      # Includes applying drizzle/ to an in-process Postgres (PGlite), so
-      # a broken migration fails here rather than on a real database.
-      #
-      # Since 2026-10-31 this step had died now and then: the test process
-      # killed (exit 143), or the whole runner shut down. It ran out of
-      # memory: every test's database stayed open until its file ended, and
-      # one worker reached 11.6GB of the runner's 16GB. testDb() now closes
-      # each test's database (src/lib/test-utils/db.ts). The memory line
-      # every 5s ("[mem]"), in this step's own log so it survives a killed
-      # run, stays until a few runs confirm that; then drop it.
-      - name: npm test
-        run: |
-          (while sleep 5; do
-            echo "[mem] $(date -u +%T) $(free -m | awk '/^Mem:/ {print "used=" $3 "MB available=" $7 "MB"}') top: $(ps -eo rss=,comm= --sort=-rss | head -4 | awk '{printf "%s=%dMB ", $2, $1/1024}')"
-          done) &
-          monitor=$!
-          set +e
-          npm test
-          status=$?
-          kill $monitor
-          exit $status
-      # When the runner survives a failure, say whether the kernel's
-      # out-of-memory killer was what stopped the tests.
-      - name: Out-of-memory kills
-        if: failure()
-        run: sudo dmesg | grep -iE "out of memory|oom-kill|killed process" || echo "No out-of-memory kills logged."
       # No secrets needed: the DB client and session secret are read lazily,
       # and every page is dynamic, so the build never touches a database.
       - run: npm run build
+
+  # The tests, split across two runners. Most of the time is the files
+  # themselves (each boots its own PGlite), so two halves take about half
+  # as long, and each runner holds half the databases. Every half applies
+  # drizzle/ to an in-process Postgres, so a broken migration fails here
+  # rather than on a real database.
+  #
+  # The memory monitor added after the out-of-memory kills of 2026-10-31
+  # is gone: testDb() closing each test's database fixed them, and runs
+  # since peaked near 4GB of 16GB. If a run is killed again, the step below
+  # still says whether the kernel's out-of-memory killer did it.
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx vitest run --shard=${{ matrix.shard }}/2
+      - name: Out-of-memory kills
+        if: failure()
+        run: sudo dmesg | grep -iE "out of memory|oom-kill|killed process" || echo "No out-of-memory kills logged."
+
+  # The one status to require: green only when everything above is.
+  check:
+    if: always()
+    needs: [static, test]
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "static: ${{ needs.static.result }}, test: ${{ needs.test.result }}"
+          [ "${{ needs.static.result }}" = success ] && [ "${{ needs.test.result }}" = success ]
