@@ -302,7 +302,6 @@
       "when": 1793810655661,
       "tag": "0042_one_merchant",
       "breakpoints": true
-<<<<<<< HEAD
     },
     {
       "idx": 43,
@@ -310,8 +309,6 @@
       "when": 1793811397965,
       "tag": "0043_merchant_type_asked",
       "breakpoints": true
-=======
->>>>>>> origin/main
     }
   ]
 }
