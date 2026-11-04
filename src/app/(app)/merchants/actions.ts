@@ -45,3 +45,16 @@ export async function splitAlias(aliasId: string) {
 export async function dismissMerge(merchantId: string, otherId: string) {
   return run("merchants.dismissMerge", { merchantId, otherId }, "Said two merchants aren't the same");
 }
+
+export async function rederiveMerchants() {
+  try {
+    const changed = await asOwner(async (db) => {
+      const result = await execute(db, { operation: "merchants.rederive", input: {}, actor: "user", reason: "Re-ran the merchant name cleanup over history" });
+      return result.status === "applied" ? ((result.output as { changed: number }).changed ?? 0) : 0;
+    });
+    revalidatePath("/", "layout");
+    return { ok: true as const, changed };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Something went wrong" };
+  }
+}
