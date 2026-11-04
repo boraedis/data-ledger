@@ -20,6 +20,8 @@ import { manualMatches } from "@/operations/manual";
 import { ManualNote } from "./manual-note";
 import { ProvisionalNote } from "./provisional-note";
 import { TransferNote } from "./transfer-note";
+import { merchantExplanation } from "@/lib/merchants/trail";
+import { MerchantNote } from "./merchant-note";
 
 export default async function TransactionPage(props: PageProps<"/transactions/[id]">) {
   const { id } = await props.params;
@@ -31,13 +33,14 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
     throw error;
   });
   if (!txn) notFound();
-  const [cats, tagList, accts, peopleList, shared, merge] = await Promise.all([
+  const [cats, tagList, accts, peopleList, shared, merge, merchantInfo] = await Promise.all([
     read(db, listCategories, {}),
     read(db, listTags, {}),
     read(db, listAccounts, {}),
     read(db, listPeople, {}),
     read(db, transactionReimbursements, { transactionId: txn.id }),
     txn.manual ? read(db, manualMatches, { transactionId: txn.id }) : Promise.resolve([]),
+    merchantExplanation(db, txn.id),
   ]);
   const otherAccount = txn.transfer ? accts.find((a) => a.id === txn.transfer!.accountId)?.name ?? "another account" : null;
   // Where an unpaired transfer's other half could be: accounts the matcher would pair it with.
@@ -123,6 +126,7 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
       ) : null}
       {/* Keyed on the amount: editing one added by hand resets the split form's defaults. */}
       <TransactionEditor key={`${txn.id}:${txn.amountCents}`} txn={txn} options={categoryOptions(cats)} knownTags={tagList.map((t) => t.name)} />
+      {merchantInfo ? <MerchantNote info={merchantInfo} /> : null}
       <p className="text-xs text-muted-foreground">
         Every change here is in <Link href="/activity" className="underline">Activity</Link> and can be undone there.
       </p>

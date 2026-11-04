@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeMerchant } from "@/lib/categorize/merchant";
+import { explainMerchant, normalizeMerchant } from "@/lib/categorize/merchant";
 
 // Every descriptor here is invented, written to look like bank output.
 describe("normalizeMerchant", () => {
@@ -55,5 +55,28 @@ describe("normalizeMerchant", () => {
   it("is stable: the same merchant written differently normalizes the same", () => {
     const variants = ["CORNER BEAN CAFE #12", "SQ *CORNER BEAN CAFE 06/12", "POS PURCHASE CORNER BEAN CAFE #7"];
     expect(new Set(variants.map((v) => normalizeMerchant(v))).size).toBe(1);
+  });
+});
+
+describe("explainMerchant (#290)", () => {
+  it("says where the name came from and what was taken out, each with what it was", () => {
+    const e = explainMerchant("SQ *CORNER BEAN CAFE #0412 04/12   SPRINGFIELD  IL");
+    expect(e).toMatchObject({ source: "description", fellBack: false, name: "Corner Bean Cafe" });
+    expect(e.removed).toEqual([
+      { what: "location", text: "SPRINGFIELD IL" },
+      { what: "prefix", text: "SQ *" },
+      { what: "store number", text: "#0412" },
+      { what: "date", text: "04/12" },
+    ]);
+  });
+
+  it("prefers the provider's payee, and falls back to the text when cleaning leaves nothing", () => {
+    expect(explainMerchant("POS PURCHASE 88231 FERNWOOD", "Fernwood Bakery")).toMatchObject({ source: "payee", input: "Fernwood Bakery", removed: [] });
+    expect(explainMerchant("#1234")).toMatchObject({ fellBack: true, removed: [], name: "#1234" });
+  });
+
+  it("gives the same name as normalizeMerchant", () => {
+    for (const d of ["APL PAY JUNIPER HARDWARE", "STREAMFLIX.COM 800-555-0100", "Corner Bean Cafe, Springfield, IL"])
+      expect(explainMerchant(d).name).toBe(normalizeMerchant(d));
   });
 });

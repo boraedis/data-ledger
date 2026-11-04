@@ -24,15 +24,16 @@ const LEADING_NOISE = [
   /^paypal\s?\*\s*/i,
 ];
 
-const NOISE = [
-  /\b(x{2,}|\*{2,})\d{2,4}\b/gi, // masked card numbers: XXXX1234, **1234
-  /\bcard\s+\d{4}\b/gi,
-  /#\s?\d+/g, // store numbers
-  /\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, // dates
-  /\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b/g, // phone numbers
-  /\b(?=[a-z]*\d)[a-z\d]{8,}\b/gi, // long reference codes (contain a digit)
-  /\b\d{4,}\b/g, // long bare numbers
-  /\b(autopay|auto pay|online pmt|web pmt|ppd|ccd|web id:?)\b/gi,
+// Each with what it is, for explaining a name (#290).
+const NOISE: [RegExp, string][] = [
+  [/\b(x{2,}|\*{2,})\d{2,4}\b/gi, "card number"], // masked card numbers: XXXX1234, **1234
+  [/\bcard\s+\d{4}\b/gi, "card number"],
+  [/#\s?\d+/g, "store number"],
+  [/\b\d{1,2}\/\d{1,2}(\/\d{2,4})?\b/g, "date"],
+  [/\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b/g, "phone number"],
+  [/\b(?=[a-z]*\d)[a-z\d]{8,}\b/gi, "reference code"], // long reference codes (contain a digit)
+  [/\b\d{4,}\b/g, "number"], // long bare numbers
+  [/\b(autopay|auto pay|online pmt|web pmt|ppd|ccd|web id:?)\b/gi, "bank wording"],
 ];
 
 // US state and territory codes, for a location the bank put after the name
@@ -72,14 +73,46 @@ function titleCase(text: string): string {
     .join(" ");
 }
 
-export function normalizeMerchant(description: string, payee?: string | null): string {
+export type MerchantExplanation = {
+  /** Where the name came from: the provider's payee, or the bank's description. */
+  source: "payee" | "description";
+  /** The text it was cleaned from. */
+  input: string;
+  /** What was taken out, in order, each with what it was. */
+  removed: { what: string; text: string }[];
+  /** True when cleaning left nothing and the text was used as it was. */
+  fellBack: boolean;
+  name: string;
+};
+
+/**
+ * How a transaction's merchant name is made (#290), step by step, for
+ * showing on the transaction. normalizeMerchant is this without the
+ * working, so the explanation can't drift from what actually happens.
+ */
+export function explainMerchant(description: string, payee?: string | null): MerchantExplanation {
   // A payee from the provider is usually already a clean name.
-  const source = payee && payee.trim().length >= 2 ? payee : description;
+  const fromPayee = !!payee && payee.trim().length >= 2;
+  const source = fromPayee ? payee! : description;
+  const removed: { what: string; text: string }[] = [];
 
   // The location first, while a column gap can still be seen.
-  let text = withoutLocation(source.trim()).replace(/\s+/g, " ").trim();
-  for (const pattern of LEADING_NOISE) text = text.replace(pattern, "");
-  for (const pattern of NOISE) text = text.replace(pattern, " ");
+  const trimmed = source.trim();
+  const located = withoutLocation(trimmed);
+  if (located !== trimmed) removed.push({ what: "location", text: trimmed.slice(located.length).replace(/^[\s,]+/, "").replace(/\s+/g, " ") });
+  let text = located.replace(/\s+/g, " ").trim();
+  for (const pattern of LEADING_NOISE) {
+    const m = text.match(pattern);
+    if (m && m[0]) {
+      removed.push({ what: "prefix", text: m[0].trim() });
+      text = text.slice(m[0].length);
+    }
+  }
+  for (const [pattern, what] of NOISE) {
+    for (const m of text.matchAll(pattern)) if (m[0].trim()) removed.push({ what, text: m[0].trim() });
+    text = text.replace(pattern, " ");
+  }
+  for (const m of text.matchAll(/\.(com|net|org)\b/gi)) removed.push({ what: "web address", text: m[0] });
   text = text
     .replace(/\.(com|net|org)\b/gi, "") // "STREAMFLIX.COM" → "STREAMFLIX"
     .replace(/[*]+/g, " ")
@@ -89,6 +122,11 @@ export function normalizeMerchant(description: string, payee?: string | null): s
 
   // If stripping ate everything (a description that was all codes), fall
   // back to the original rather than an empty merchant.
-  if (text.length < 2) text = source.trim();
-  return titleCase(text);
+  const fellBack = text.length < 2;
+  if (fellBack) text = trimmed;
+  return { source: fromPayee ? "payee" : "description", input: trimmed, removed: fellBack ? [] : removed, fellBack, name: titleCase(text) };
+}
+
+export function normalizeMerchant(description: string, payee?: string | null): string {
+  return explainMerchant(description, payee).name;
 }

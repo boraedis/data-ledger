@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { getDb } from "@/lib/db";
+import { merchantChanges } from "@/lib/merchants/trail";
 import { listCommands } from "@/operations/runtime";
 import { CommandActions } from "./command-actions";
 
@@ -17,7 +18,15 @@ const statusStyle: Record<string, string> = {
 // Market price refreshes (#229) are left out unless asked for (?prices=1):
 // one an hour would bury everything else. What Tally applied without asking
 // (#59) is marked as such, apart from what the owner approved, and can be
-// listed on its own (?auto=1).
+// listed on its own (?auto=1). A change that moved transactions to another
+// merchant (a re-run, merge, split or hand fix) says so (#290), so a
+// surprising merchant can be traced here as well as from the transaction.
+/** How many existing transactions a command gave another merchant or name; arrivals aren't counted. */
+function merchantMoves(changes: Parameters<typeof merchantChanges>[0]) {
+  const n = merchantChanges(changes).filter((m) => m.fromName !== null || m.fromId !== null).length;
+  return n ? ` · ${n} transaction${n === 1 ? "'s" : "s'"} merchant changed` : "";
+}
+
 export default async function ActivityPage(props: PageProps<"/activity">) {
   const sp = await props.searchParams;
   const showPrices = sp.prices === "1";
@@ -52,6 +61,7 @@ export default async function ActivityPage(props: PageProps<"/activity">) {
                 <p className="text-xs text-muted-foreground">
                   {c.actor} · {when.format(c.createdAt)}
                   {c.changes.length ? ` · ${c.changes.length} row${c.changes.length === 1 ? "" : "s"} changed` : ""}
+                  {merchantMoves(c.changes)}
                   {c.decidedBy && c.decidedAt ? ` · ${c.status === "rejected" ? "rejected" : "approved"} by ${c.decidedBy}` : ""}
                 </p>
               </div>
