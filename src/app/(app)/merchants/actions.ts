@@ -36,8 +36,14 @@ export async function addMerchantType(name: string) {
   return run("merchants.addType", { name }, `Added the merchant type "${name}"`);
 }
 
-export async function mergeMerchants(keepId: string, mergeId: string) {
-  return run("merchants.merge", { keepId, mergeId }, "Merged two merchants");
+export async function mergeMerchants(keepId: string, mergeId: string, name?: string) {
+  return run("merchants.merge", { keepId, mergeId, ...(name ? { name } : {}) }, name ? `Merged two merchants as "${name}"` : "Merged two merchants");
+}
+
+/** Several merchants into one, under one name (#304): one undoable command. */
+export async function mergeSeveral(keepId: string, mergeIds: string[], name?: string) {
+  const n = mergeIds.length + 1;
+  return run("merchants.merge", { keepId, mergeIds, ...(name ? { name } : {}) }, name ? `Merged ${n} merchants as "${name}"` : `Merged ${n} merchants`);
 }
 
 export async function splitAlias(aliasId: string) {

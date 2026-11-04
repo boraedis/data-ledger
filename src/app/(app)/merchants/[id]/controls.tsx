@@ -42,7 +42,9 @@ export function MerchantControls({
   const [name, setName] = useState(merchant.name);
   const [newType, setNewType] = useState("");
   const [mergeId, setMergeId] = useState("");
+  const [mergedName, setMergedName] = useState<string | null>(null);
   const other = others.find((o) => o.id === mergeId);
+  const finalName = (mergedName ?? merchant.name).trim();
 
   return (
     <section aria-label="Change this merchant" className="space-y-3 rounded-lg border p-3 text-sm">
@@ -118,14 +120,37 @@ export function MerchantControls({
               ))}
             </select>
           </label>
+          {other ? (
+            // The merged merchant's name (#304): this one's unless changed, and it can be the other's.
+            <label className="flex min-w-0 flex-col text-xs text-muted-foreground">
+              Merged name
+              <input
+                value={mergedName ?? merchant.name}
+                onChange={(e) => setMergedName(e.target.value)}
+                list="merge-name-options"
+                className={`${field} text-foreground sm:w-56`}
+                maxLength={80}
+              />
+              <datalist id="merge-name-options">
+                <option value={merchant.name} />
+                <option value={other.name} />
+              </datalist>
+            </label>
+          ) : null}
           <Button
             size="sm"
             variant="outline"
-            disabled={pending || !other}
+            disabled={pending || !other || !finalName}
             onClick={() => {
-              if (!other) return;
-              if (!window.confirm(`Merge "${other.name}" into "${merchant.name}"? Its names and transactions move here. You can undo it in Activity.`)) return;
-              go(() => mergeMerchants(merchant.id, other.id), () => setMergeId(""));
+              if (!other || !finalName) return;
+              if (!window.confirm(`Merge "${other.name}" into "${merchant.name}" as "${finalName}"? Its names and transactions move here. You can undo it in Activity.`)) return;
+              go(
+                () => mergeMerchants(merchant.id, other.id, finalName === merchant.name ? undefined : finalName),
+                () => {
+                  setMergeId("");
+                  setMergedName(null);
+                },
+              );
             }}
           >
             Merge
