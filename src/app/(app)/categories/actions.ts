@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { runCategorization } from "@/lib/categorize/pipeline";
-import { execute } from "@/operations/runtime";
+import { matchPreview } from "@/operations/rules";
+import { execute, read } from "@/operations/runtime";
 import { asOwner, executeAsOwner } from "@/operations/server";
 
 type Result = { error: string } | { ok: true; message?: string };
@@ -78,6 +79,17 @@ export async function reapplyRule(ruleId: string, transactionIds: string[], rule
     const applied = result.status === "applied" ? (result.output as { applied: number }).applied : 0;
     for (const path of ["/categories", "/categories/reapply", "/transactions", "/spending", "/budgets/month", "/cash-flow"]) revalidatePath(path);
     return { ok: true, message: `Changed ${applied} transaction${applied === 1 ? "" : "s"}. Undo it in Activity if it's not what you wanted.` };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Something went wrong" };
+  }
+}
+
+export type RulePreview = { merchant: { id: string; name: string; names: string[] } | null; transactions: number; uncategorized: number };
+
+/** What a rule would match before it's saved (#289): its merchant, and how many transactions. */
+export async function previewRule(input: { matchField: string; matchType: string; pattern: string }): Promise<RulePreview | { error: string }> {
+  try {
+    return await asOwner((db) => read(db, matchPreview, matchPreview.input.parse(input)));
   } catch (error) {
     return { error: error instanceof Error ? error.message : "Something went wrong" };
   }

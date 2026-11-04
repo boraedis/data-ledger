@@ -15,6 +15,7 @@ export type RederiveRow = {
   description: string;
   payee: string | null;
   merchant: string | null;
+  merchantId?: string | null;
   pinned: boolean;
 };
 
@@ -73,6 +74,8 @@ export function rederivePreview(
         let lost = 0;
         for (const c of changes) {
           const r = byId.get(c.id)!;
+          // A rule for a merchant (#289) is judged on the merchant the row has
+          // now: a new name nearly always stays with it, so it rarely moves.
           const was = ruleMatches(rule, { ...r, merchant: c.before });
           const now = ruleMatches(rule, { ...r, merchant: c.after });
           if (now && !was) gained++;

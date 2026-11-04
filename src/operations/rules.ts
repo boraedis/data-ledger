@@ -1,11 +1,12 @@
 import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, categories, commandLog, rules, transactions } from "@/db/schema";
+import { accounts, categories, commandLog, merchantAliases, merchants, rules, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { categoryOptions } from "@/lib/categorize/labels";
-import { firstMatchingRule } from "@/lib/categorize/match";
+import { firstMatchingRule, ruleMatches } from "@/lib/categorize/match";
 import { budgetAccountIds } from "@/operations/accounts";
 import { defineRead, defineWrite } from "@/operations/define";
+import { awaitingCategory } from "@/operations/transactions";
 
 // The owner's categorization rules. Creating or editing one never
 // recategorizes anything by itself; the pipeline applies rules to
@@ -23,7 +24,37 @@ const ruleFields = z.object({
   categoryId: z.uuid(),
   priority: z.number().int().min(0).max(1000).optional(),
   enabled: z.boolean().optional(),
+  // For a "merchant is …" rule, the merchant it's for (#289). Left out, it's
+  // the merchant the pattern names, if any.
+  merchantId: z.uuid().nullable().optional(),
 });
+
+type MatchFields = { matchField: "merchant" | "description"; matchType: "equals" | "contains" | "starts_with"; pattern: string; merchantId?: string | null };
+
+/**
+ * The merchant a rule is for (#289): only a "merchant is …" rule has one —
+ * contains and starts-with are patterns across merchants. The one given,
+ * else the merchant called the pattern, else the one with it as a spelling,
+ * case-insensitive as rules compare. None found, it matches by text.
+ */
+async function ruleMerchant(db: Db, { matchField, matchType, pattern, merchantId }: MatchFields): Promise<string | null> {
+  if (matchField !== "merchant" || matchType !== "equals") return null;
+  if (merchantId) {
+    const [m] = await db.select({ id: merchants.id }).from(merchants).where(eq(merchants.id, merchantId));
+    if (!m) throw new Error("Merchant not found");
+    return m.id;
+  }
+  const needle = pattern.trim().toLowerCase();
+  const [named] = await db.select({ id: merchants.id }).from(merchants).where(sql`lower(${merchants.name}) = ${needle}`).orderBy(merchants.id).limit(1);
+  if (named) return named.id;
+  const [alias] = await db
+    .select({ id: merchantAliases.merchantId })
+    .from(merchantAliases)
+    .where(sql`lower(${merchantAliases.alias}) = ${needle}`)
+    .orderBy(merchantAliases.merchantId)
+    .limit(1);
+  return alias?.id ?? null;
+}
 
 function assertRange(min?: number | null, max?: number | null) {
   if (min != null && max != null && min > max) throw new Error("Minimum amount is above the maximum");
@@ -35,22 +66,24 @@ export const listRules = defineRead({
   input: z.object({}),
   run: (db) =>
     db
-      .select({ rule: rules, categoryName: categories.name })
+      .select({ rule: rules, categoryName: categories.name, merchantName: merchants.name })
       .from(rules)
       .innerJoin(categories, eq(categories.id, rules.categoryId))
+      .leftJoin(merchants, eq(merchants.id, rules.merchantId))
       .orderBy(asc(rules.priority), asc(rules.createdAt))
-      .then((rows) => rows.map(({ rule, categoryName }) => ({ ...rule, categoryName }))),
+      .then((rows) => rows.map(({ rule, categoryName, merchantName }) => ({ ...rule, categoryName, merchantName }))),
 });
 
 export const createRule = defineWrite({
   name: "rules.create",
   description:
     "Create a rule: transactions whose merchant or description equals / contains / starts with the pattern " +
-    "(case-insensitive), optionally limited to one account or an amount range, get this category.",
+    "(case-insensitive), optionally limited to one account or an amount range, get this category. A " +
+    "merchant-equals rule is for that merchant, so every spelling of it matches. Check rules.matchPreview first.",
   input: ruleFields,
   apply: async (ctx, input) => {
     assertRange(input.minAmountCents, input.maxAmountCents);
-    return ctx.insert(rules, input);
+    return ctx.insert(rules, { ...input, merchantId: await ruleMerchant(ctx.db, input) });
   },
 });
 
@@ -63,7 +96,43 @@ export const updateRule = defineWrite({
     if (!current) throw new Error("Rule not found");
     assertRange(changes.minAmountCents ?? current.minAmountCents, changes.maxAmountCents ?? current.maxAmountCents);
     if (Object.keys(changes).length === 0) throw new Error("Nothing to change");
-    return ctx.update(rules, ruleId, changes);
+    // What it matches changed: the merchant it's for is worked out again.
+    const rematch = ["matchField", "matchType", "pattern", "merchantId"].some((k) => k in changes);
+    const merchantId = rematch
+      ? await ruleMerchant(ctx.db, {
+          matchField: changes.matchField ?? current.matchField,
+          matchType: changes.matchType ?? current.matchType,
+          pattern: changes.pattern ?? current.pattern,
+          merchantId: "merchantId" in changes ? changes.merchantId : changes.pattern !== undefined ? null : current.merchantId,
+        })
+      : current.merchantId;
+    return ctx.update(rules, ruleId, { ...changes, merchantId });
+  },
+});
+
+export const matchPreview = defineRead({
+  name: "rules.matchPreview",
+  description:
+    "Before saving a rule: which merchant a merchant-equals rule would be for (with its spellings), how many " +
+    "transactions it matches in all, and how many uncategorized ones it would fill in now. Changes nothing.",
+  input: ruleFields.omit({ categoryId: true, priority: true, enabled: true }),
+  run: async (db, input) => {
+    const merchantId = await ruleMerchant(db, input);
+    const rule = { ...input, id: "", categoryId: "", enabled: true, accountId: input.accountId ?? null, minAmountCents: input.minAmountCents ?? null, maxAmountCents: input.maxAmountCents ?? null, merchantId };
+    const fields = { id: transactions.id, accountId: transactions.accountId, amountCents: transactions.amountCents, description: transactions.description, merchant: transactions.merchant, merchantId: transactions.merchantId };
+    const [all, waiting, merchant, aliases] = await Promise.all([
+      db.select(fields).from(transactions),
+      db.select({ id: transactions.id }).from(transactions).where(awaitingCategory(db)),
+      merchantId ? db.select({ id: merchants.id, name: merchants.name }).from(merchants).where(eq(merchants.id, merchantId)) : Promise.resolve([]),
+      merchantId ? db.select({ alias: merchantAliases.alias }).from(merchantAliases).where(eq(merchantAliases.merchantId, merchantId)).orderBy(asc(merchantAliases.alias)) : Promise.resolve([]),
+    ]);
+    const open = new Set(waiting.map((w) => w.id));
+    const matched = all.filter((t) => ruleMatches(rule, t));
+    return {
+      merchant: merchant[0] ? { ...merchant[0], names: aliases.map((a) => a.alias) } : null,
+      transactions: matched.length,
+      uncategorized: matched.filter((t) => open.has(t.id)).length,
+    };
   },
 });
 
@@ -142,6 +211,7 @@ async function reapplyChanges(db: Db, ruleId?: string) {
         amountCents: transactions.amountCents,
         description: transactions.description,
         merchant: transactions.merchant,
+        merchantId: transactions.merchantId,
         categoryId: transactions.categoryId,
       })
       .from(transactions)

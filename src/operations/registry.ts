@@ -27,7 +27,7 @@ import {
 } from "@/operations/reimbursements";
 import { investmentIncome } from "@/operations/investments";
 import { createCategory, deleteCategory, listCategories, moveCategory, renameCategory } from "@/operations/categories";
-import { createRule, deleteRule, listRules, reapplyPreview, reapplyRule, updateRule } from "@/operations/rules";
+import { createRule, deleteRule, listRules, matchPreview, reapplyPreview, reapplyRule, updateRule } from "@/operations/rules";
 import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations/tags";
 import { merchantDetail, merchantOverviewRead, mergeSuggestions } from "@/operations/merchant-views";
 import { addMerchantType, createMerchant, dismissMerge, rederiveMerchants, rederivePreviewRead, listMerchants, listMerchantTypes, mergeMerchants, renameMerchant, setMerchantType, splitAlias } from "@/operations/merchants";
@@ -76,6 +76,7 @@ export const operations: Operation[] = [
   listRules,
   createRule,
   updateRule,
+  matchPreview,
   reapplyPreview,
   reapplyRule,
   deleteRule,

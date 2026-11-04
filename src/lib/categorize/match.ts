@@ -12,6 +12,8 @@ export type RuleLike = {
   maxAmountCents: number | null;
   categoryId: string;
   enabled: boolean;
+  /** A "merchant is …" rule's merchant (#289): it matches every spelling of it. */
+  merchantId?: string | null;
 };
 
 export type TxnLike = {
@@ -19,6 +21,7 @@ export type TxnLike = {
   amountCents: number;
   description: string;
   merchant: string | null;
+  merchantId?: string | null;
 };
 
 export function ruleMatches(rule: RuleLike, txn: TxnLike): boolean {
@@ -27,6 +30,10 @@ export function ruleMatches(rule: RuleLike, txn: TxnLike): boolean {
   const magnitude = Math.abs(txn.amountCents);
   if (rule.minAmountCents != null && magnitude < rule.minAmountCents) return false;
   if (rule.maxAmountCents != null && magnitude > rule.maxAmountCents) return false;
+
+  // A rule for a merchant matches by the merchant, so all its aliases share
+  // it; the pattern only matters once the merchant is gone.
+  if (rule.matchField === "merchant" && rule.merchantId) return rule.merchantId === txn.merchantId;
 
   const haystack = (rule.matchField === "merchant" ? (txn.merchant ?? "") : txn.description).toLowerCase().trim();
   const needle = rule.pattern.toLowerCase().trim();
@@ -54,7 +61,8 @@ export type MemoryVerdict =
   | { kind: "none" };
 
 /**
- * Merchant memory over a merchant's recent categories, newest first. Since
+ * Merchant memory over a merchant's recent categories (per merchant since
+ * #289, across every spelling of it), newest first. Since
  * #86 it never categorizes on its own; both verdicts are inbox
  * suggestions. "apply" means the recent history agrees (one past
  * categorization is enough), so it's safe to confirm with others at once;

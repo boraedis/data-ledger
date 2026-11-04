@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition, type FormEvent } from "react";
+import { useEffect, useState, useTransition, type FormEvent } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { categoryOptions, type CategoryRow } from "@/lib/categorize/labels";
@@ -18,7 +18,50 @@ export type RuleRow = {
   categoryName: string;
   enabled: boolean;
   hasLimits: boolean;
+  /** The merchant a "merchant is …" rule is for (#289), when it has one. */
+  merchantName: string | null;
 };
+
+/**
+ * Before a rule is saved (#289): the merchant it's for, with its other
+ * spellings, and how many transactions it matches. Asked for as the owner
+ * types, a moment after they stop.
+ */
+function RulePreviewLine({ match, pattern }: { match: string; pattern: string }) {
+  const [preview, setPreview] = useState<{ key: string; value: actions.RulePreview | { error: string } } | null>(null);
+  const key = `${match}|${pattern.trim()}`;
+  useEffect(() => {
+    if (pattern.trim().length < 2) return;
+    const [matchField, matchType] = match.split(":");
+    let stale = false;
+    const timer = setTimeout(async () => {
+      const value = await actions.previewRule({ matchField, matchType, pattern: pattern.trim() });
+      if (!stale) setPreview({ key, value });
+    }, 300);
+    return () => {
+      stale = true;
+      clearTimeout(timer);
+    };
+  }, [key, match, pattern]);
+  if (pattern.trim().length < 2 || preview?.key !== key) return null;
+  const p = preview.value;
+  if ("error" in p) return <p className="text-sm text-destructive">{p.error}</p>;
+  const others = p.merchant ? p.merchant.names.filter((n) => n.toLowerCase() !== p.merchant!.name.toLowerCase()) : [];
+  return (
+    <p role="status" className="text-sm text-muted-foreground">
+      {p.merchant ? (
+        <>
+          For the merchant <span className="font-medium text-foreground">{p.merchant.name}</span>
+          {others.length ? `, every spelling of it (${others.slice(0, 3).join(", ")}${others.length > 3 ? ` and ${others.length - 3} more` : ""})` : ""}.{" "}
+        </>
+      ) : match === "merchant:equals" ? (
+        "No merchant is called that yet; it will match the name as typed. "
+      ) : null}
+      Matches {p.transactions} transaction{p.transactions === 1 ? "" : "s"}
+      {p.uncategorized ? `, and would fill in ${p.uncategorized} uncategorized now` : ", none of them waiting for a category"}.
+    </p>
+  );
+}
 
 function useAction() {
   const [pending, startTransition] = useTransition();
@@ -152,7 +195,17 @@ export function ManageCategories({ categories, rules }: { categories: CategoryRo
             {rules.map((r) => (
               <li key={r.id} className={`flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm ${r.enabled ? "" : "opacity-60"}`}>
                 <span>
-                  {r.matchField} {r.matchType.replace("_", " ")} <span className="font-medium">&quot;{r.pattern}&quot;</span> →{" "}
+                  {r.merchantName ? (
+                    <>
+                      merchant <span className="font-medium">{r.merchantName}</span>
+                      <span className="text-xs text-muted-foreground"> (every spelling)</span>
+                    </>
+                  ) : (
+                    <>
+                      {r.matchField} {r.matchType.replace("_", " ")} <span className="font-medium">&quot;{r.pattern}&quot;</span>
+                    </>
+                  )}{" "}
+                  →{" "}
                   {r.categoryName}
                   {r.hasLimits ? <span className="text-xs text-muted-foreground"> (with limits)</span> : null}
                 </span>
@@ -195,6 +248,7 @@ export function ManageCategories({ categories, rules }: { categories: CategoryRo
             Add rule
           </Button>
         </form>
+        <RulePreviewLine match={ruleMatch} pattern={rulePattern} />
         {rulesAction.feedback}
       </section>
     </div>
