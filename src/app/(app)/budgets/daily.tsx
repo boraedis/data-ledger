@@ -5,7 +5,8 @@ import type { BurndownDay } from "@/lib/budgets/burndown";
 import { formatCents } from "@/lib/money";
 
 // A budget period day by day (#149): the burndown, on the Month view. The
-// Year view draws the same chart a month to a point (#268), with `unit`.
+// Year view draws the same chart across its twelve months (#268), so its
+// dates carry the year.
 //
 // The burndown is one axis (money left) with three lines: this period's
 // actual, the straight line from the full amount to zero, and what a typical
@@ -14,10 +15,14 @@ import { formatCents } from "@/lib/money";
 // Hovering (or tapping) a day reads out all three; a text summary carries
 // the same for screen readers, and "As a table" lists every day.
 
-const dayLabel = (date: string, withWeekday = false) =>
-  new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", { ...(withWeekday ? { weekday: "short" } : {}), month: "short", day: "numeric", timeZone: "UTC" });
-const monthLabel = (date: string, long = false) =>
-  new Date(`${date.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-US", { month: long ? "long" : "short", year: "numeric", timeZone: "UTC" });
+const dayLabel = (date: string, withWeekday = false, withYear = false) =>
+  new Date(`${date}T00:00:00Z`).toLocaleDateString("en-US", {
+    ...(withWeekday ? { weekday: "short" } : {}),
+    month: "short",
+    day: "numeric",
+    ...(withYear ? { year: "numeric" } : {}),
+    timeZone: "UTC",
+  });
 
 export function Burndown({
   days,
@@ -25,23 +30,25 @@ export function Burndown({
   pastPeriods,
   height = 180,
   title,
-  unit = "day",
   typicalLabel,
   idealLabel = "Straight line",
+  idealShort = "line",
 }: {
   days: BurndownDay[];
   availableCents: number;
   pastPeriods: number;
   height?: number;
   title: string;
-  /** Each point a day, or (the Year view) the end of a month. */
-  unit?: "day" | "month";
   /** The typical line's name in the legend, in place of "Typical (N past periods)". */
   typicalLabel?: string;
   /** The dashed line's name: the Year view's isn't straight, as months without a target add nothing. */
   idealLabel?: string;
+  /** The dashed line's name in the readout. */
+  idealShort?: string;
 }) {
-  const label = (date: string, long = false) => (unit === "month" ? monthLabel(date, long) : dayLabel(date, long));
+  // A period that crosses a year (the Year view's, or a quarter over New Year) says which.
+  const withYear = days[0].date.slice(0, 4) !== days.at(-1)!.date.slice(0, 4);
+  const label = (date: string, long = false) => dayLabel(date, long, withYear);
   const [hover, setHover] = useState<number | null>(null);
   const W = 600;
   const pad = { top: 18, right: 8, bottom: 18, left: 8 };
@@ -112,7 +119,7 @@ export function Burndown({
             )}
             <span className="text-muted-foreground">
               {" "}
-              · {unit === "month" ? "at target" : "line"} {formatCents(at.idealCents)}
+              · {idealShort} {formatCents(at.idealCents)}
               {at.typicalCents !== null ? ` · typical ${formatCents(at.typicalCents)}` : ""}
             </span>
           </span>
@@ -163,7 +170,7 @@ export function Burndown({
           <thead className="text-muted-foreground">
             <tr>
               <th scope="col" className="py-0.5 text-left font-normal">
-                {unit === "month" ? "Month" : "Day"}
+                Day
               </th>
               <th scope="col" className="py-0.5 text-right font-normal">Spent</th>
               <th scope="col" className="py-0.5 text-right font-normal">Left</th>

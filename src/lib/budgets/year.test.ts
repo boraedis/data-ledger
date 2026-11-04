@@ -117,36 +117,70 @@ describe("a period's budget", () => {
 });
 
 describe("yearProgress (#268)", () => {
-  // Made-up: a $100 target every month and a $50 one from month 2, over three months.
+  // Made-up: a $100 target every month and a $50 one from month 2, over Jan–Mar 2026.
+  // A cell with the day-of-month and amount of each spend, as the daily read gives them.
+  const cell = (month: string, targetCents: number | null, ...spends: [number, number][]) => {
+    const dailyCents = new Array<number>(new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0)).getUTCDate()).fill(0);
+    for (const [day, cents] of spends) dailyCents[day - 1] += cents;
+    return { month: `${month}-01`, targetCents, spentCents: dailyCents.reduce((a, b) => a + b, 0), dailyCents };
+  };
   const rows = [
-    { months: [{ month: "2026-01-01", spentCents: 8000, targetCents: 10000 }, { month: "2026-02-01", spentCents: 12000, targetCents: 10000 }, { month: "2026-03-01", spentCents: 3000, targetCents: 10000 }] },
-    { months: [{ month: "2026-01-01", spentCents: 2000, targetCents: null }, { month: "2026-02-01", spentCents: 4000, targetCents: 5000 }, { month: "2026-03-01", spentCents: 1000, targetCents: 5000 }] },
+    { months: [cell("2026-01", 10000, [10, 8000]), cell("2026-02", 10000, [1, 12000]), cell("2026-03", 10000, [5, 3000])] },
+    { months: [cell("2026-01", null, [3, 2000]), cell("2026-02", 5000, [15, 4000]), cell("2026-03", 5000, [20, 1000])] },
   ];
+  const at = (p: NonNullable<ReturnType<typeof yearProgress>>, date: string) => p.days.find((d) => d.date === date)!;
 
-  it("counts down from the months' targets, against what the targets had used up", () => {
-    const p = yearProgress(rows, null)!;
+  it("counts down, a day at a time, from the months' targets against what the targets had used up", () => {
+    const p = yearProgress(rows, null, "2026-03-31")!;
     expect(p.availableCents).toBe(40000);
     expect(p.typical).toBe(false);
-    // A month without a target adds nothing on either side, as in the totals.
-    expect(p.months.map((m) => [m.leftCents, m.idealCents, m.typicalCents])).toEqual([
+    expect(p.days).toHaveLength(31 + 28 + 31);
+    // Spending lands on its day; the month without a target adds nothing, so its $20 on the 3rd is not here.
+    expect(at(p, "2026-01-09").leftCents).toBe(40000);
+    expect(at(p, "2026-01-10").leftCents).toBe(32000);
+    // Each month's target is spread over its days, so the line ends each month where the targets say.
+    expect(at(p, "2026-01-01").idealCents).toBe(Math.round(40000 - 10000 / 31));
+    expect([at(p, "2026-01-31"), at(p, "2026-02-28"), at(p, "2026-03-31")].map((d) => [d.leftCents, d.idealCents, d.typicalCents])).toEqual([
       [32000, 30000, null],
       [16000, 15000, null],
       [12000, 0, null],
     ]);
-    // The last point is the year's Under.
+    // The last day is the year's Under.
     const total = yearTotals(rows).total!;
-    expect(p.months.at(-1)!.leftCents).toBe(total.targetCents - total.spentCents);
+    expect(p.days.at(-1)!.leftCents).toBe(total.targetCents - total.spentCents);
+    // Each day's spend adds up to the totals' spend.
+    expect(p.days.reduce((sum, d) => sum + d.spentCents, 0)).toBe(total.spentCents);
   });
 
-  it("puts the months before at the same share of their own targets", () => {
-    const before = [{ months: [{ spentCents: 7500, targetCents: 10000 }, { spentCents: 7500, targetCents: 10000 }, { spentCents: 15000, targetCents: 10000 }] }];
-    const p = yearProgress(rows, before)!;
+  it("leaves the days still to come without a figure for what's left", () => {
+    const p = yearProgress(rows, null, "2026-02-10")!;
+    expect(at(p, "2026-02-10").leftCents).toBe(20000);
+    expect(at(p, "2026-02-11").leftCents).toBeNull();
+    expect(at(p, "2026-03-31").idealCents).toBe(0);
+  });
+
+  it("puts the months before at the same day, as a share of their own targets", () => {
+    const before = [{ months: [cell("2025-01", 10000, [15, 7500]), cell("2025-02", 10000, [1, 7500]), cell("2025-03", 10000, [31, 15000])] }];
+    const p = yearProgress(rows, before, "2026-03-31")!;
     expect(p.typical).toBe(true);
-    // A quarter, a half, then all of $300 used: so 3/4, 1/2 and none of this year's $400 left.
-    expect(p.months.map((m) => m.typicalCents)).toEqual([30000, 20000, 0]);
+    // A quarter of $300 used on Jan 15, half on Feb 1, all by Mar 31: so 3/4, 1/2 and none of this year's $400 left.
+    expect(at(p, "2026-01-14").typicalCents).toBe(40000);
+    expect(at(p, "2026-01-15").typicalCents).toBe(30000);
+    expect(at(p, "2026-01-31").typicalCents).toBe(30000);
+    expect(at(p, "2026-02-01").typicalCents).toBe(20000);
+    expect(at(p, "2026-03-30").typicalCents).toBe(20000);
+    expect(at(p, "2026-03-31").typicalCents).toBe(0);
+  });
+
+  it("holds a shorter month before at its last day", () => {
+    const one = [{ months: [cell("2026-03", 10000)] }];
+    const before = [{ months: [cell("2025-02", 10000, [28, 5000])] }];
+    const p = yearProgress(one, before, "2026-03-31")!;
+    expect(at(p, "2026-03-27").typicalCents).toBe(10000);
+    expect([at(p, "2026-03-28"), at(p, "2026-03-29"), at(p, "2026-03-31")].map((d) => d.typicalCents)).toEqual([5000, 5000, 5000]);
   });
 
   it("has nothing to draw without a target", () => {
-    expect(yearProgress([{ months: [{ month: "2026-01-01", spentCents: 500, targetCents: null }] }], null)).toBeNull();
+    expect(yearProgress([{ months: [cell("2026-01", null, [3, 500])] }], null, "2026-01-31")).toBeNull();
   });
 });
