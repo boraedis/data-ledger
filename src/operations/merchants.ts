@@ -27,7 +27,12 @@ const merchantName = z.string().trim().min(1).max(80);
  * group, and store the owner's decisions, by merchant id (merchantKey in
  * lib/recurring and lib/suspicious), so a rename changes nothing stored.
  */
-export const canonicalMerchant = sql<string | null>`coalesce((select ${merchants.name} from ${merchants} where ${merchants.id} = ${transactions.merchantId}), ${transactions.merchant})`;
+// Written out with the tables named: drizzle leaves columns unqualified in a
+// one-table select, and an unqualified "id" or "name" here would be ambiguous.
+export const canonicalMerchant = sql<string | null>`coalesce((select m."name" from "merchants" m where m."id" = "transactions"."merchant_id"), "transactions"."merchant")`;
+
+/** A transaction's merchant's type, by name (#293), or null: for grouping Spending by type. */
+export const merchantTypeName = sql<string | null>`(select mt."name" from "merchants" m join "merchant_types" mt on mt."id" = m."type_id" where m."id" = "transactions"."merchant_id")`;
 
 // One import can bring hundreds of rows with the same few merchants: the
 // lookups are remembered for the life of the write.
@@ -240,10 +245,15 @@ export const splitAlias = defineWrite({
 
 export const setMerchantType = defineWrite({
   name: "merchants.setType",
-  description: "Set a merchant's type (restaurant, grocery, gas station…) from the list, or clear it with null. Every alias shares it.",
-  input: z.object({ merchantId: z.uuid(), typeId: z.uuid().nullable() }),
-  apply: async (ctx, { merchantId, typeId }) => {
-    await getMerchant(ctx, merchantId);
+  description:
+    "Set a merchant's type (restaurant, grocery, gas station…) from the list, or clear it with null. Every alias " +
+    "shares it. With onlyIfUnset, as a suggestion is, it does nothing to a merchant that already has a type.",
+  input: z.object({ merchantId: z.uuid(), typeId: z.uuid().nullable(), onlyIfUnset: z.boolean().default(false) }),
+  apply: async (ctx, { merchantId, typeId, onlyIfUnset }) => {
+    const current = await getMerchant(ctx, merchantId);
+    // A suggestion approved after the owner set a type themselves (#293)
+    // never overwrites it.
+    if (onlyIfUnset && current.typeId) throw new Error("That merchant already has a type; the suggestion wasn't applied");
     if (typeId) {
       const [type] = await ctx.db.select({ id: merchantTypes.id }).from(merchantTypes).where(eq(merchantTypes.id, typeId));
       if (!type) throw new NotFoundError("Merchant type not found");
@@ -417,5 +427,17 @@ export const unpinTransactionMerchant = defineWrite({
     const merchantId = await merchantFor(ctx, txn.merchant);
     await ctx.update(transactions, transactionId, { merchantId, merchantPinned: false });
     return { merchantId };
+  },
+});
+
+export const recordTypeAsks = defineWrite({
+  name: "merchants.recordTypeAsks",
+  description: "Pipeline only: note that the model was asked for these merchants' types (#293), so they aren't sent again.",
+  allowedActors: ["model", "user"],
+  input: z.object({ merchantIds: z.array(z.uuid()).min(1).max(500) }),
+  apply: async (ctx, { merchantIds }) => {
+    const at = new Date();
+    for (const id of merchantIds) await ctx.update(merchants, id, { typeAskedAt: at });
+    return { recorded: merchantIds.length };
   },
 });
