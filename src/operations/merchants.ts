@@ -1,6 +1,6 @@
 import { and, asc, count, eq, isNotNull, isNull, ne, or, sql, type SQL } from "drizzle-orm";
 import { z } from "zod";
-import { merchantAliases, merchantMergeDismissals, merchants, merchantTypes, recurringSeries, rules, transactions } from "@/db/schema";
+import { alerts, merchantAliases, merchantMergeDismissals, merchants, merchantTypes, recurringSeries, rules, transactions } from "@/db/schema";
 import { normalizeMerchant } from "@/lib/categorize/merchant";
 import { rederive, rederivePreview } from "@/lib/merchants/rederive";
 import { defineRead, defineWrite } from "@/operations/define";
@@ -17,6 +17,17 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 // later issue, and the owner approves them (#284).
 
 const merchantName = z.string().trim().min(1).max(80);
+
+/**
+ * A transaction's merchant as every feature sees it (#292): the linked
+ * merchant's name, so all its spellings are one merchant to recurring
+ * charges, the suspicious-charge checks, Spending and budgets. The cleaned
+ * name only for one not linked yet (the nightly run links it). Merchant
+ * names are unique, so the name works as the key those features store
+ * (recurring decisions, alert verdicts), and renameMerchant / mergeMerchants
+ * carry the stored ones along (restring, below).
+ */
+export const canonicalMerchant = sql<string | null>`coalesce((select ${merchants.name} from ${merchants} where ${merchants.id} = ${transactions.merchantId}), ${transactions.merchant})`;
 
 // One import can bring hundreds of rows with the same few merchants: the
 // lookups are remembered for the life of the write.
@@ -49,6 +60,32 @@ export async function merchantFor(ctx: WriteContext, name: string | null): Promi
 export async function merchantFields(ctx: WriteContext, description: string, payee: string | null = null) {
   const merchant = normalizeMerchant(description, payee);
   return { merchant, merchantId: await merchantFor(ctx, merchant) };
+}
+
+/**
+ * What's stored under a merchant's name moves to its new one (#292): the
+ * owner's recurring decisions and the alerts, verdicts included, with their
+ * dedupe keys, so an answered alert isn't raised again. Merging, a decision
+ * the kept merchant already has for the same account wins and the other
+ * goes. Tracked writes, so undoing the rename or merge puts them back.
+ */
+async function restring(ctx: WriteContext, from: string, to: string) {
+  if (from === to) return;
+  const series = await ctx.db.select().from(recurringSeries).where(eq(recurringSeries.merchant, from));
+  for (const row of series) {
+    const [taken] = await ctx.db
+      .select({ id: recurringSeries.id })
+      .from(recurringSeries)
+      .where(and(eq(recurringSeries.merchant, to), eq(recurringSeries.accountId, row.accountId)));
+    if (taken) await ctx.remove(recurringSeries, row.id);
+    else await ctx.update(recurringSeries, row.id, { merchant: to });
+  }
+  const flagged = await ctx.db.select({ id: alerts.id, dedupeKey: alerts.dedupeKey }).from(alerts).where(eq(alerts.merchant, from));
+  for (const row of flagged) {
+    const key = row.dedupeKey.split(`|${from}|`).join(`|${to}|`);
+    const [clash] = key === row.dedupeKey ? [] : await ctx.db.select({ id: alerts.id }).from(alerts).where(eq(alerts.dedupeKey, key));
+    await ctx.update(alerts, row.id, clash ? { merchant: to } : { merchant: to, dedupeKey: key });
+  }
 }
 
 async function getMerchant(ctx: WriteContext, id: string) {
@@ -120,9 +157,11 @@ export const renameMerchant = defineWrite({
   description: "Rename a merchant everywhere it's shown. Its aliases (the cleaned names that belong to it) stay as they are.",
   input: z.object({ merchantId: z.uuid(), name: merchantName }),
   apply: async (ctx, { merchantId, name }) => {
-    await getMerchant(ctx, merchantId);
+    const current = await getMerchant(ctx, merchantId);
     await assertNameFree(ctx, name, merchantId);
-    return ctx.update(merchants, merchantId, { name });
+    const row = await ctx.update(merchants, merchantId, { name });
+    await restring(ctx, current.name, name);
+    return row;
   },
 });
 
@@ -151,6 +190,8 @@ export const mergeMerchants = defineWrite({
       .where(or(eq(merchantMergeDismissals.merchantAId, mergeId), eq(merchantMergeDismissals.merchantBId, mergeId)));
     for (const d of dismissals) await ctx.remove(merchantMergeDismissals, d.id);
     await ctx.remove(merchants, mergeId);
+    // Its recurring decisions and alerts, under its name, now the kept one's (#292).
+    await restring(ctx, gone.name, keep.name);
     return { aliases: aliases.length, transactions: moved };
   },
 });

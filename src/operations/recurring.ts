@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import { canonicalMerchant } from "@/operations/merchants";
 import { accounts, alerts, categories, recurringSeries, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { formatCents } from "@/lib/money";
@@ -26,7 +27,7 @@ async function loadCharges(db: Db, on: string) {
   const since = new Date(Date.parse(on) - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const transferCategories = db.select({ id: categories.id }).from(categories).where(eq(categories.kind, "transfer"));
   const rows = await db
-    .select({ id: transactions.id, accountId: transactions.accountId, merchant: transactions.merchant, date: transactions.postedOn, amountCents: transactions.amountCents })
+    .select({ id: transactions.id, accountId: transactions.accountId, merchant: canonicalMerchant, date: transactions.postedOn, amountCents: transactions.amountCents })
     .from(transactions)
     .where(
       and(

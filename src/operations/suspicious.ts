@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, notExists, notInArray, sql } from "drizzle-orm";
 import { z } from "zod";
+import { canonicalMerchant } from "@/operations/merchants";
 import { alerts, categories, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { FLAG_KINDS, LOOKBACK_DAYS, flagsFor, isFlagKind, type Charge, type FlagKind } from "@/lib/suspicious/checks";
@@ -42,7 +43,8 @@ function chargeConditions(db: Db) {
 const chargeColumns = {
   id: transactions.id,
   accountId: transactions.accountId,
-  merchant: transactions.merchant,
+  // The merchant's whole history, every spelling (#292).
+  merchant: canonicalMerchant,
   description: transactions.description,
   date: transactions.postedOn,
   amountCents: transactions.amountCents,
@@ -129,19 +131,19 @@ export const checkSuspicious = defineWrite({
 
     const ranked = db
       .select({
-        merchant: transactions.merchant,
+        merchant: canonicalMerchant.as("merchant"),
         id: transactions.id,
         date: transactions.postedOn,
-        rank: sql<number>`row_number() over (partition by ${transactions.merchant} order by ${transactions.postedOn}, ${transactions.id})`.as("rank"),
+        rank: sql<number>`row_number() over (partition by ${canonicalMerchant} order by ${transactions.postedOn}, ${transactions.id})`.as("rank"),
       })
       .from(transactions)
       // Any transaction at all counts as having been there before, a refund
       // included. Not a provisional one: its synced copy will be the record.
-      .where(and(merchants.length ? inArray(transactions.merchant, merchants) : sql`false`, isNull(transactions.provisionalSource)))
+      .where(and(merchants.length ? inArray(canonicalMerchant, merchants) : sql`false`, isNull(transactions.provisionalSource)))
       .as("ranked");
 
     const [atMerchants, inCategories, earliest, verdicts, names, cats] = await Promise.all([
-      merchants.length ? db.select(chargeColumns).from(transactions).where(and(window, inArray(transactions.merchant, merchants))) : [],
+      merchants.length ? db.select(chargeColumns).from(transactions).where(and(window, inArray(canonicalMerchant, merchants))) : [],
       categoryIds.length ? db.select(chargeColumns).from(transactions).where(and(window, inArray(transactions.categoryId, categoryIds))) : [],
       merchants.length ? db.select().from(ranked).where(lte(ranked.rank, 2)) : [],
       db
