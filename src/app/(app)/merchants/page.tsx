@@ -7,6 +7,7 @@ import { merchantOverviewRead } from "@/operations/merchant-views";
 import { listMerchantTypes } from "@/operations/merchants";
 import { read } from "@/operations/runtime";
 import { MergeSelection, SelectBox } from "./merge-selection";
+import { QuickType } from "./quick-type";
 import { MergeSuggestions } from "./suggestions";
 import { TypeSuggestions } from "./type-suggestions";
 
@@ -195,6 +196,8 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
                     <Link href={withGross(`/merchants/${m.id}`)} className="block truncate font-medium underline-offset-2 hover:underline">
                       {m.name}
                     </Link>
+                    {/* Filling in types a row at a time, when the list is the untyped ones. */}
+                    {type === "none" ? <QuickType merchantId={m.id} name={m.name} types={types} /> : null}
                     <span className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
                       <span className="md:hidden">{m.type ?? "No type"}</span>
                       {m.aliases.length > 1 ? <span>{m.aliases.length} spellings</span> : null}

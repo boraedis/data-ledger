@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
@@ -36,7 +37,10 @@ export function TypeSuggestions({ suggestions, untyped }: { suggestions: TypeSug
             <>
               Types{" "}
               <span className="font-normal text-muted-foreground">
-                · {untyped} merchant{untyped === 1 ? "" : "s"} without one
+                ·{" "}
+                <Link href="/merchants?type=none" className="underline">
+                  {untyped} merchant{untyped === 1 ? "" : "s"} without one
+                </Link>
               </span>
             </>
           )}
