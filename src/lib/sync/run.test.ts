@@ -141,6 +141,33 @@ describe("syncConnection", () => {
     expect(after).toMatchObject({ description: "CORNER BEAN CAFE #12", categoryId: cat.id });
   });
 
+  it("keeps a merchant the owner chose by hand, while the bank's fields still update (#306)", async () => {
+    await sync();
+    const [t1] = await db.select().from(transactions).where(eq(transactions.externalId, "T1"));
+    const fixed = await execute(db, { operation: "merchants.setForTransaction", input: { transactionId: t1.id, name: "Lumen Bistro" }, actor: "user", reason: "x" });
+    const lumen = (fixed as { output: { merchantId: string } }).output.merchantId;
+
+    snapshot.transactions[0].memo = "TABLE 4";
+    expect(await sync()).toMatchObject({ updated: 1 });
+    const [after] = await db.select().from(transactions).where(eq(transactions.externalId, "T1"));
+    expect(after).toMatchObject({ memo: "TABLE 4", merchantId: lumen, merchantPinned: true, merchant: "Corner Bean Cafe" });
+    // And the next sync of the same snapshot has nothing to change.
+    expect(await sync()).toMatchObject({ updated: 0 });
+  });
+
+  it("carries a merchant chosen by hand on a pending row to its posted version (#306)", async () => {
+    snapshot.transactions = [txn("P1", { pending: true, postedOn: "2026-06-27", amountCents: -999 })];
+    await sync();
+    const [pending] = await rows();
+    const fixed = await execute(db, { operation: "merchants.setForTransaction", input: { transactionId: pending.id, name: "Lumen Bistro" }, actor: "user", reason: "x" });
+    const lumen = (fixed as { output: { merchantId: string } }).output.merchantId;
+
+    snapshot.transactions = [txn("X9", { postedOn: "2026-06-29", amountCents: -999 })];
+    await sync();
+    const [posted] = await rows();
+    expect(posted).toMatchObject({ externalId: "X9", merchantId: lumen, merchantPinned: true });
+  });
+
   it("replaces a vanished pending transaction with its posted version, carrying the category", async () => {
     snapshot.transactions = [txn("P1", { pending: true, postedOn: "2026-06-27", amountCents: -999 })];
     await sync();

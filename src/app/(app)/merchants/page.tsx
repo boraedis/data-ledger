@@ -6,6 +6,7 @@ import { merchantReview } from "@/lib/merchants/review";
 import { merchantOverviewRead } from "@/operations/merchant-views";
 import { listMerchantTypes } from "@/operations/merchants";
 import { read } from "@/operations/runtime";
+import { pendingTypeSuggestions } from "@/lib/merchants/suggest-types";
 import { MergeSelection, SelectBox } from "./merge-selection";
 import { MergeSuggestions } from "./suggestions";
 import { TypeSuggestions } from "./type-suggestions";

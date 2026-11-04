@@ -241,6 +241,10 @@ export const applySnapshot = defineWrite({
       if (!accountId) continue; // a transaction for an account not in the snapshot; skip rather than guess
       const key = `${accountId}|${raw.externalId}`;
       seen.add(key);
+      const existing = existingByKey.get(key);
+      // A merchant the owner chose by hand (#291) stays theirs: the bank's
+      // fields still update, but the merchant isn't derived again (#306).
+      const pinned = existing?.merchantPinned === true;
       const values = {
         postedOn: raw.postedOn,
         amountCents: raw.amountCents,
@@ -248,9 +252,8 @@ export const applySnapshot = defineWrite({
         payee: raw.payee,
         memo: raw.memo,
         pending: raw.pending,
-        ...(await merchantFields(ctx, raw.description, raw.payee)),
+        ...(pinned ? { merchant: existing.merchant, merchantId: existing.merchantId } : await merchantFields(ctx, raw.description, raw.payee)),
       };
-      const existing = existingByKey.get(key);
       if (!existing) {
         const row = await ctx.insert(transactions, { ...values, accountId, externalId: raw.externalId });
         counts.inserted++;
@@ -298,7 +301,7 @@ export const applySnapshot = defineWrite({
         ctx.db.select().from(transactionSplits).where(eq(transactionSplits.transactionId, stale.id)).orderBy(transactionSplits.position),
         ctx.db.select().from(transactionTags).where(eq(transactionTags.transactionId, stale.id)),
       ]);
-      const ownerWork = stale.categoryId || stale.isSplit || stale.experiencedOn || links.length;
+      const ownerWork = stale.categoryId || stale.isSplit || stale.experiencedOn || stale.merchantPinned || links.length;
       const match = ownerWork
         ? insertedPosted.find(
             (t) =>
@@ -309,11 +312,13 @@ export const applySnapshot = defineWrite({
         : undefined;
       if (match) {
         // Everything the owner did to the pending row moves to its posted
-        // version: category or split, experience date, and tags.
+        // version: category or split, experience date, tags, and a merchant
+        // they chose by hand (#306).
         await ctx.update(transactions, match.id, {
           categoryId: stale.categoryId,
           isSplit: stale.isSplit,
           experiencedOn: stale.experiencedOn,
+          ...(stale.merchantPinned ? { merchantId: stale.merchantId, merchantPinned: true } : {}),
         });
         for (const part of parts) {
           await ctx.insert(transactionSplits, {
