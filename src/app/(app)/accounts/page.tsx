@@ -4,7 +4,8 @@ import { getDb } from "@/lib/db";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 import { latestQuotes } from "@/lib/prices/quotes";
 import { listManualPositions } from "@/operations/holdings";
-import { listTrades, tradeCheck } from "@/operations/trades";
+import { draftCounts } from "@/operations/trades";
+import { confirmedTrades } from "@/lib/trades/confirmed";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { AccountRow } from "./account-row";
 import { AddManualAccount } from "./manual-account";
@@ -14,12 +15,12 @@ import { AddManualAccount } from "./manual-account";
 // each one is in Activity and can be undone there.
 export default async function AccountsPage() {
   const db = getDb();
-  const [rows, positions, quotes, tradeRows, mismatches] = await Promise.all([
+  const [rows, positions, quotes, confirmed, drafts] = await Promise.all([
     db.select().from(accountsTable).orderBy(accountsTable.institution, accountsTable.name),
     listManualPositions(db),
     Promise.all([latestQuotes(db, "crypto"), latestQuotes(db, "equity")]).then(([crypto, equity]) => ({ crypto, equity })),
-    listTrades(db),
-    tradeCheck(db),
+    confirmedTrades(db),
+    draftCounts(db),
   ]);
   // Which accounts take trades (#247): a manual asset account, or a synced brokerage or retirement one.
   const takesTrades = (a: (typeof rows)[number]) =>
@@ -51,7 +52,8 @@ export default async function AccountsPage() {
         const q = quotes[p.assetClass].get(p.symbol.toUpperCase());
         return { ...p, market: q ? { price: q.price, asOf: q.asOf?.toISOString() ?? null, stale: q.stale } : null };
       }),
-    trades: takesTrades(a) ? { rows: tradeRows.filter((t) => t.accountId === a.id), mismatches: mismatches.get(a.id) ?? [] } : undefined,
+    // The trade log is on the Trades page now (#319); each account links to its part of it.
+    trades: takesTrades(a) ? { confirmed: confirmed.filter((t) => t.accountId === a.id).length, drafts: drafts.get(a.id) ?? 0 } : undefined,
   });
 
   return (

@@ -1,12 +1,12 @@
-import { and, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, holdingSnapshots, manualPositions, trades } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { difference, firstShortfall, holdingsOn, inOrder, SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
-import { confirmedTrades, isConfirmed } from "@/lib/trades/confirmed";
+import { confirmedTrades } from "@/lib/trades/confirmed";
 import { valueDate } from "@/operations/accounts";
-import { defineWrite } from "@/operations/define";
+import { defineRead, defineWrite } from "@/operations/define";
 import { assetClassInput, decimal, positionsAccount, revalue, symbol } from "@/operations/holdings";
 import { NotFoundError, type WriteContext } from "@/operations/tracked";
 
@@ -33,8 +33,10 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 //
 // Owner only, like positions, and never offered to Tally: drafting is for
 // the sync and the matcher (and the owner), everything else for the owner.
-// No registered read: every read is one of Tally's tools, and trades say
-// exactly what the owner holds. Outputs carry ids only.
+// Its one read, trades.list, is for the Trades page (#319) and is
+// restricted to the owner too, since trades say exactly what the owner
+// holds and every unrestricted read is one of Tally's tools. Write outputs
+// carry ids only.
 
 const today = () => new Date().toISOString().slice(0, 10);
 const sides = z.enum(["buy", "sell", "transfer_in", "transfer_out"]);
@@ -247,12 +249,75 @@ export const removeTrade = defineWrite({
   },
 });
 
-export type TradeRow = { id: string; accountId: string; on: string; symbol: string; side: TradeSide; quantity: string; price: string | null; label: string };
+export type TradeRow = {
+  id: string;
+  accountId: string;
+  on: string;
+  onFrom: string | null;
+  symbol: string | null;
+  positionId: string | null;
+  side: TradeSide;
+  quantity: string;
+  price: string | null;
+  status: "draft" | "confirmed" | "dismissed";
+  source: "hand" | "opening" | "position_gap";
+  transactionId: string | null;
+  label: string;
+};
 
-/** Every confirmed trade, newest first, for the Accounts page's log. Not an operation: see above. */
-export async function listTrades(db: Db): Promise<TradeRow[]> {
-  const rows = await db.select().from(trades).where(isConfirmed).orderBy(desc(trades.on), desc(trades.createdAt));
-  return rows.map((t) => ({ id: t.id, accountId: t.accountId, on: t.on, symbol: t.symbol!, side: t.side, quantity: t.quantity, price: t.price, label: SIDE_LABELS[t.side] }));
+const statuses = z.enum(["draft", "confirmed", "dismissed"]);
+
+export const listTradesRead = defineRead({
+  name: "trades.list",
+  description:
+    "Trades, newest first, for the owner's Trades page: drafts, confirmed and dismissed, optionally by account, status, symbol and " +
+    "date range (on the trade's latest possible day). Owner only.",
+  allowedActors: ["user"],
+  input: z.object({
+    accountId: z.uuid().optional(),
+    status: statuses.optional(),
+    symbol: z.string().trim().min(1).max(16).optional(),
+    from: valueDate.optional(),
+    to: valueDate.optional(),
+    limit: z.number().int().min(1).max(1000).default(500),
+  }),
+  run: async (db, input): Promise<TradeRow[]> => {
+    const rows = await db
+      .select()
+      .from(trades)
+      .where(
+        and(
+          input.accountId ? eq(trades.accountId, input.accountId) : undefined,
+          input.status ? eq(trades.status, input.status) : undefined,
+          input.symbol ? eq(trades.symbol, input.symbol.toUpperCase()) : undefined,
+          input.from ? gte(trades.on, input.from) : undefined,
+          input.to ? lte(trades.on, input.to) : undefined,
+        ),
+      )
+      .orderBy(desc(trades.on), desc(trades.createdAt))
+      .limit(input.limit);
+    return rows.map((t) => ({
+      id: t.id,
+      accountId: t.accountId,
+      on: t.on,
+      onFrom: t.onFrom,
+      symbol: t.symbol,
+      positionId: t.positionId,
+      side: t.side,
+      quantity: t.quantity,
+      price: t.price,
+      status: t.status,
+      source: t.source,
+      transactionId: t.transactionId,
+      label: SIDE_LABELS[t.side],
+    }));
+  },
+});
+
+/** How many drafts wait in each account, for the links into the Trades page. */
+export async function draftCounts(db: Db): Promise<Map<string, number>> {
+  const rows = await db.select({ accountId: trades.accountId, n: count() }).from(trades).where(eq(trades.status, "draft")).groupBy(trades.accountId);
+  return new Map(rows.map((r) => [r.accountId, r.n]));
 }
 
 export type TradeMismatch = { symbol: string; synced: string; traded: string; difference: string };

@@ -8,6 +8,7 @@ import { investmentsSummary, type AllocationSlice } from "@/lib/investments/summ
 import { formatCents } from "@/lib/money";
 import { pricesNote } from "@/lib/prices/describe";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
+import { draftCounts } from "@/operations/trades";
 
 // Investments (#27): what's held, how it's split, and how it's done against
 // what was paid — display only. Data comes from balance and holding
@@ -159,7 +160,8 @@ function HoldingsAcross({ combined }: { combined: ReturnType<typeof combineHoldi
 }
 
 export default async function InvestmentsPage() {
-  const summary = await investmentsSummary(getDb());
+  const db = getDb();
+  const [summary, drafts] = await Promise.all([investmentsSummary(db), draftCounts(db)]);
   // Values move with prices (#230): refresh them after this page is sent, if due.
   refreshPricesAfterResponse();
   const combined = combineHoldings(summary.accounts);
@@ -243,6 +245,18 @@ export default async function InvestmentsPage() {
                     {a.holdingsOn ? ` · positions as of ${a.holdingsOn}` : ""}
                     {/* Valued live from prices (#230), or, with no positions to price, its balance. */}
                     {a.live ? pricesNote(a.live) : " · not valued live: no positions reported"}
+                  </p>
+                  {/* Its trades (#319), and how many drafts wait for the owner there. */}
+                  <p className="text-xs">
+                    <Link href={`/trades?account=${a.id}`} className="text-muted-foreground underline underline-offset-2 hover:text-foreground">
+                      Trades
+                    </Link>
+                    {drafts.get(a.id) ? (
+                      <span className="text-warning">
+                        {" "}
+                        · {drafts.get(a.id)} {drafts.get(a.id) === 1 ? "draft" : "drafts"} to review
+                      </span>
+                    ) : null}
                   </p>
                 </div>
                 <p className="text-lg tabular-nums">{formatCents(a.valueCents)}</p>

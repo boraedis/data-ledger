@@ -28,10 +28,10 @@ beforeEach(async () => {
 });
 
 describe("a manual account's positions follow its trades (#247)", () => {
-  it("records an opening buy for a position, and a buy or sell of the difference when its quantity changes", async () => {
-    const { output } = await run("holdings.addManual", { accountId: wallet, symbol: "ZQC", quantity: "0.5", unitPrice: "40000" });
-    await run("holdings.setQuantity", { positionId: output.id, quantity: "0.75" });
-    await run("holdings.setQuantity", { positionId: output.id, quantity: "0.6" });
+  it("records an opening buy for a position, and changes it only by trades", async () => {
+    await run("holdings.addManual", { accountId: wallet, symbol: "ZQC", quantity: "0.5", unitPrice: "40000" });
+    await run("trades.add", { accountId: wallet, on: day, symbol: "ZQC", side: "buy", quantity: "0.25" });
+    await run("trades.add", { accountId: wallet, on: day, symbol: "ZQC", side: "sell", quantity: "0.15" });
     const log = await tradesOf();
     expect(log.map((t) => [t.side, t.quantity])).toEqual([
       ["buy", "0.5"],

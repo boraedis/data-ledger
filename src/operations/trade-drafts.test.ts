@@ -6,8 +6,8 @@ import { tradedSymbols } from "@/lib/prices/backfill";
 import { tallyOperations } from "@/lib/tally/tools";
 import { testDb } from "@/lib/test-utils/db";
 import { listManualPositions } from "@/operations/holdings";
-import { execute, undoCommand } from "@/operations/runtime";
-import { listTrades, tradeCheck } from "@/operations/trades";
+import { execute, read, undoCommand } from "@/operations/runtime";
+import { draftCounts, listTradesRead, tradeCheck } from "@/operations/trades";
 
 // Draft trades (#318): inferred, partly filled in, and counted nowhere until
 // the owner confirms them. Invented accounts, symbols and quantities.
@@ -57,12 +57,12 @@ describe("a draft", () => {
     await run("trades.add", { accountId: broker, on: "2026-04-01", symbol: "ZZIX", side: "buy", quantity: "1" });
     const draft = await run("trades.draft", { accountId: broker, symbol: "ZQXV", side: "buy", quantity: "2", on: "2026-05-04" }, "import");
 
-    expect((await listTrades(db)).map((t) => t.symbol)).toEqual(["ZZIX"]);
+    expect((await read(db, listTradesRead, { status: "confirmed" })).map((t) => t.symbol)).toEqual(["ZZIX"]);
     expect((await tradeCheck(db)).get(broker)?.map((m) => m.symbol)).toEqual(["ZQXV", "ZZIX"]);
     expect((await tradedSymbols(db)).map((s) => s.symbol)).toEqual(["ZZIX"]);
 
     await run("trades.confirm", { tradeId: draft.output.id });
-    expect((await listTrades(db)).map((t) => t.symbol).sort()).toEqual(["ZQXV", "ZZIX"]);
+    expect((await read(db, listTradesRead, { status: "confirmed" })).map((t) => t.symbol).sort()).toEqual(["ZQXV", "ZZIX"]);
     expect((await tradeCheck(db)).get(broker)?.map((m) => m.symbol)).toEqual(["ZZIX"]);
   });
 
@@ -123,5 +123,25 @@ describe("the migration", () => {
     expect(old).toMatchObject({ status: "confirmed", source: "hand", onFrom: null, transactionId: null });
     await expect(db.execute(sql`insert into trades (account_id, "on", position_id, side, quantity) values (${broker}, '2026-01-02', 'p', 'buy', '3')`)).rejects.toThrow();
     await expect(db.execute(sql`insert into trades (account_id, "on", side, quantity, status) values (${broker}, '2026-01-02', 'buy', '3', 'draft')`)).rejects.toThrow();
+  });
+});
+
+describe("the Trades page's list (#319)", () => {
+  it("filters by account, status, symbol and dates, and counts drafts per account", async () => {
+    await run("trades.add", { accountId: broker, on: "2026-04-01", symbol: "ZZIX", side: "buy", quantity: "1" });
+    await run("trades.add", { accountId: wallet, on: "2026-04-02", symbol: "ZQC", side: "buy", quantity: "1", price: "30000" });
+    await run("trades.draft", { accountId: broker, symbol: "ZQXV", side: "buy", quantity: "2", onFrom: "2026-05-03", on: "2026-05-05" }, "import");
+    const symbols = async (input: Parameters<typeof listTradesRead.run>[1] | Record<string, unknown>) => (await read(db, listTradesRead, input as never)).map((t) => t.symbol);
+
+    expect(await symbols({})).toEqual(["ZQXV", "ZQC", "ZZIX"]);
+    expect(await symbols({ accountId: broker })).toEqual(["ZQXV", "ZZIX"]);
+    expect(await symbols({ status: "draft" })).toEqual(["ZQXV"]);
+    expect(await symbols({ symbol: "zqc" })).toEqual(["ZQC"]);
+    expect(await symbols({ from: "2026-04-02", to: "2026-04-30" })).toEqual(["ZQC"]);
+    expect(await draftCounts(db)).toEqual(new Map([[broker, 1]]));
+  });
+
+  it("is the owner's alone", () => {
+    expect(listTradesRead.allowedActors).toEqual(["user"]);
   });
 });

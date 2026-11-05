@@ -3,7 +3,6 @@ import { z } from "zod";
 import { manualPositions, trades } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { isLiability } from "@/lib/net-worth";
-import { difference } from "@/lib/holdings/replay";
 import { normalizeQuantity, positionValueCents } from "@/lib/holdings/value";
 import { defineWrite } from "@/operations/define";
 import { manualAccount, recordManualValue, valueDate } from "@/operations/accounts";
@@ -22,9 +21,10 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 //
 // Since the trade log (#247), every quantity here is what the account's
 // confirmed trades add up to (#318): adding a position records an opening
-// buy (source "opening"), changing its quantity records a buy or sell of the
-// difference, dated today, and removing it removes its trades, drafts
-// included. Trades themselves are in ./trades.ts.
+// buy (source "opening"), and removing it removes its trades, drafts
+// included. How much is held changes only by a trade (./trades.ts, recorded
+// on the Trades page, #319): there was a second way, setting the quantity
+// here, and it went so the two couldn't drift apart.
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -114,28 +114,6 @@ export const addManualPosition = defineWrite({
     await ctx.insert(trades, { accountId: input.accountId, on, symbol: input.symbol, side: "buy", quantity: input.quantity, price: input.unitPrice, source: "opening" });
     await revalue(ctx, input.accountId, on);
     return { id: row.id };
-  },
-});
-
-export const setManualQuantity = defineWrite({
-  name: "holdings.setQuantity",
-  description:
-    "Change how much of a hand-entered position is held (an exact decimal), and optionally its total cost. Records the " +
-    "difference as a buy or sell dated today in the account's trades. Revalues its account.",
-  allowedActors: ["user"],
-  input: z.object({ positionId: z.uuid(), quantity: decimal("Quantity"), costBasisCents: costBasis, today: valueDate.optional() }),
-  apply: async (ctx, { positionId, quantity, costBasisCents, today: day }) => {
-    const row = await position(ctx.db, positionId);
-    const on = day ?? today();
-    // The change as a trade (#247), so the trades still add up to the position.
-    const change = difference(quantity, row.quantity);
-    if (change !== "0") {
-      const selling = change.startsWith("-");
-      await ctx.insert(trades, { accountId: row.accountId, on, symbol: row.symbol.toUpperCase(), side: selling ? "sell" : "buy", quantity: selling ? change.slice(1) : change, price: null });
-    }
-    await ctx.update(manualPositions, positionId, { quantity, ...(costBasisCents !== undefined ? { costBasisCents } : {}) });
-    await revalue(ctx, row.accountId, on);
-    return { id: positionId };
   },
 });
 

@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { Input } from "@/components/ui/input";
 import { ACCOUNT_KINDS, KIND_LABELS, countsTowardBudgetsByDefault, type AccountKind } from "@/lib/account-kinds";
@@ -8,8 +9,6 @@ import { updateAccount } from "./actions";
 import type { PositionWithMarket } from "./positions";
 import { ManualValueControls } from "./manual-account";
 import { Positions } from "./positions";
-import { TradeLog } from "./trades";
-import type { TradeMismatch, TradeRow } from "@/operations/trades";
 
 export type AccountRowData = {
   id: string;
@@ -25,8 +24,8 @@ export type AccountRowData = {
   balanceAt: string | null;
   // Positions kept by hand in a manual asset account (#231).
   positions?: PositionWithMarket[];
-  // The trade log (#247), for an account that takes trades.
-  trades?: { rows: TradeRow[]; mismatches: TradeMismatch[] };
+  // How many trades it has, for the link to the Trades page (#319), for an account that takes trades.
+  trades?: { confirmed: number; drafts: number };
 };
 
 export function AccountRow({ account }: { account: AccountRowData }) {
@@ -120,12 +119,17 @@ export function AccountRow({ account }: { account: AccountRowData }) {
         <Positions account={{ id: account.id, name: account.displayName ?? account.name }} positions={account.positions ?? []} />
       ) : null}
       {account.trades ? (
-        <TradeLog
-          account={{ id: account.id, name: account.displayName ?? account.name }}
-          trades={account.trades.rows}
-          mismatches={account.trades.mismatches}
-          drivesPositions={account.manual}
-        />
+        <p className="text-xs text-muted-foreground">
+          <Link href={`/trades?account=${account.id}`} className="underline underline-offset-2 hover:text-foreground">
+            Trades{account.trades.confirmed ? ` (${account.trades.confirmed})` : ""}
+          </Link>
+          {account.trades.drafts ? (
+            <span className="text-warning">
+              {" "}
+              · {account.trades.drafts} {account.trades.drafts === 1 ? "draft" : "drafts"} to review
+            </span>
+          ) : null}
+        </p>
       ) : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </li>
