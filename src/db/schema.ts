@@ -430,6 +430,24 @@ export const tradeKindMemory = pgTable(
   (t) => [uniqueIndex("trade_kind_memory_account_position_side_idx").on(t.accountId, t.position, t.side)],
 );
 
+// Hourly prices (#243), for the hourly ranges of the net worth chart
+// (#338). Crypto only for now: Coinbase's public hourly candles, each hour's
+// close at the start of its UTC hour. Only what the provider returned: an
+// hour with no trades has no candle and no row, and carrying a price over it
+// is the reader's call.
+export const intradayPrices = pgTable(
+  "intraday_prices",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    assetClass: assetClass("asset_class").notNull(),
+    symbol: text("symbol").notNull(),
+    hour: timestamp("hour", { withTimezone: true }).notNull(),
+    price: numeric("price").notNull(),
+    source: text("source").notNull(),
+  },
+  (t) => [uniqueIndex("intraday_prices_class_symbol_hour_idx").on(t.assetClass, t.symbol, t.hour)],
+);
+
 // Buy and sell cash rows the owner said aren't a trade to record (#321):
 // hidden from the Trades page's hints. Undoable like everything else.
 export const tradeHintDismissals = pgTable("trade_hint_dismissals", {
