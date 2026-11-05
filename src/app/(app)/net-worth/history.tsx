@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { AccountKind } from "@/lib/account-kinds";
 import { formatCents } from "@/lib/money";
 import type { HourlyNetWorth } from "@/lib/net-worth-hourly";
@@ -63,15 +63,29 @@ export function NetWorthHistory({ accounts, daily, hourly }: { accounts: Breakdo
   const [selected, setSelected] = useState<string | null>(null);
   const [hover, setHover] = useState<number | null>(null);
   const [width, setWidth] = useState(0);
-  const ref = useRef<HTMLDivElement>(null);
+  // The plot's element, held in state (#347): the hourly ranges swap the
+  // plot out, so the one to measure changes. Each new one is observed, and
+  // the zero width an element reports as it's removed is ignored, or coming
+  // back from 1M would draw at width 0, which is nothing.
+  const [plot, setPlot] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
-    observer.observe(el);
+    if (!plot) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width > 0) setWidth(entry.contentRect.width);
+    });
+    observer.observe(plot);
     return () => observer.disconnect();
-  }, []);
+  }, [plot]);
+
+  // A hovered day belongs to the chart it was hovered on: a plot swapped out
+  // never sees the pointer leave, so it's cleared on every change of range
+  // or view, and the readout and the legend go back to the latest day.
+  const pick = (next: { range?: RangeKey; view?: View }) => {
+    setHover(null);
+    if (next.view) setView(next.view);
+    if (next.range) setRange(next.range);
+  };
 
   const groups = useMemo(() => groupSeries(accounts, daily, groupBy).map((g, i) => ({ ...g, color: colorOf(g, i) })), [accounts, daily, groupBy]);
   const total = useMemo(() => sumSeries(Object.values(daily.byAccount), daily.days.length), [daily]);
@@ -138,9 +152,8 @@ export function NetWorthHistory({ accounts, daily, hourly }: { accounts: Breakdo
   const lineChange = changeOver(daily.days, line, from);
 
   function pointAt(clientX: number) {
-    const el = ref.current;
-    if (!el || !geometry) return;
-    const ratio = (clientX - el.getBoundingClientRect().left - PAD.left) / geometry.plotW;
+    if (!plot || !geometry) return;
+    const ratio = (clientX - plot.getBoundingClientRect().left - PAD.left) / geometry.plotW;
     setHover(Math.max(0, Math.min(domain - 1, Math.round(ratio * (domain - 1)))));
   }
 
@@ -161,11 +174,10 @@ export function NetWorthHistory({ accounts, daily, hourly }: { accounts: Breakdo
               type="button"
               aria-pressed={view === v}
               className={button(view === v)}
-              onClick={() => {
-                setView(v);
+              onClick={() =>
                 // A day or a week is too short for a daily stack.
-                if (v === "stacked" && (range === "1d" || range === "1w")) setRange("1m");
-              }}
+                pick({ view: v, ...(v === "stacked" && (range === "1d" || range === "1w") ? { range: "1m" as const } : {}) })
+              }
             >
               {v === "line" ? "Line" : "Stacked"}
             </button>
@@ -192,7 +204,7 @@ export function NetWorthHistory({ accounts, daily, hourly }: { accounts: Breakdo
         ) : null}
         <div role="group" aria-label="Time range" className="flex rounded-md border text-xs">
           {ranges.map((r) => (
-            <button key={r.key} type="button" aria-pressed={range === r.key} className={button(range === r.key)} onClick={() => setRange(r.key)}>
+            <button key={r.key} type="button" aria-pressed={range === r.key} className={button(range === r.key)} onClick={() => pick({ range: r.key })}>
               {r.label}
             </button>
           ))}
@@ -219,7 +231,7 @@ export function NetWorthHistory({ accounts, daily, hourly }: { accounts: Breakdo
       </div>
 
       <div
-        ref={ref}
+        ref={setPlot}
         className="relative w-full touch-pan-y select-none"
         style={{ height: HEIGHT }}
         onPointerMove={(e) => pointAt(e.clientX)}
