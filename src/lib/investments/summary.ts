@@ -7,6 +7,7 @@ import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { NET_WORTH_CURRENCY } from "@/lib/net-worth";
 import { liveValues, type LiveValue } from "@/lib/prices/live-value";
 import { latestQuotes } from "@/lib/prices/quotes";
+import { replayedSnapshots, withReplayed } from "@/lib/prices/rebuilt";
 
 // The investments view (#27): allocation, value and cost basis, built from
 // balance and holding snapshots. Display only — no advice, no projections.
@@ -172,6 +173,8 @@ export async function investmentsSummary(db: Db, { today = new Date() }: { today
     : [];
 
   const through = today.toISOString().slice(0, 10);
+  // A manual account's positions replayed day by day (#343), so its chart shows its past.
+  const history = withReplayed(balances, await replayedSnapshots(db, through), (r) => ({ accountId: r.accountId, on: r.on, cents: r.balanceCents }));
   const result: InvestmentAccount[] = counted.map((a) => {
     const own = handEntered.filter((p) => p.accountId === a.id);
     // A hand-entered position (#231) is worth its quantity at the latest fresh
@@ -222,7 +225,7 @@ export async function investmentsSummary(db: Db, { today = new Date() }: { today
       // For a hand-entered account, what its balance holds beyond its positions at the owner's prices (usually nothing).
       cashAndOtherCents: own.length ? (live.get(a.id)?.cashAndOtherCents ?? 0) : holdingsOn ? a.balanceCents! - holdingsCents : null,
       series: dailySeries(
-        balances.filter((b) => b.accountId === a.id),
+        history.filter((b) => b.accountId === a.id),
         byDay,
         through,
       ),

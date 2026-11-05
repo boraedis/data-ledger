@@ -1,5 +1,6 @@
 import { asc } from "drizzle-orm";
 import { accounts, balanceSnapshots } from "@/db/schema";
+import { replayedSnapshots, withReplayed } from "@/lib/prices/rebuilt";
 import type { Db } from "@/db/types";
 import type { AccountKind } from "@/lib/account-kinds";
 import { liveValues, type LiveValue } from "@/lib/prices/live-value";
@@ -193,14 +194,18 @@ export async function netWorthSummary(db: Db, { today = new Date() }: { today?: 
 
   const kinds = new Map(counted.map((a) => [a.id, a.kind]));
   const through = today.toISOString().slice(0, 10);
-  const series = netWorthSeries(kinds, snapshots, through);
-  const daily = dailyContributions(kinds, snapshots, through);
+  // A manual account's positions replayed day by day (#343), so its past
+  // from held since, back-dated trades and the owner's prices is drawn.
+  const history = withReplayed(snapshots, await replayedSnapshots(db, through), (s) => s);
+  const series = netWorthSeries(kinds, history, through);
+  const daily = dailyContributions(kinds, history, through);
   // Today's point is today's live value, so the chart ends where the
   // headline is; every earlier day is what was recorded then.
   const moved = counted.filter((a) => a.live);
   if (moved.length && series.at(-1)?.on === through) {
     const last = series.at(-1)!;
-    const delta = moved.reduce((s, a) => s + a.live!.valueCents - a.balanceCents!, 0);
+    // Against what the last point drew for each account: its recorded balance, or its replayed value (#343).
+    const delta = moved.reduce((s, a) => s + a.live!.valueCents - (daily.byAccount[a.id]?.at(-1) ?? a.balanceCents!), 0);
     series[series.length - 1] = { ...last, assetsCents: last.assetsCents + delta, netCents: last.netCents + delta };
     for (const a of moved) {
       const values = daily.byAccount[a.id];

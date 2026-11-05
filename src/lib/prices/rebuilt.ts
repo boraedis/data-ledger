@@ -161,3 +161,34 @@ export async function rebuiltHistory(db: Db, through: string): Promise<RebuiltHi
   }
   return rebuild(byAccount, closes, through);
 }
+
+export type DaySnapshot = { accountId: string; on: string; balanceCents: number };
+
+/**
+ * A manual account's positions (#231) replayed as daily values, for the
+ * charts that draw recorded values (#343): Net worth's Over time and each
+ * account's chart on Investments. Such an account records a value only on
+ * the days it changes, so its past (held since, back-dated trades and the
+ * owner's own prices, #340) is only here. Synced accounts aren't: their
+ * recorded balances include cash their trades don't know about.
+ */
+export async function replayedSnapshots(db: Db, through: string): Promise<DaySnapshot[]> {
+  const manual = new Set((await db.select({ id: accounts.id }).from(accounts).where(eq(accounts.source, "manual"))).map((a) => a.id));
+  if (!manual.size) return [];
+  const history = await rebuiltHistory(db, through);
+  return history.accounts
+    .filter((a) => manual.has(a.accountId))
+    .flatMap((a) => a.values.flatMap((cents, i) => (cents === null ? [] : [{ accountId: a.accountId, on: history.days[i], balanceCents: cents }])));
+}
+
+/**
+ * Recorded values with replayed ones laid over them: for an account with
+ * replayed days, each of those days is the replay, and a recorded value is
+ * kept only on a day the replay couldn't value. Every other account is as
+ * recorded.
+ */
+export function withReplayed<T extends { accountId: string; on: string }>(recorded: T[], replayed: DaySnapshot[], toRow: (s: DaySnapshot) => T): T[] {
+  if (!replayed.length) return recorded;
+  const days = new Set(replayed.map((s) => `${s.accountId}|${s.on}`));
+  return [...recorded.filter((s) => !days.has(`${s.accountId}|${s.on}`)), ...replayed.map(toRow)].sort((a, b) => a.on.localeCompare(b.on));
+}
