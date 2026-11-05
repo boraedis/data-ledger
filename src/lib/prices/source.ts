@@ -23,6 +23,8 @@ export type QuoteResult =
 /** A day's closing price, an exact decimal in USD. */
 export type DailyClose = { on: string; price: string };
 
+export type HourlyClose = { hour: string; price: string };
+
 export type PriceSource = {
   /** Stored with each quote, so a price says where it's from. */
   id: string;
@@ -35,4 +37,11 @@ export type PriceSource = {
    * simply absent. Optional: a source without it isn't backfilled.
    */
   history?(symbol: string, from: string, to: string): Promise<DailyClose[] | null>;
+  /**
+   * Hourly closes from `from` to `to` (ISO times, both included), each at
+   * the start of its UTC hour (#243): null for an unknown symbol, a throw
+   * when unreachable. Hours with no trades are simply absent. Optional:
+   * only crypto has it for now.
+   */
+  hourly?(symbol: string, from: Date, to: Date): Promise<HourlyClose[] | null>;
 };

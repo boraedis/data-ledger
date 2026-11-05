@@ -1,6 +1,6 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { dailyPrices, quotes } from "@/db/schema";
+import { dailyPrices, intradayPrices, quotes } from "@/db/schema";
 import { defineWrite } from "@/operations/define";
 
 // Recording a refresh of market prices (#229) as one command: the whole
@@ -101,6 +101,41 @@ export const backfillPrices = defineWrite({
     for (const c of closes) {
       if (have.has(c.on)) continue;
       await ctx.insert(dailyPrices, { assetClass, symbol, on: c.on, price: c.price, source });
+      added++;
+    }
+    return { added };
+  },
+});
+
+// Hourly closes (#243) for one symbol, as one command: only hours not
+// already stored are added, so a refetch of an overlapping window adds
+// nothing twice.
+export const storeHourly = defineWrite({
+  name: "market.storeHourly",
+  description: "Record hourly closing prices for one symbol, adding only the hours not already recorded.",
+  allowedActors: ["market"],
+  input: z.object({
+    assetClass: z.enum(["crypto", "equity"]),
+    source: z.string().min(1).max(40),
+    symbol: z.string().min(1).max(16),
+    closes: z.array(z.object({ hour: z.iso.datetime(), price: z.string().regex(/^\d+(\.\d+)?$/) })).max(20_000),
+  }),
+  apply: async (ctx, { assetClass, source, symbol, closes }) => {
+    if (!closes.length) return { added: 0 };
+    const hours = closes.map((c) => new Date(c.hour));
+    const have = new Set(
+      (
+        await ctx.db
+          .select({ hour: intradayPrices.hour })
+          .from(intradayPrices)
+          .where(and(eq(intradayPrices.assetClass, assetClass), eq(intradayPrices.symbol, symbol), inArray(intradayPrices.hour, hours)))
+      ).map((r) => r.hour.toISOString()),
+    );
+    let added = 0;
+    for (const c of closes) {
+      const hour = new Date(c.hour);
+      if (have.has(hour.toISOString())) continue;
+      await ctx.insert(intradayPrices, { assetClass, symbol, hour, price: c.price, source });
       added++;
     }
     return { added };

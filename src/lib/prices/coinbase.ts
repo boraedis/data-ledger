@@ -16,6 +16,11 @@ const CANDLES_PER_REQUEST = 300;
 export const coinbaseCandlesUrl = (symbol: string, from: string, to: string) =>
   `${CANDLES}/${encodeURIComponent(`${symbol.toUpperCase()}-USD`)}/candles?granularity=86400&start=${from}T00:00:00Z&end=${to}T00:00:00Z`;
 
+/** The hourly candles URL for a pair and window (#243): the pair name and times, nothing else. */
+export const coinbaseHourlyUrl = (symbol: string, from: Date, to: Date) =>
+  `${CANDLES}/${encodeURIComponent(`${symbol.toUpperCase()}-USD`)}/candles?granularity=3600&start=${from.toISOString()}&end=${to.toISOString()}`;
+const HOUR = 3_600_000;
+
 const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
 const closeText = (n: number) => (/e/i.test(String(n)) ? n.toFixed(10).replace(/0+$/, "").replace(/\.$/, "") : String(n));
 
@@ -66,6 +71,23 @@ export function coinbaseSource(fetchImpl: Fetch = fetch, now: () => Date = () =>
         }
       }
       return closes.sort((a, b) => a.on.localeCompare(b.on));
+    },
+    async hourly(symbol, from, to) {
+      const closes = new Map<string, string>();
+      // 300 hours a request, oldest window first; one at a time, like the rest.
+      for (let start = from.getTime(); start <= to.getTime(); start += CANDLES_PER_REQUEST * HOUR) {
+        const end = Math.min(start + (CANDLES_PER_REQUEST - 1) * HOUR, to.getTime());
+        const response = await fetchImpl(coinbaseHourlyUrl(symbol, new Date(start), new Date(end)), { headers: { accept: "application/json" }, signal: AbortSignal.timeout(15_000) });
+        if (response.status === 404) return null;
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const rows = (await response.json()) as unknown;
+        if (!Array.isArray(rows)) throw new Error("No candles in the answer");
+        for (const row of rows) {
+          if (!Array.isArray(row) || typeof row[0] !== "number" || typeof row[4] !== "number" || row[4] <= 0) continue;
+          closes.set(new Date(row[0] * 1000).toISOString(), closeText(row[4]));
+        }
+      }
+      return [...closes].map(([hour, price]) => ({ hour, price })).sort((a, b) => a.hour.localeCompare(b.hour));
     },
   };
 }
