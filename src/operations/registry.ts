@@ -54,7 +54,7 @@ import {
   unmatchTransfer,
 } from "@/operations/transactions";
 import { moveToCategory, moveToCategoryPreview } from "@/operations/recategorize";
-import { addManualPosition, removeManualPosition, setManualAssetClass, setManualPrice } from "@/operations/holdings";
+import { addManualPosition, removeManualPosition, removePastPrice, setHeldSince, setManualAssetClass, setManualPrice, setPastPrice } from "@/operations/holdings";
 import { backfillPrices, refreshQuotes } from "@/operations/market";
 import { addTrade, attachCash, confirmTrade, detachCash, dismissHint, dismissTrade, draftGaps, draftTrade, listTradesRead, matchCash, setTradeKind, splitDraft, removeTrade, restoreTrade, updateTrade } from "@/operations/trades";
 import { demoteForTally, promoteForTally } from "@/operations/promotions";
@@ -108,6 +108,9 @@ export const operations: Operation[] = [
   removeTarget,
   addManualPosition,
   setManualPrice,
+  setHeldSince,
+  setPastPrice,
+  removePastPrice,
   removeManualPosition,
   setManualAssetClass,
   refreshQuotes,

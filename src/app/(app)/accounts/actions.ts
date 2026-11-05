@@ -43,7 +43,7 @@ export async function deleteManualAccount(accountId: string, name: string): Resu
 
 // Positions kept by hand (#231). Reasons name the symbol, never a quantity or price.
 export async function addPosition(
-  input: { accountId: string; symbol: string; quantity: string; unitPrice: string; priceOn: string; costBasisCents: number | null; assetClass: "crypto" | "equity" },
+  input: { accountId: string; symbol: string; quantity: string; unitPrice: string; priceOn: string; costBasisCents: number | null; assetClass: "crypto" | "equity"; heldSince?: string },
   accountName: string,
 ): Result {
   return run("holdings.addManual", input, `Added ${input.symbol.toUpperCase()} to "${accountName}"`, "Couldn't add the position");
@@ -59,4 +59,17 @@ export async function setPositionAssetClass(positionId: string, symbol: string, 
 
 export async function removePosition(positionId: string, symbol: string): Result {
   return run("holdings.remove", { positionId }, `Removed ${symbol}`, "Couldn't remove the position");
+}
+
+// The past of a hand-entered position (#340).
+export async function setHeldSince(positionId: string, symbol: string, heldSince: string): Result {
+  return run("holdings.setHeldSince", { positionId, heldSince }, `Said ${symbol} has been held since ${heldSince}`, "Couldn't change when it's held since");
+}
+
+export async function setPastPrice(positionId: string, symbol: string, on: string, price: string): Result {
+  return run("holdings.setPastPrice", { positionId, on, price }, `Gave ${symbol} a price on ${on}`, "Couldn't record the price");
+}
+
+export async function removePastPrice(positionId: string, symbol: string, on: string): Result {
+  return run("holdings.removePastPrice", { positionId, on }, `Removed ${symbol}'s price on ${on}`, "Couldn't remove the price");
 }

@@ -3,6 +3,7 @@ import { accounts, dailyPrices, manualPositions, trades } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { positionValueCents } from "@/lib/holdings/value";
 import { holdingsOn, inOrder, type Trade } from "@/lib/holdings/replay";
+import { OWNER_PRICE_SOURCE } from "@/lib/prices/owner";
 import type { AssetClass } from "@/lib/prices/source";
 import { isConfirmed, type ConfirmedTrade } from "@/lib/trades/confirmed";
 
@@ -12,7 +13,10 @@ import { isConfirmed, type ConfirmedTrade } from "@/lib/trades/confirmed";
 //
 // Nothing is guessed. A day counts for an account only if every symbol it
 // held then has a known price: that day's close, or the last one before it
-// within MAX_CARRY_DAYS (a weekend or a holiday has no close of its own).
+// within MAX_CARRY_DAYS (a weekend or a holiday has no close of its own), or
+// the owner's own latest earlier price (#340), for a symbol no feed prices.
+// A day before any price isn't drawn: carrying a first price back would
+// invent value.
 // An account's coverage starts on its first such day. The total is labelled
 // partial on any day not every traded account covers, so it can be shown
 // from the earliest trade without pretending to be all of net worth.
@@ -27,7 +31,9 @@ const addDays = (day: string, n: number) => new Date(Date.parse(`${day}T00:00:00
 const daysBetween = (a: string, b: string) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86_400_000);
 
 export type PricedTrade = Trade & { accountId: string };
-export type ClosePrice = { symbol: string; on: string; price: string };
+// owner: a price the owner entered (#340), carried forward to the next one
+// however far; a market close is carried only MAX_CARRY_DAYS.
+export type ClosePrice = { symbol: string; on: string; price: string; owner?: boolean };
 
 export type RebuiltAccount = {
   accountId: string;
@@ -59,7 +65,7 @@ export function rebuild(tradesByAccount: Map<string, PricedTrade[]>, closes: Map
     while (i + 1 < list.length && list[i + 1].on <= day) i++;
     cursor.set(symbol, i);
     if (i < 0) return null;
-    return daysBetween(list[i].on, day) <= MAX_CARRY_DAYS ? list[i].price : null;
+    return list[i].owner || daysBetween(list[i].on, day) <= MAX_CARRY_DAYS ? list[i].price : null;
   };
 
   const rebuilt: RebuiltAccount[] = [];
@@ -146,11 +152,12 @@ export async function rebuiltHistory(db: Db, through: string): Promise<RebuiltHi
   for (const [assetClass, symbols] of wanted) {
     if (!symbols.size) continue;
     const prices = await db
-      .select({ symbol: dailyPrices.symbol, on: dailyPrices.on, price: dailyPrices.price })
+      .select({ symbol: dailyPrices.symbol, on: dailyPrices.on, price: dailyPrices.price, source: dailyPrices.source })
       .from(dailyPrices)
       .where(and(eq(dailyPrices.assetClass, assetClass), inArray(dailyPrices.symbol, [...symbols])))
       .orderBy(dailyPrices.on);
-    for (const p of prices) closes.set(keyOf(assetClass, p.symbol), [...(closes.get(keyOf(assetClass, p.symbol)) ?? []), { ...p, symbol: keyOf(assetClass, p.symbol) }]);
+    for (const { source, ...p } of prices)
+      closes.set(keyOf(assetClass, p.symbol), [...(closes.get(keyOf(assetClass, p.symbol)) ?? []), { ...p, symbol: keyOf(assetClass, p.symbol), owner: source === OWNER_PRICE_SOURCE }]);
   }
   return rebuild(byAccount, closes, through);
 }

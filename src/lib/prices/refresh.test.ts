@@ -63,7 +63,10 @@ describe("refreshing prices (#229)", () => {
     const quotes = await latestQuotes(db, "crypto", { now: later(5) });
     expect(quotes.get("ZQC")).toMatchObject({ price: "41000.5", stale: false, source: "fake" });
     expect(quotes.get("BLX")).toMatchObject({ price: null });
-    expect((await db.select().from(dailyPrices)).map((d) => [d.symbol, d.on, d.price])).toEqual([["ZQC", "2026-11-02", "41000.5"]]);
+    // The feed's close; the owner's own prices from adding the positions before any quote (#340) are kept apart.
+    const rows = await db.select().from(dailyPrices);
+    expect(rows.filter((d) => d.source !== "owner").map((d) => [d.symbol, d.on, d.price])).toEqual([["ZQC", "2026-11-02", "41000.5"]]);
+    expect(rows.filter((d) => d.source === "owner").every((d) => ["ZQC", "BLX"].includes(d.symbol))).toBe(true);
   });
 
   it("keeps the last price after a failed request, labels it stale with its time, and doesn't retry until it's due", async () => {
