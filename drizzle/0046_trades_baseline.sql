@@ -1,0 +1,1 @@
+ALTER TABLE "accounts" ADD COLUMN "trades_baseline_on" date;

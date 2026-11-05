@@ -1,10 +1,11 @@
-import { and, count, desc, eq, gte, inArray, isNotNull, lte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, lte, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, holdingSnapshots, manualPositions, trades } from "@/db/schema";
+import { accounts, manualPositions, trades } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
-import { difference, firstShortfall, holdingsOn, inOrder, SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
+import { firstShortfall, holdingsOn, inOrder, SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
 import { confirmedTrades } from "@/lib/trades/confirmed";
+import { planTradeGaps } from "@/lib/trades/plan";
 import { valueDate } from "@/operations/accounts";
 import { defineRead, defineWrite } from "@/operations/define";
 import { assetClassInput, decimal, positionsAccount, revalue, symbol } from "@/operations/holdings";
@@ -28,8 +29,8 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 //   than was held, on any day, is refused. Drafts here move nothing.
 // - A synced brokerage or retirement account: its positions come from the
 //   sync, and its confirmed trades build the past. Where the two disagree,
-//   a trade is missing; tradeCheck below says so, until gap drafting (#320)
-//   replaces it with drafts.
+//   a trade is missing, and trades.draftGaps below drafts it (#320, the
+//   rules are in lib/trades/gaps.ts).
 //
 // Owner only, like positions, and never offered to Tally: drafting is for
 // the sync and the matcher (and the owner), everything else for the owner.
@@ -153,6 +154,59 @@ export const draftTrade = defineWrite({
       transactionId: input.transactionId ?? null,
     });
     return { id: row.id };
+  },
+});
+
+export const draftGaps = defineWrite({
+  name: "trades.draftGaps",
+  description:
+    "After a sync, for each synced investment account: record where trade drafting starts (its opening trades) the first time, " +
+    "and afterwards draft a trade for each position whose synced quantity its trades don't explain. Cash and money-market " +
+    "positions are left out. For the sync only.",
+  allowedActors: ["import"],
+  input: z.object({ accountId: z.uuid().optional() }),
+  apply: async (ctx, { accountId }) => {
+    let opening = 0;
+    let drafted = 0;
+    for (const plan of await planTradeGaps(ctx.db, accountId)) {
+      if (plan.baseline) {
+        await ctx.update(accounts, plan.accountId, { tradesBaselineOn: plan.baseline.on });
+        for (const t of plan.baseline.opening) {
+          // An opening counts like any confirmed trade. One for a position
+          // with no symbol can't be confirmed (nothing to price or replay it
+          // by), so it's kept dismissed: it still settles the gap, counts
+          // nowhere else, and restoring it makes it a draft to name.
+          await ctx.insert(trades, {
+            accountId: plan.accountId,
+            on: t.on,
+            symbol: t.symbol,
+            positionId: t.positionId,
+            side: t.side,
+            quantity: t.quantity,
+            price: null,
+            status: t.symbol ? "confirmed" : "dismissed",
+            source: "opening",
+          });
+          opening++;
+        }
+      }
+      for (const t of plan.drafts) {
+        await ctx.insert(trades, {
+          accountId: plan.accountId,
+          on: t.on,
+          onFrom: t.onFrom,
+          symbol: t.symbol,
+          positionId: t.positionId,
+          side: t.side,
+          quantity: t.quantity,
+          price: null,
+          status: "draft",
+          source: "position_gap",
+        });
+        drafted++;
+      }
+    }
+    return { opening, drafted };
   },
 });
 
@@ -318,43 +372,4 @@ export const listTradesRead = defineRead({
 export async function draftCounts(db: Db): Promise<Map<string, number>> {
   const rows = await db.select({ accountId: trades.accountId, n: count() }).from(trades).where(eq(trades.status, "draft")).groupBy(trades.accountId);
   return new Map(rows.map((r) => [r.accountId, r.n]));
-}
-
-export type TradeMismatch = { symbol: string; synced: string; traded: string; difference: string };
-
-/**
- * For each synced account with trades: the symbols where replaying its
- * confirmed trades doesn't give the quantity its newest holdings snapshot
- * reports, and by how much (traded − synced). A missing or mistyped trade
- * shows up here. Replaced by gap drafting in #320.
- */
-export async function tradeCheck(db: Db): Promise<Map<string, TradeMismatch[]>> {
-  const all = await confirmedTrades(db);
-  const accountIds = [...new Set(all.map((t) => t.accountId))];
-  if (!accountIds.length) return new Map();
-  const synced = await db
-    .select({ id: accounts.id })
-    .from(accounts)
-    .where(and(inArray(accounts.id, accountIds), inArray(accounts.type, [...INVESTMENT_KINDS]), sql`${accounts.source} <> 'manual'`));
-  const out = new Map<string, TradeMismatch[]>();
-  for (const { id } of synced) {
-    const [latest] = await db.select({ on: sql<string>`max(${holdingSnapshots.on})` }).from(holdingSnapshots).where(eq(holdingSnapshots.accountId, id));
-    const reported = latest?.on
-      ? await db
-          .select({ symbol: sql<string>`upper(${holdingSnapshots.symbol})`, shares: holdingSnapshots.shares })
-          .from(holdingSnapshots)
-          .where(and(eq(holdingSnapshots.accountId, id), eq(holdingSnapshots.on, latest.on), isNotNull(holdingSnapshots.symbol)))
-      : [];
-    const syncedBy = new Map(reported.map((r) => [r.symbol, r.shares]));
-    const traded = holdingsOn(all.filter((t) => t.accountId === id));
-    const mismatches: TradeMismatch[] = [];
-    for (const s of new Set([...syncedBy.keys(), ...traded.keys()])) {
-      const a = traded.get(s) ?? "0";
-      const b = syncedBy.get(s) ?? "0";
-      const diff = difference(a, b);
-      if (diff !== "0") mismatches.push({ symbol: s, synced: difference(b, "0"), traded: a, difference: diff });
-    }
-    if (mismatches.length) out.set(id, mismatches.sort((x, y) => x.symbol.localeCompare(y.symbol)));
-  }
-  return out;
 }

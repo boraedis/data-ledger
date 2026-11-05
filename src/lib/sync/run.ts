@@ -5,6 +5,7 @@ import { connectorFor as defaultConnectorFor } from "@/lib/connectors";
 import { MAX_WINDOW_DAYS } from "@/lib/connectors/simplefin";
 import { ConnectorAuthError, type Connector } from "@/lib/connectors/types";
 import { backfillMerchantsIfNeeded, runCategorization } from "@/lib/categorize/pipeline";
+import { draftTradeGaps } from "@/lib/trades/draft-gaps";
 import { execute } from "@/operations/runtime";
 
 // Runs one sync for one connection: checks the rate budget, fetches from
@@ -106,6 +107,16 @@ export async function syncConnection(
     } catch (error) {
       console.error("Categorization after sync failed", error);
       messages.push({ code: "app.categorize", message: "Automatic categorization failed this time; new transactions are in the inbox." });
+    }
+
+    // Trades the positions imply (#320): drafts for the owner to finish on
+    // the Trades page. Like categorization, a failure here doesn't fail the
+    // sync; the gaps are still there next time.
+    try {
+      await draftTradeGaps(db);
+    } catch (error) {
+      console.error("Drafting trades after sync failed", error);
+      messages.push({ code: "app.trades", message: "Drafting trades from your positions failed this time; it will try again on the next sync." });
     }
 
     // Provider messages (an institution needing re-auth, a rate warning)
