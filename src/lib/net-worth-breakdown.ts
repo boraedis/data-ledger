@@ -58,6 +58,9 @@ export function groupSeries(accounts: BreakdownAccount[], daily: Daily, groupBy:
 }
 
 export const RANGES = [
+  // By the hour on the line view (#338); a day or a week isn't offered for the daily stack.
+  { key: "1d", label: "1D" },
+  { key: "1w", label: "1W" },
   { key: "1m", label: "1M" },
   { key: "3m", label: "3M" },
   { key: "ytd", label: "YTD" },
@@ -76,6 +79,7 @@ const shiftMonths = (date: string, months: number) => {
 export function rangeStart(range: RangeKey, lastDay: string, firstDay: string): string {
   if (range === "all") return firstDay;
   if (range === "ytd") return `${lastDay.slice(0, 4)}-01-01`;
+  if (range === "1d" || range === "1w") return new Date(Date.parse(`${lastDay}T00:00:00Z`) - (range === "1d" ? 1 : 7) * 86_400_000).toISOString().slice(0, 10);
   return shiftMonths(lastDay, range === "1m" ? -1 : range === "3m" ? -3 : -12);
 }
 

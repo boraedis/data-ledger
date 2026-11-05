@@ -12,6 +12,7 @@ import { pricesNote } from "@/lib/prices/describe";
 import { ValueChart } from "@/components/charts/value-chart";
 import { GROUP_LABELS, forecast, forecastStart, parseAssumptions, type ForecastGroup } from "@/lib/forecast";
 import { rebuiltHistory, type RebuiltHistory } from "@/lib/prices/rebuilt";
+import { hourlyNetWorth } from "@/lib/net-worth-hourly";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 
 // Net worth today and over time (#25), and a forecast on the owner's own
@@ -25,10 +26,12 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
   const now = new Date();
   const yearAgo = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1)).toISOString().slice(0, 10);
   const [summary, income, rebuilt] = await Promise.all([
-    netWorthSummary(db),
+    netWorthSummary(db, { today: now }),
     read(db, investmentIncome, { from: yearAgo }),
     rebuiltHistory(db, now.toISOString().slice(0, 10)),
   ]);
+  // Net worth by the hour for the chart's short ranges (#338), from the same summary.
+  const hourly = await hourlyNetWorth(db, summary, { now });
   // Values move with prices (#230): refresh them after this page is sent, if due.
   refreshPricesAfterResponse();
   const largest = Math.max(1, ...summary.byKind.map((k) => Math.abs(k.cents)));
@@ -50,6 +53,7 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
           <NetWorthHistory
             accounts={summary.accounts.map((a) => ({ id: a.id, name: a.name, institution: a.institution, kind: a.kind }))}
             daily={summary.daily}
+            hourly={hourly}
           />
         ) : (
           // Banks only report today's balance, so history can't be
