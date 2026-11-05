@@ -52,7 +52,18 @@ export const SOURCE_LABELS = {
 } as const;
 
 /** A cash row as the Trades page shows it (#321): the owner's own description, day and amount. */
-export type CashRowView = { id: string; accountId: string; postedOn: string; amountCents: number; text: string; symbol: string | null; quantity: string | null; side: "buy" | "sell" };
+export type CashRowView = {
+  id: string;
+  accountId: string;
+  postedOn: string;
+  amountCents: number;
+  text: string;
+  symbol: string | null;
+  quantity: string | null;
+  side: "buy" | "sell";
+  // About how many shares, when the text doesn't say (#323).
+  suggestedQuantity?: { value: string; basis: string };
+};
 
 /** Price per unit from a cash amount and a quantity, to four places, for filling in a form. */
 export function priceText(amountCents: number, quantity: string): string {

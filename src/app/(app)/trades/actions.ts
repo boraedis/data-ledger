@@ -74,3 +74,11 @@ export async function detachCash(tradeId: string, symbol: string | null): Result
 export async function dismissHint(transactionId: string): Result {
   return run("trades.dismissHint", { transactionId }, "Said a cash row isn't a trade to record", "Couldn't dismiss it");
 }
+
+// Suggestions (#323): accepting one is one change, saved as the owner's.
+const FIELD_WORDS = { price: "price", on: "day", symbol: "symbol" } as const;
+
+export async function acceptSuggestion(tradeId: string, symbol: string | null, field: "price" | "on" | "symbol", value: string): Result {
+  const changes = field === "on" ? { on: value, onFrom: null } : { [field]: value };
+  return run("trades.update", { tradeId, ...changes }, `Used the suggested ${FIELD_WORDS[field]} for a draft trade of ${named(field === "symbol" ? value : symbol)}`, "Couldn't use the suggestion");
+}
