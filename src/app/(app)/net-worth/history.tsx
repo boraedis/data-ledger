@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AccountKind } from "@/lib/account-kinds";
 import { formatCents } from "@/lib/money";
+import type { HourlyNetWorth } from "@/lib/net-worth-hourly";
+import { compact, HEIGHT, niceStep, PAD, signed } from "./chart-scale";
+import { HOURLY_RANGES, HourlyChart } from "./hourly-chart";
 import {
   RANGES,
   changeOver,
@@ -46,33 +49,14 @@ const KIND_SLOT: Record<AccountKind, number> = {
 const colorOf = (g: { key: string; kind?: AccountKind }, i: number) =>
   g.key === "other" ? "var(--chart-5)" : `var(--series-${g.kind ? KIND_SLOT[g.kind] : (i % 8) + 1})`;
 
-const HEIGHT = 240;
-const PAD = { top: 10, right: 8, bottom: 22, left: 8 };
 const DAY_MS = 86_400_000;
 const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / DAY_MS);
 
-function niceStep(span: number, ticks: number) {
-  const raw = span / ticks;
-  const magnitude = 10 ** Math.floor(Math.log10(raw));
-  const n = raw / magnitude;
-  return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * magnitude;
-}
-
-function compact(cents: number) {
-  const dollars = cents / 100;
-  const sign = dollars < 0 ? "−" : "";
-  const abs = Math.abs(dollars);
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(abs >= 100_000 ? 0 : 1).replace(/\.0$/, "")}k`;
-  return `${sign}$${abs.toFixed(0)}`;
-}
-
 const formatDay = (on: string) => new Date(`${on}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
-const signed = (cents: number) => `${cents > 0 ? "+" : cents < 0 ? "−" : ""}${formatCents(Math.abs(cents))}`;
 
 type View = "line" | "stacked";
 
-export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccount[]; daily: Daily }) {
+export function NetWorthHistory({ accounts, daily, hourly }: { accounts: BreakdownAccount[]; daily: Daily; hourly?: HourlyNetWorth }) {
   const [groupBy, setGroupBy] = useState<GroupBy>("kind");
   const [view, setView] = useState<View>("line");
   const [range, setRange] = useState<RangeKey>("all");
@@ -160,6 +144,10 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
     setHover(Math.max(0, Math.min(domain - 1, Math.round(ratio * (domain - 1)))));
   }
 
+  // The short ranges are by the hour on the line (#338); the stack stays daily.
+  const byHour = view === "line" && Boolean(hourly?.points.length) && (HOURLY_RANGES as readonly string[]).includes(range);
+  const ranges = RANGES.filter((r) => view === "line" || (r.key !== "1d" && r.key !== "1w"));
+
   const button = (active: boolean) =>
     `px-2.5 py-1 first:rounded-l-md last:rounded-r-md ${active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`;
 
@@ -168,7 +156,17 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div role="group" aria-label="Chart type" className="flex rounded-md border text-xs">
           {(["line", "stacked"] as const).map((v) => (
-            <button key={v} type="button" aria-pressed={view === v} className={button(view === v)} onClick={() => setView(v)}>
+            <button
+              key={v}
+              type="button"
+              aria-pressed={view === v}
+              className={button(view === v)}
+              onClick={() => {
+                setView(v);
+                // A day or a week is too short for a daily stack.
+                if (v === "stacked" && (range === "1d" || range === "1w")) setRange("1m");
+              }}
+            >
               {v === "line" ? "Line" : "Stacked"}
             </button>
           ))}
@@ -193,7 +191,7 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
           </div>
         ) : null}
         <div role="group" aria-label="Time range" className="flex rounded-md border text-xs">
-          {RANGES.map((r) => (
+          {ranges.map((r) => (
             <button key={r.key} type="button" aria-pressed={range === r.key} className={button(range === r.key)} onClick={() => setRange(r.key)}>
               {r.label}
             </button>
@@ -201,6 +199,10 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
         </div>
       </div>
 
+      {byHour ? (
+        <HourlyChart hourly={hourly!} range={range as (typeof HOURLY_RANGES)[number]} />
+      ) : (
+        <>
       <div aria-live="polite" className="min-h-12">
         <div className="text-sm text-muted-foreground">
           {beforeHistory ? "Before your first balance" : formatDay(daily.days[at])}
@@ -263,7 +265,10 @@ export function NetWorthHistory({ accounts, daily }: { accounts: BreakdownAccoun
         ) : null}
       </div>
 
-      {/* The legend is also the filter: click a group to see it alone. */}
+        </>
+      )}
+
+      {/* The legend is also the filter: click a group to see it alone. Daily, on every range. */}
       <ul className="divide-y rounded-lg border text-sm">
         {groups.map((g) => {
           const change = changeOver(daily.days, g.values, from);
