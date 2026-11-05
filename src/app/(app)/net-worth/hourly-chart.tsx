@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatCents } from "@/lib/money";
 import type { HourlyNetWorth } from "@/lib/net-worth-hourly";
 import { compact, HEIGHT, niceStep, PAD, signed } from "./chart-scale";
@@ -19,17 +19,25 @@ const formatHour = (iso: string) => new Date(iso).toLocaleString("en-US", { mont
 export function HourlyChart({ hourly, range }: { hourly: HourlyNetWorth; range: HourlyRange }) {
   const [hover, setHover] = useState<number | null>(null);
   const [width, setWidth] = useState(0);
-  const ref = useRef<HTMLDivElement>(null);
+  // Observed as it mounts, and a zero width from one going away ignored, as on the daily chart (#347).
+  const [plot, setPlot] = useState<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
-    observer.observe(el);
+    if (!plot) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width > 0) setWidth(entry.contentRect.width);
+    });
+    observer.observe(plot);
     return () => observer.disconnect();
-  }, []);
+  }, [plot]);
 
   const points = useMemo(() => hourly.points.slice(-(SPAN_HOURS[range] + 1)), [hourly, range]);
+  // A new range is a new set of hours: an hour hovered on the last one doesn't carry over.
+  const [shownRange, setShownRange] = useState(range);
+  if (shownRange !== range) {
+    setShownRange(range);
+    setHover(null);
+  }
 
   const geometry = useMemo(() => {
     if (width === 0 || points.length === 0) return null;
@@ -57,9 +65,8 @@ export function HourlyChart({ hourly, range }: { hourly: HourlyNetWorth; range: 
   const change = points.at(-1)!.cents - points[0].cents;
 
   function pointAt(clientX: number) {
-    const el = ref.current;
-    if (!el || !geometry) return;
-    const ratio = (clientX - el.getBoundingClientRect().left - PAD.left) / geometry.plotW;
+    if (!plot || !geometry) return;
+    const ratio = (clientX - plot.getBoundingClientRect().left - PAD.left) / geometry.plotW;
     setHover(Math.max(0, Math.min(points.length - 1, Math.round(ratio * (points.length - 1)))));
   }
 
@@ -75,7 +82,7 @@ export function HourlyChart({ hourly, range }: { hourly: HourlyNetWorth; range: 
         </div>
       </div>
       <div
-        ref={ref}
+        ref={setPlot}
         className="relative w-full touch-pan-y select-none"
         style={{ height: HEIGHT }}
         onPointerMove={(e) => pointAt(e.clientX)}
