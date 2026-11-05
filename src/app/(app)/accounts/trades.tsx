@@ -8,11 +8,12 @@ import { normalizeQuantity } from "@/lib/holdings/value";
 import type { TradeMismatch, TradeRow } from "@/operations/trades";
 import { addTrade, removeTrade, updateTrade } from "./actions";
 
-// An account's trade log (#247): dated buys, sells and share transfers, so
-// past holdings can be rebuilt (#232). In a manual account the positions
-// follow the trades; in a synced brokerage the trades only build the past,
-// and any symbol where they don't add up to what the brokerage reports is
-// called out, since that means a trade is missing or mistyped.
+// An account's confirmed trades (#247, #318): dated buys, sells and share
+// transfers, so past holdings can be rebuilt (#232). In a manual account the
+// positions follow them; in a synced brokerage the positions come from the
+// sync, and any symbol where the trades don't add up to what it reports is
+// called out, since a trade is missing or mistyped. Drafts aren't shown
+// here: they get the Trades page (#319), which replaces this log.
 
 function localToday(): string {
   const d = new Date();

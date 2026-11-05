@@ -21,9 +21,10 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 // listManualPositions below. Outputs carry ids only.
 //
 // Since the trade log (#247), every quantity here is what the account's
-// trades add up to: adding a position records an opening buy, changing its
-// quantity records a buy or sell of the difference, dated today, and
-// removing it removes its trades. Trades themselves are in ./trades.ts.
+// confirmed trades add up to (#318): adding a position records an opening
+// buy (source "opening"), changing its quantity records a buy or sell of the
+// difference, dated today, and removing it removes its trades, drafts
+// included. Trades themselves are in ./trades.ts.
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -110,7 +111,7 @@ export const addManualPosition = defineWrite({
       assetClass: input.assetClass,
     });
     // The opening trade (#247), so the position is what its trades add up to.
-    await ctx.insert(trades, { accountId: input.accountId, on, symbol: input.symbol, side: "buy", quantity: input.quantity, price: input.unitPrice });
+    await ctx.insert(trades, { accountId: input.accountId, on, symbol: input.symbol, side: "buy", quantity: input.quantity, price: input.unitPrice, source: "opening" });
     await revalue(ctx, input.accountId, on);
     return { id: row.id };
   },

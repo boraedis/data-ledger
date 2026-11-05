@@ -5,6 +5,7 @@ import { accounts, holdingSnapshots, manualPositions, trades } from "@/db/schema
 import type { Db } from "@/db/types";
 import { holdingsOn } from "@/lib/holdings/replay";
 import { testDb } from "@/lib/test-utils/db";
+import { confirmedTrades } from "@/lib/trades/confirmed";
 import { listManualPositions } from "@/operations/holdings";
 import { execute, undoCommand } from "@/operations/runtime";
 import { tradeCheck } from "@/operations/trades";
@@ -19,7 +20,7 @@ const run = (operation: string, input: Record<string, unknown>, actor = "user") 
 const day = new Date().toISOString().slice(0, 10);
 const position = async (symbol: string) => (await listManualPositions(db)).find((p) => p.symbol === symbol);
 const value = async (id = wallet) => (await db.select().from(accounts).where(eq(accounts.id, id)))[0].balanceCents;
-const tradesOf = async (id = wallet) => db.select().from(trades).where(eq(trades.accountId, id));
+const tradesOf = async (id = wallet) => confirmedTrades(db, eq(trades.accountId, id));
 
 beforeEach(async () => {
   db = await testDb();

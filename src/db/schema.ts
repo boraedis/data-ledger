@@ -3,6 +3,7 @@ import {
   type AnyPgColumn,
   bigint,
   boolean,
+  check,
   customType,
   date,
   doublePrecision,
@@ -338,10 +339,20 @@ export const manualPositions = pgTable(
 // Trades (#247): dated buys, sells and share transfers per account, so how
 // much was held on any past day can be rebuilt by replaying them (#232).
 // For a manual account (#231) they're the source of its positions: each
-// position's quantity is what its trades add up to. For a synced brokerage
-// they only build the past, and are checked against what it reports.
-// Never transactions, never in budgets, never sent to a model.
+// position's quantity is what its confirmed trades add up to.
+//
+// Since the Trades epic (#315, #318) a trade is also a draft, inferred and
+// partly filled in, until the owner confirms it. Only confirmed trades count
+// in positions, value and history; drafts and dismissed ones never do. A
+// trade is its own record, linked to the cash row it settled through when
+// there is one (#317), never a transaction itself. Never in budgets, never
+// sent to a model.
 export const tradeSide = pgEnum("trade_side", ["buy", "sell", "transfer_in", "transfer_out"]);
+export const tradeStatus = pgEnum("trade_status", ["draft", "confirmed", "dismissed"]);
+// Where a trade came from: typed by the owner, the opening trade of a
+// position (#320 reuses it for synced accounts), or a gap between what the
+// sync reports and what the trades replay to (#320).
+export const tradeSource = pgEnum("trade_source", ["hand", "opening", "position_gap"]);
 
 export const trades = pgTable(
   "trades",
@@ -352,18 +363,36 @@ export const trades = pgTable(
     accountId: uuid("account_id")
       .notNull()
       .references(() => accounts.id, { onDelete: "restrict" }),
+    // The day it happened. For a draft whose day isn't known yet, the latest
+    // day it could be, with onFrom the earliest.
     on: date("on").notNull(),
-    // Upper case, as positions match it.
-    symbol: text("symbol").notNull(),
+    onFrom: date("on_from"),
+    // Upper case, as positions match it. A draft may not know it yet, only
+    // the position it came from (positionId).
+    symbol: text("symbol"),
+    // The provider's id for the position (holding_snapshots.external_id), for
+    // a draft from a position with no symbol.
+    positionId: text("position_id"),
     side: tradeSide("side").notNull(),
     // Exact decimals. Quantity is always positive; the side says which way.
     quantity: numeric("quantity").notNull(),
     // Per unit, when the owner gives it. History is priced from daily prices,
     // so a trade needs only its quantity.
     price: numeric("price"),
+    status: tradeStatus("status").notNull().default("confirmed"),
+    source: tradeSource("source").notNull().default("hand"),
+    // The cash row it settled through, when there is one (#317, #321).
+    transactionId: uuid("transaction_id").references(() => transactions.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("trades_account_symbol_on_idx").on(t.accountId, t.symbol, t.on)],
+  (t) => [
+    index("trades_account_symbol_on_idx").on(t.accountId, t.symbol, t.on),
+    // One trade per cash row.
+    uniqueIndex("trades_transaction_idx").on(t.transactionId).where(sql`${t.transactionId} is not null`),
+    // What every reader of confirmed trades relies on: a symbol and one day.
+    check("trades_confirmed_complete", sql`${t.status} <> 'confirmed' or (${t.symbol} is not null and ${t.onFrom} is null)`),
+    check("trades_draft_identified", sql`${t.symbol} is not null or ${t.positionId} is not null`),
+  ],
 );
 
 // Market prices (#229): the latest quote per symbol, and one price per

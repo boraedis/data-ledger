@@ -1,9 +1,10 @@
-import { and, desc, eq, min } from "drizzle-orm";
+import { and, desc, eq, min, sql } from "drizzle-orm";
 import { accounts, commandLog, dailyPrices, trades } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { REFRESH_MINUTES } from "@/lib/prices/config";
 import { manualClasses } from "@/lib/prices/rebuilt";
 import { defaultSources } from "@/lib/prices/refresh";
+import { isConfirmed } from "@/lib/trades/confirmed";
 import type { AssetClass, PriceSource } from "@/lib/prices/source";
 import { execute } from "@/operations/runtime";
 
@@ -25,9 +26,11 @@ const dayBefore = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) - 86_
 export async function tradedSymbols(db: Db): Promise<{ assetClass: AssetClass; symbol: string; first: string }[]> {
   const [rows, classes] = await Promise.all([
     db
-      .select({ accountId: trades.accountId, symbol: trades.symbol, source: accounts.source, first: min(trades.on) })
+      .select({ accountId: trades.accountId, symbol: sql<string>`${trades.symbol}`, source: accounts.source, first: min(trades.on) })
       .from(trades)
       .innerJoin(accounts, eq(accounts.id, trades.accountId))
+      // Confirmed only (#318), which always have a symbol.
+      .where(isConfirmed)
       .groupBy(trades.accountId, trades.symbol, accounts.source),
     manualClasses(db),
   ]);
