@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { planCashRows } from "@/lib/trades/cash-plan";
 import { recognize } from "@/lib/trades/cash-rows";
+import { hintQuantities, suggestionsFor } from "@/lib/trades/suggest-load";
 import { read } from "@/operations/runtime";
 import { listTradesRead } from "@/operations/trades";
 import { AddTrade, type AddTradeFill, type TradeAccount } from "./add-trade";
@@ -60,7 +61,16 @@ export default async function TradesPage(props: PageProps<"/trades">) {
   const attached = new Map(
     attachedRows.map((r) => [r.id, view({ id: r.id, accountId: r.accountId, postedOn: r.postedOn, amountCents: r.amountCents, text: [r.description, r.payee, r.memo].filter(Boolean).join(" ") })]),
   );
-  const hints = cashPlan.hints.filter((h) => !accountId || h.accountId === accountId).map(view);
+  const [suggested, quantities] = await Promise.all([
+    suggestionsFor(db, drafts),
+    hintQuantities(db, cashPlan.hints),
+  ]);
+  const hints = cashPlan.hints
+    .filter((h) => !accountId || h.accountId === accountId)
+    .map((h) => {
+      const q = quantities.get(h.id);
+      return { ...view(h), ...(q ? { suggestedQuantity: { value: q.value, basis: q.basis } } : {}) };
+    });
   const fill: AddTradeFill = {
     account: accountId,
     symbol,
@@ -99,6 +109,7 @@ export default async function TradesPage(props: PageProps<"/trades">) {
                 drivesPositions={manual.has(t.accountId)}
                 cash={t.transactionId ? (attached.get(t.transactionId) ?? null) : null}
                 offers={(cashPlan.offers.get(t.id) ?? []).map(view)}
+                suggested={suggested.get(t.id) ?? { suggestions: [], notes: [] }}
               />
             ))}
           </ul>

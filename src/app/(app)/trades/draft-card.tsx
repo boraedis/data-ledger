@@ -6,12 +6,15 @@ import { Input } from "@/components/ui/input";
 import { SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
 import type { TradeRow } from "@/operations/trades";
 import { formatCents } from "@/lib/money";
-import { attachCash, detachCash, dismissTrade, finishAndConfirm, updateTrade } from "./actions";
+import type { Suggested } from "@/lib/trades/suggest-load";
+import { acceptSuggestion, attachCash, detachCash, dismissTrade, finishAndConfirm, updateTrade } from "./actions";
 import { draftHeadline, missing, positive, select, SIDES, SOURCE_LABELS, validSymbol, type CashRowView } from "./fields";
 
 // One draft trade to finish (#319): what's known, what's missing and where
 // it came from, with the fields to fill in, and Confirm or Dismiss in place.
 // Nothing here counts until it's confirmed (#318).
+
+const FIELD_LABELS = { price: "Price", on: "Day", symbol: "Symbol", quantity: "Quantity" } as const;
 
 export function DraftCard({
   trade: t,
@@ -19,6 +22,7 @@ export function DraftCard({
   drivesPositions,
   cash,
   offers,
+  suggested,
 }: {
   trade: TradeRow;
   accountName: string;
@@ -26,6 +30,8 @@ export function DraftCard({
   // The cash row it settled through, and rows it could be when that's not certain (#321).
   cash: CashRowView | null;
   offers: CashRowView[];
+  // What's missing, worked out from what's known (#323): saved only when used.
+  suggested: Suggested;
 }) {
   const [symbol, setSymbol] = useState(t.symbol ?? "");
   const [side, setSide] = useState<TradeSide>(t.side);
@@ -72,6 +78,8 @@ export function DraftCard({
   const dismiss = () => startTransition(async () => setError((await dismissTrade(t.id, t.symbol))?.error ?? null));
   const attach = (rowId: string) => startTransition(async () => setError((await attachCash(t.id, rowId, t.symbol))?.error ?? null));
   const detach = () => startTransition(async () => setError((await detachCash(t.id, t.symbol))?.error ?? null));
+  const use = (field: "price" | "on" | "symbol" | "quantity", value: string) =>
+    field === "quantity" ? setQuantity(value) : startTransition(async () => setError((await acceptSuggestion(t.id, t.symbol, field, value))?.error ?? null));
 
   return (
     <li className="space-y-2 rounded-lg border p-3 text-sm">
@@ -111,6 +119,32 @@ export function DraftCard({
               </li>
             ))}
           </ul>
+        </div>
+      ) : null}
+      {suggested.suggestions.length || suggested.notes.length ? (
+        <div className="space-y-1 text-xs">
+          {suggested.suggestions.length ? (
+            <ul className="flex flex-wrap gap-1.5">
+              {suggested.suggestions.map((x) => (
+                <li key={`${x.field}:${x.value}:${x.basis}`}>
+                  <button
+                    type="button"
+                    onClick={() => use(x.field, x.value)}
+                    disabled={pending}
+                    className="rounded-full border px-2 py-0.5 text-left hover:bg-accent"
+                    title="Use this; you can change it after"
+                  >
+                    <span className="font-medium">{FIELD_LABELS[x.field]}:</span> {x.basis}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {suggested.notes.map((n) => (
+            <p key={n} className="text-muted-foreground">
+              {n}
+            </p>
+          ))}
         </div>
       ) : null}
       <div className="flex flex-wrap items-center gap-2">

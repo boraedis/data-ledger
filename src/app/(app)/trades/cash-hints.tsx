@@ -32,6 +32,7 @@ function Hint({ hint: h, accountName }: { hint: CashRowView; accountName: string
     cash: h.id,
     ...(h.symbol ? { symbol: h.symbol } : {}),
     ...(h.quantity ? { quantity: h.quantity, price: priceText(h.amountCents, h.quantity) } : {}),
+    ...(!h.quantity && h.suggestedQuantity ? { quantity: h.suggestedQuantity.value } : {}),
   });
   return (
     <li className="space-y-1 px-3 py-2 text-sm">
@@ -40,6 +41,7 @@ function Hint({ hint: h, accountName }: { hint: CashRowView; accountName: string
           <span className="block truncate">{h.text}</span>
           <span className="block text-xs text-muted-foreground">
             {h.postedOn} · {accountName} · {h.side === "buy" ? "a buy" : "a sale"}
+            {h.quantity ? ` of ${h.quantity} shares` : h.suggestedQuantity ? ` of ${h.suggestedQuantity.basis}` : ""}
           </span>
         </span>
         <span className="tabular-nums">{formatCents(h.amountCents)}</span>
