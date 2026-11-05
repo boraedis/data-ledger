@@ -5,14 +5,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
 import type { TradeRow } from "@/operations/trades";
-import { dismissTrade, finishAndConfirm, updateTrade } from "./actions";
-import { draftHeadline, missing, positive, select, SIDES, SOURCE_LABELS, validSymbol } from "./fields";
+import { formatCents } from "@/lib/money";
+import { attachCash, detachCash, dismissTrade, finishAndConfirm, updateTrade } from "./actions";
+import { draftHeadline, missing, positive, select, SIDES, SOURCE_LABELS, validSymbol, type CashRowView } from "./fields";
 
 // One draft trade to finish (#319): what's known, what's missing and where
 // it came from, with the fields to fill in, and Confirm or Dismiss in place.
 // Nothing here counts until it's confirmed (#318).
 
-export function DraftCard({ trade: t, accountName, drivesPositions }: { trade: TradeRow; accountName: string; drivesPositions: boolean }) {
+export function DraftCard({
+  trade: t,
+  accountName,
+  drivesPositions,
+  cash,
+  offers,
+}: {
+  trade: TradeRow;
+  accountName: string;
+  drivesPositions: boolean;
+  // The cash row it settled through, and rows it could be when that's not certain (#321).
+  cash: CashRowView | null;
+  offers: CashRowView[];
+}) {
   const [symbol, setSymbol] = useState(t.symbol ?? "");
   const [side, setSide] = useState<TradeSide>(t.side);
   // A draft with a range starts with no day picked: picking one is the owner's call.
@@ -56,6 +70,8 @@ export function DraftCard({ trade: t, accountName, drivesPositions }: { trade: T
   };
 
   const dismiss = () => startTransition(async () => setError((await dismissTrade(t.id, t.symbol))?.error ?? null));
+  const attach = (rowId: string) => startTransition(async () => setError((await attachCash(t.id, rowId, t.symbol))?.error ?? null));
+  const detach = () => startTransition(async () => setError((await detachCash(t.id, t.symbol))?.error ?? null));
 
   return (
     <li className="space-y-2 rounded-lg border p-3 text-sm">
@@ -72,6 +88,31 @@ export function DraftCard({ trade: t, accountName, drivesPositions }: { trade: T
           </p>
         ) : null}
       </div>
+      {cash ? (
+        <p className="text-xs text-muted-foreground">
+          Cash row: {cash.postedOn} · <span className="tabular-nums">{formatCents(cash.amountCents)}</span> · {cash.text} ·{" "}
+          <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={detach} disabled={pending}>
+            Take it off
+          </button>
+        </p>
+      ) : offers.length ? (
+        <div className="space-y-1 text-xs">
+          <p className="text-muted-foreground">{offers.length === 1 ? "This cash row could be it:" : "One of these cash rows could be it:"}</p>
+          <ul className="space-y-1">
+            {offers.map((o) => (
+              <li key={o.id} className="flex flex-wrap items-center gap-2">
+                <span className="tabular-nums">
+                  {o.postedOn} · {formatCents(o.amountCents)}
+                </span>
+                <span className="min-w-0 truncate text-muted-foreground">{o.text}</span>
+                <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => attach(o.id)} disabled={pending}>
+                  Attach
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center gap-2">
         <Input aria-label="Symbol" value={symbol} onChange={(e) => setSymbol(e.target.value)} placeholder="Symbol" maxLength={16} className="h-8 w-24" />
         <select aria-label="Side" value={side} onChange={(e) => setSide(e.target.value as TradeSide)} className={select}>

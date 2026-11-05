@@ -22,7 +22,7 @@ async function run(operation: string, input: Record<string, unknown>, reason: st
 const named = (symbol: string | null) => (symbol ? symbol.toUpperCase() : "a position");
 
 export async function addTrade(
-  input: { accountId: string; on: string; side: string; symbol: string; quantity: string; price: string | null; assetClass?: "crypto" | "equity" },
+  input: { accountId: string; on: string; side: string; symbol: string; quantity: string; price: string | null; assetClass?: "crypto" | "equity"; transactionId?: string },
   accountName: string,
 ): Result {
   return run("trades.add", input, `Recorded a trade of ${named(input.symbol)} in "${accountName}"`, "Couldn't record the trade");
@@ -60,4 +60,17 @@ export async function restoreTrade(tradeId: string, symbol: string | null): Resu
 
 export async function removeTrade(tradeId: string, symbol: string | null): Result {
   return run("trades.remove", { tradeId }, `Removed a trade of ${named(symbol)}`, "Couldn't remove the trade");
+}
+
+// Cash rows (#321).
+export async function attachCash(tradeId: string, transactionId: string, symbol: string | null): Result {
+  return run("trades.attachCash", { tradeId, transactionId }, `Attached a cash row to a draft trade of ${named(symbol)}`, "Couldn't attach the cash row");
+}
+
+export async function detachCash(tradeId: string, symbol: string | null): Result {
+  return run("trades.detachCash", { tradeId }, `Took the cash row off a draft trade of ${named(symbol)}`, "Couldn't take the cash row off");
+}
+
+export async function dismissHint(transactionId: string): Result {
+  return run("trades.dismissHint", { transactionId }, "Said a cash row isn't a trade to record", "Couldn't dismiss it");
 }

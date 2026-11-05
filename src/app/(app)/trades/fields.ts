@@ -50,3 +50,11 @@ export const SOURCE_LABELS = {
   opening: "Opening position",
   position_gap: "From a change in what the brokerage reports",
 } as const;
+
+/** A cash row as the Trades page shows it (#321): the owner's own description, day and amount. */
+export type CashRowView = { id: string; accountId: string; postedOn: string; amountCents: number; text: string; symbol: string | null; quantity: string | null; side: "buy" | "sell" };
+
+/** Price per unit from a cash amount and a quantity, to four places, for filling in a form. */
+export function priceText(amountCents: number, quantity: string): string {
+  return (Math.abs(amountCents) / 100 / Number(quantity)).toFixed(4).replace(/\.?0+$/, "");
+}

@@ -13,6 +13,7 @@ import {
   tags,
   transactionSplits,
   transactionTags,
+  trades,
   transactions,
 } from "@/db/schema";
 import { canonicalMerchant, linkUnlinked, merchantFields, merchantTypeName } from "@/operations/merchants";
@@ -220,6 +221,7 @@ export const listTransactions = defineRead({
     "`flagged` is true while a suspicious-charge alert on it waits for a verdict or was marked suspicious. " +
     "`provisionalSource` is set on a provisional transaction: one from a purchase alert that the bank hasn't " +
     "reported yet (see transactions.provisional). `manual` is true for one the owner added by hand, `imported` for one backfilled from a CSV export. " +
+    "`trade` is \"recorded\" or \"draft\" on a brokerage cash row that settled a trade, else null. " +
     "`merchantType` is the type of the merchant it's linked to (Restaurant, Grocery…), when that merchant has one.",
   input: z.object({
     ...listFilterInput,
@@ -269,7 +271,14 @@ export const listTransactions = defineRead({
           .innerJoin(tags, eq(tags.id, transactionTags.tagId))
           .where(inArray(transactionTags.transactionId, ids))
       : [];
-    const [context, { owedOff, matched }] = await Promise.all([transferAndActivity(db, rows), reimbursementAdjustments(db, ids)]);
+    const [context, { owedOff, matched }, tradeRows] = await Promise.all([
+      transferAndActivity(db, rows),
+      reimbursementAdjustments(db, ids),
+      // Whether a brokerage cash row settled a trade (#321). Only that: this
+      // read is one of Tally's tools, and trades never reach a model.
+      ids.length ? db.select({ transactionId: trades.transactionId, status: trades.status }).from(trades).where(inArray(trades.transactionId, ids)) : Promise.resolve([]),
+    ]);
+    const tradeOf = new Map(tradeRows.map((t) => [t.transactionId!, t.status === "draft" ? ("draft" as const) : ("recorded" as const)]));
     return rows.map(({ transferPairId, ...r }) => ({
       ...r,
       ...context(r, transferPairId),
@@ -278,6 +287,7 @@ export const listTransactions = defineRead({
       sharedOwedCents: owedOff.get(r.id) ?? 0,
       reimbursedCents: matched.get(r.id) ?? 0,
       tags: tagRows.filter((t) => t.transactionId === r.id).map((t) => t.name).sort(),
+      trade: tradeOf.get(r.id) ?? null,
     }));
   },
 });

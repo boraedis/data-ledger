@@ -14,13 +14,18 @@ import { localToday, positive, select, SIDES, validSymbol } from "./fields";
 
 export type TradeAccount = { id: string; name: string; manual: boolean };
 
-export function AddTrade({ accounts, account: initialAccount, symbol: initialSymbol }: { accounts: TradeAccount[]; account?: string; symbol?: string }) {
+export type AddTradeFill = { account?: string; symbol?: string; side?: TradeSide; on?: string; quantity?: string; price?: string; cash?: string };
+
+export function AddTrade({ accounts, fill = {} }: { accounts: TradeAccount[]; fill?: AddTradeFill }) {
+  const { account: initialAccount, symbol: initialSymbol } = fill;
   const [accountId, setAccountId] = useState(initialAccount && accounts.some((a) => a.id === initialAccount) ? initialAccount : (accounts[0]?.id ?? ""));
-  const [on, setOn] = useState(localToday);
-  const [side, setSide] = useState<TradeSide>("buy");
+  const [on, setOn] = useState(fill.on ?? localToday());
+  const [side, setSide] = useState<TradeSide>(fill.side ?? "buy");
+  // A cash row it settled through, when it came from a hint (#321); dropped once used.
+  const [cash, setCash] = useState(fill.cash);
   const [symbol, setSymbol] = useState(initialSymbol ?? "");
-  const [quantity, setQuantity] = useState("");
-  const [price, setPrice] = useState("");
+  const [quantity, setQuantity] = useState(fill.quantity ?? "");
+  const [price, setPrice] = useState(fill.price ?? "");
   const [kind, setKind] = useState<"crypto" | "equity">("crypto");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
@@ -38,11 +43,15 @@ export function AddTrade({ accounts, account: initialAccount, symbol: initialSym
     if (!q) return setError("Quantity should be a positive number like 2.5");
     if (price.trim() && !p) return setError("Price should be a positive number, or left empty");
     startTransition(async () => {
-      const result = await addTrade({ accountId, on, side, symbol: symbol.trim(), quantity: q, price: p, ...(account.manual ? { assetClass: kind } : {}) }, account.name);
+      const result = await addTrade(
+        { accountId, on, side, symbol: symbol.trim(), quantity: q, price: p, ...(account.manual ? { assetClass: kind } : {}), ...(cash ? { transactionId: cash } : {}) },
+        account.name,
+      );
       if (result?.error) return setError(result.error);
       setSymbol("");
       setQuantity("");
       setPrice("");
+      setCash(undefined);
       setError(null);
       setDone(true);
     });
@@ -84,6 +93,7 @@ export function AddTrade({ accounts, account: initialAccount, symbol: initialSym
           ? "In a manual account, each position is what its trades add up to."
           : "In a synced account, positions still come from the sync; trades rebuild the past."}
       </p>
+      {cash ? <p className="text-xs text-muted-foreground">Filled in from a cash row, which this trade will be linked to.</p> : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
       {done ? <p className="text-xs text-positive">Recorded.</p> : null}
     </form>

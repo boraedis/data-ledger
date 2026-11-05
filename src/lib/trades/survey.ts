@@ -57,8 +57,9 @@ export type InstitutionSurvey = {
 
 export { cashSignal } from "@/lib/trades/cash";
 
-// Words that say what a brokerage row is, kept in shapes. Anything else is masked.
-const VOCAB = new Set(
+// Words that say what a brokerage row is, kept in shapes (anything else is
+// masked), and never mistaken for a symbol (lib/trades/cash-rows.ts).
+export const BROKERAGE_WORDS = new Set(
   (
     "buy bought sell sold sale purchase redemption redeemed reinvest reinvestment reinvested drip dividend div dividends " +
     "interest int fee fees commission advisory management charge transfer transferred deposit withdrawal withdraw " +
@@ -79,7 +80,7 @@ export function descriptionShape(text: string): string {
     .filter(Boolean);
   const out: string[] = [];
   for (const t of tokens) {
-    const word = t === "#" || t === "$#" ? t : VOCAB.has(t.toLowerCase()) ? t.toUpperCase() : "…";
+    const word = t === "#" || t === "$#" ? t : BROKERAGE_WORDS.has(t.toLowerCase()) ? t.toUpperCase() : "…";
     if (word === "…" && out[out.length - 1] === "…") continue;
     out.push(word);
   }
@@ -90,7 +91,7 @@ export function descriptionShape(text: string): string {
 // brokerage word; and a number that could be a quantity (has decimals, or
 // sits next to "shares"/"@"). Both are rough on purpose: the question is
 // only whether rows ever carry a symbol or quantity.
-const looksLikeSymbol = (text: string) => text.split(/[\s/:;,()]+/).some((t) => /^[A-Z]{1,5}(\.[A-Z])?$/.test(t) && !VOCAB.has(t.toLowerCase()));
+const looksLikeSymbol = (text: string) => text.split(/[\s/:;,()]+/).some((t) => /^[A-Z]{1,5}(\.[A-Z])?$/.test(t) && !BROKERAGE_WORDS.has(t.toLowerCase()));
 const looksLikeQuantity = (text: string) => /\d+\.\d{3,}|\d[\d,.]*\s*(shares?|sh|units?)\b|@\s*\$?\d/i.test(text);
 
 const daysBetween = (a: string, b: string) => Math.round((Date.parse(b) - Date.parse(a)) / 86_400_000);

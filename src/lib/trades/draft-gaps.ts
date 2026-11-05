@@ -1,4 +1,5 @@
 import type { Db } from "@/db/types";
+import { planCashRows } from "@/lib/trades/cash-plan";
 import { hasWork, planTradeGaps } from "@/lib/trades/plan";
 import { execute } from "@/operations/runtime";
 
@@ -21,4 +22,20 @@ export async function draftTradeGaps(db: Db): Promise<number> {
     reason: drafts ? `Drafted ${drafts} ${drafts === 1 ? "trade" : "trades"} from what the sync reports` : "Recorded where trade drafting starts",
   });
   return result.status === "applied" ? (result.output as { drafted: number }).drafted : 0;
+}
+
+/**
+ * Then: attach the cash rows that certainly belong to a draft (#321), as
+ * one command by the matcher, only when there are some. Returns how many.
+ */
+export async function attachCashRows(db: Db): Promise<number> {
+  const { attach } = await planCashRows(db);
+  if (!attach.length) return 0;
+  const result = await execute(db, {
+    operation: "trades.matchCash",
+    input: {},
+    actor: "matcher",
+    reason: `Attached ${attach.length} cash ${attach.length === 1 ? "row" : "rows"} to draft trades`,
+  });
+  return result.status === "applied" ? (result.output as { attached: number }).attached : 0;
 }
