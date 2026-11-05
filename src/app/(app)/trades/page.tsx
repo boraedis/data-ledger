@@ -8,6 +8,7 @@ import { recognize } from "@/lib/trades/cash-rows";
 import { hintQuantities, suggestionsFor } from "@/lib/trades/suggest-load";
 import { read } from "@/operations/runtime";
 import { listTradesRead } from "@/operations/trades";
+import { listManualPositions } from "@/operations/holdings";
 import { AddTrade, type AddTradeFill, type TradeAccount } from "./add-trade";
 import { CashHints } from "./cash-hints";
 import { DraftCard } from "./draft-card";
@@ -66,10 +67,12 @@ export default async function TradesPage(props: PageProps<"/trades">) {
   const attached = new Map(
     attachedRows.map((r) => [r.id, view({ id: r.id, accountId: r.accountId, postedOn: r.postedOn, amountCents: r.amountCents, text: [r.description, r.payee, r.memo].filter(Boolean).join(" ") })]),
   );
-  const [suggested, quantities] = await Promise.all([
+  const [suggested, quantities, positions] = await Promise.all([
     suggestionsFor(db, drafts),
     hintQuantities(db, cashPlan.hints),
+    listManualPositions(db),
   ]);
+  const held = Object.fromEntries(positions.map((p) => [`${p.accountId}:${p.symbol.toUpperCase()}`, p.quantity]));
   const hints = cashPlan.hints
     .filter((h) => !accountId || h.accountId === accountId)
     .map((h) => {
@@ -138,7 +141,7 @@ export default async function TradesPage(props: PageProps<"/trades">) {
         <h2 id="add-heading" className="text-lg font-medium">
           Add a trade
         </h2>
-        <AddTrade key={JSON.stringify(fill)} accounts={tradeAccounts} fill={fill} />
+        <AddTrade key={JSON.stringify(fill)} accounts={tradeAccounts} fill={fill} held={held} />
       </section>
 
       <section className="space-y-3" aria-labelledby="all">

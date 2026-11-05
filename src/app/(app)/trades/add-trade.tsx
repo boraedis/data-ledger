@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
+import { holdingsOn } from "@/lib/holdings/replay";
 import { addTrade } from "./actions";
 import { localToday, positive, select, SIDES, validSymbol } from "./fields";
 
@@ -16,7 +17,9 @@ export type TradeAccount = { id: string; name: string; manual: boolean };
 
 export type AddTradeFill = { account?: string; symbol?: string; side?: TradeSide; on?: string; quantity?: string; price?: string; cash?: string };
 
-export function AddTrade({ accounts, fill = {} }: { accounts: TradeAccount[]; fill?: AddTradeFill }) {
+// held: a manual account's quantities today, by "accountId:SYMBOL", so a
+// back-dated buy or sell says what it does to today's (#340).
+export function AddTrade({ accounts, fill = {}, held = {} }: { accounts: TradeAccount[]; fill?: AddTradeFill; held?: Record<string, string> }) {
   const { account: initialAccount, symbol: initialSymbol } = fill;
   const [accountId, setAccountId] = useState(initialAccount && accounts.some((a) => a.id === initialAccount) ? initialAccount : (accounts[0]?.id ?? ""));
   const [on, setOn] = useState(fill.on ?? localToday());
@@ -31,6 +34,16 @@ export function AddTrade({ accounts, fill = {} }: { accounts: TradeAccount[]; fi
   const [done, setDone] = useState(false);
   const [pending, startTransition] = useTransition();
   const account = accounts.find((a) => a.id === accountId);
+  // In a manual account, its positions are its trades: say what this one does to today's quantity.
+  const now = account?.manual && symbol.trim() ? (held[`${accountId}:${symbol.trim().toUpperCase()}`] ?? "0") : null;
+  const q = positive(quantity);
+  const after =
+    now !== null && q
+      ? (holdingsOn([
+          { on: "1970-01-01", symbol: "x", side: "buy", quantity: now === "0" ? "0" : now },
+          { on: "1970-01-02", symbol: "x", side, quantity: q },
+        ]).get("x") ?? "0")
+      : null;
 
   if (!accounts.length) return <p className="text-sm text-muted-foreground">No account takes trades yet: a brokerage or retirement account, or a manual asset account.</p>;
 
@@ -88,6 +101,13 @@ export function AddTrade({ accounts, fill = {} }: { accounts: TradeAccount[]; fi
           Add trade
         </Button>
       </div>
+      {after !== null ? (
+        <p className="text-xs">
+          {after.startsWith("-")
+            ? `That's more ${symbol.trim().toUpperCase()} than this account holds (${now}).`
+            : `${symbol.trim().toUpperCase()} held today: ${now} → ${after}${on < localToday() ? `, from ${on} on` : ""}.`}
+        </p>
+      ) : null}
       <p className="text-xs text-muted-foreground">
         {account?.manual
           ? "In a manual account, each position is what its trades add up to."

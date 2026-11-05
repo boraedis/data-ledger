@@ -1,7 +1,8 @@
-import { and, desc, eq, min, sql } from "drizzle-orm";
+import { and, desc, eq, min, ne, sql } from "drizzle-orm";
 import { accounts, commandLog, dailyPrices, trades } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { REFRESH_MINUTES } from "@/lib/prices/config";
+import { OWNER_PRICE_SOURCE } from "@/lib/prices/owner";
 import { manualClasses } from "@/lib/prices/rebuilt";
 import { defaultSources } from "@/lib/prices/refresh";
 import { isConfirmed } from "@/lib/trades/confirmed";
@@ -65,7 +66,8 @@ export async function backfillPricesIfDue(db: Db, { now = new Date(), sources = 
     const [{ earliest }] = await db
       .select({ earliest: min(dailyPrices.on) })
       .from(dailyPrices)
-      .where(and(eq(dailyPrices.assetClass, assetClass), eq(dailyPrices.symbol, symbol)));
+      // The owner's own prices (#340) don't count: they stand in for a feed that had none.
+      .where(and(eq(dailyPrices.assetClass, assetClass), eq(dailyPrices.symbol, symbol), ne(dailyPrices.source, OWNER_PRICE_SOURCE)));
     const to = earliest ? (dayBefore(earliest) < end ? dayBefore(earliest) : end) : end;
     if (first > to) continue;
     try {

@@ -8,7 +8,7 @@ import { normalizeQuantity } from "@/lib/holdings/value";
 import { formatCents, parseAmountCents } from "@/lib/money";
 import { priceTime } from "@/lib/prices/describe";
 import type { ManualPosition } from "@/operations/holdings";
-import { addPosition, removePosition, setPositionAssetClass, setPositionPrice } from "./actions";
+import { addPosition, removePastPrice, removePosition, setHeldSince, setPastPrice, setPositionAssetClass, setPositionPrice } from "./actions";
 
 // Positions kept by hand in a manual account (#231): crypto, say, until a
 // connection covers it. Each is a symbol, how much is held and a price per
@@ -141,7 +141,8 @@ function PositionRow({ position: p, accountId }: { position: PositionWithMarket;
         <MarketPrice symbol={p.symbol} market={p.market} />
         {p.market ? " · " : ""}
         Your price, as of {p.priceOn}
-        {p.costBasisCents !== null ? ` · cost ${formatCents(p.costBasisCents)}` : ""} ·{" "}
+        {p.costBasisCents !== null ? ` · cost ${formatCents(p.costBasisCents)}` : ""}
+        {p.heldSince ? ` · held since ${p.heldSince}` : ""} ·{" "}
         <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => setEditing((v) => !v)}>
           {editing ? "Cancel" : "Update"}
         </button>{" "}
@@ -171,8 +172,82 @@ function PositionRow({ position: p, accountId }: { position: PositionWithMarket;
           </Button>
         </form>
       ) : null}
+      {editing ? <PastControls position={p} /> : null}
       {error ? <p className="text-xs text-destructive">{error}</p> : null}
     </li>
+  );
+}
+
+// The position's past (#340): since when it's been held, and, where no
+// market feed prices it, prices of your own on past days. Its history is
+// valued from the latest of those on or before each day; days before the
+// first aren't drawn, since carrying a price back would invent value.
+function PastControls({ position: p }: { position: PositionWithMarket }) {
+  const [heldSince, setHeldSinceValue] = useState(p.heldSince ?? localToday());
+  const [on, setOn] = useState("");
+  const [price, setPrice] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, startTransition] = useTransition();
+  const symbol = p.symbol.toUpperCase();
+  const unpriced = !p.market?.price;
+
+  const moveStart = () =>
+    startTransition(async () => setError(heldSince === p.heldSince ? null : ((await setHeldSince(p.id, symbol, heldSince))?.error ?? null)));
+  const addPrice = () => {
+    const u = normalizeQuantity(price);
+    if (!on) return setError("Pick the day the price is from");
+    if (!u || !/[1-9]/.test(u)) return setError("Price should be a positive number like 61,234.50");
+    startTransition(async () => {
+      const result = await setPastPrice(p.id, symbol, on, u);
+      setError(result?.error ?? null);
+      if (!result?.error) {
+        setOn("");
+        setPrice("");
+      }
+    });
+  };
+
+  return (
+    <div className="space-y-2 rounded-md bg-muted/40 p-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted-foreground">Held since</span>
+        <Input aria-label={`${symbol} held since`} type="date" value={heldSince} max={localToday()} onChange={(e) => setHeldSinceValue(e.target.value)} className="h-8 w-40" />
+        <Button type="button" size="sm" variant="outline" onClick={moveStart} disabled={pending || heldSince === p.heldSince}>
+          Change
+        </Button>
+        <span className="text-muted-foreground">Its history starts here. To change how much was held before, add a dated buy or sell.</span>
+      </div>
+      {unpriced ? (
+        <div className="space-y-1">
+          <p className="text-muted-foreground">No market price covers {symbol}, so its history uses your prices: each day takes the latest one on or before it.</p>
+          {p.pastPrices.length ? (
+            <ul className="flex flex-wrap gap-x-3 gap-y-1">
+              {p.pastPrices.map((x) => (
+                <li key={x.on} className="tabular-nums">
+                  {x.on}: {formatPrice(x.price)}{" "}
+                  <button
+                    type="button"
+                    className="text-muted-foreground underline underline-offset-2 hover:text-destructive"
+                    onClick={() => startTransition(async () => setError((await removePastPrice(p.id, symbol, x.on))?.error ?? null))}
+                    disabled={pending}
+                  >
+                    remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
+            <Input aria-label="Day of the price" type="date" value={on} max={localToday()} onChange={(e) => setOn(e.target.value)} className="h-8 w-40" />
+            <Input aria-label="Price on that day" value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" placeholder="Price" className="h-8 w-32" />
+            <Button type="button" size="sm" variant="outline" onClick={addPrice} disabled={pending}>
+              Add a past price
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {error ? <p className="text-destructive">{error}</p> : null}
+    </div>
   );
 }
 
@@ -181,6 +256,8 @@ function AddPosition({ account, onDone }: { account: { id: string; name: string 
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
   const [priceOn, setPriceOn] = useState(localToday);
+  // Since when it's been held (#340): its history starts there.
+  const [heldSince, setHeldSinceValue] = useState(localToday);
   const [cost, setCost] = useState("");
   const [kind, setKind] = useState<AssetClass>("crypto");
   const [error, setError] = useState<string | null>(null);
@@ -196,7 +273,7 @@ function AddPosition({ account, onDone }: { account: { id: string; name: string 
     if (!u || !/[1-9]/.test(u)) return setError("Price should be a positive number like 61,234.50");
     if (costBasisCents === undefined) return setError("Total cost should be an amount like 1,200.00, or left empty");
     startTransition(async () => {
-      const result = await addPosition({ accountId: account.id, symbol: symbol.trim(), quantity: q, unitPrice: u, priceOn, costBasisCents, assetClass: kind }, account.name);
+      const result = await addPosition({ accountId: account.id, symbol: symbol.trim(), quantity: q, unitPrice: u, priceOn, costBasisCents, assetClass: kind, heldSince }, account.name);
       if (result?.error) return setError(result.error);
       onDone();
     });
@@ -234,6 +311,10 @@ function AddPosition({ account, onDone }: { account: { id: string; name: string 
               </option>
             ))}
           </select>
+        </label>
+        <label className="space-y-1">
+          <span className="text-xs text-muted-foreground">Held since</span>
+          <Input type="date" value={heldSince} max={localToday()} onChange={(e) => setHeldSinceValue(e.target.value)} />
         </label>
         <label className="space-y-1">
           <span className="text-xs text-muted-foreground">Total cost (optional)</span>

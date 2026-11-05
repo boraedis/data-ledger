@@ -1,9 +1,12 @@
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, ne, sql } from "drizzle-orm";
 import { z } from "zod";
-import { manualPositions, trades } from "@/db/schema";
+import { dailyPrices, manualPositions, quotes, trades } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { isLiability } from "@/lib/net-worth";
 import { normalizeQuantity, positionValueCents } from "@/lib/holdings/value";
+import { firstShortfall } from "@/lib/holdings/replay";
+import { OWNER_PRICE_SOURCE } from "@/lib/prices/owner";
+import { confirmedTrades } from "@/lib/trades/confirmed";
 import { defineWrite } from "@/operations/define";
 import { manualAccount, recordManualValue, valueDate } from "@/operations/accounts";
 import { NotFoundError, type WriteContext } from "@/operations/tracked";
@@ -25,6 +28,12 @@ import { NotFoundError, type WriteContext } from "@/operations/tracked";
 // included. How much is held changes only by a trade (./trades.ts, recorded
 // on the Trades page, #319): there was a second way, setting the quantity
 // here, and it went so the two couldn't drift apart.
+//
+// The past (#340): a position can be held since a past day, which dates its
+// opening trade, so the history rebuilt from trades (#232) starts there. A
+// position the market price feed doesn't cover can take prices of the
+// owner's own on past days (daily_prices, source "owner"), so its history
+// isn't flat at today's price or missing.
 
 const today = () => new Date().toISOString().slice(0, 10);
 
@@ -91,11 +100,14 @@ export const addManualPosition = defineWrite({
     priceOn: valueDate.optional(),
     costBasisCents: costBasis,
     assetClass: assetClassInput.default("crypto"),
+    // The day it's been held since (#340): its opening trade's date. Today when left out.
+    heldSince: valueDate.optional(),
     today: valueDate.optional(),
   }),
   apply: async (ctx, input) => {
     await positionsAccount(ctx.db, input.accountId);
     const on = input.today ?? today();
+    if (input.heldSince && input.heldSince > on) throw new Error("A position can't be held since a day after today");
     const [existing] = await ctx.db
       .select({ id: manualPositions.id })
       .from(manualPositions)
@@ -111,7 +123,9 @@ export const addManualPosition = defineWrite({
       assetClass: input.assetClass,
     });
     // The opening trade (#247), so the position is what its trades add up to.
-    await ctx.insert(trades, { accountId: input.accountId, on, symbol: input.symbol, side: "buy", quantity: input.quantity, price: input.unitPrice, source: "opening" });
+    await ctx.insert(trades, { accountId: input.accountId, on: input.heldSince ?? on, symbol: input.symbol, side: "buy", quantity: input.quantity, price: input.unitPrice, source: "opening" });
+    // The owner's price is a dated price too, where nothing else prices it.
+    await recordOwnerPrice(ctx, input.assetClass, input.symbol, input.priceOn ?? on, input.unitPrice);
     await revalue(ctx, input.accountId, on);
     return { id: row.id };
   },
@@ -126,7 +140,101 @@ export const setManualPrice = defineWrite({
     const row = await position(ctx.db, positionId);
     const on = day ?? today();
     await ctx.update(manualPositions, positionId, { unitPrice, priceOn: priceOn ?? on });
+    await recordOwnerPrice(ctx, row.assetClass, row.symbol.toUpperCase(), priceOn ?? on, unitPrice);
     await revalue(ctx, row.accountId, on);
+    return { id: positionId };
+  },
+});
+
+/** Whether the market price feed prices this symbol: a quote with a price, or a close it recorded. */
+async function marketCovers(db: Db, assetClass: "crypto" | "equity", symbol: string): Promise<boolean> {
+  const [quoted] = await db
+    .select({ id: quotes.id })
+    .from(quotes)
+    .where(and(eq(quotes.assetClass, assetClass), eq(quotes.symbol, symbol), isNotNull(quotes.price)))
+    .limit(1);
+  if (quoted) return true;
+  const [closed] = await db
+    .select({ id: dailyPrices.id })
+    .from(dailyPrices)
+    .where(and(eq(dailyPrices.assetClass, assetClass), eq(dailyPrices.symbol, symbol), ne(dailyPrices.source, OWNER_PRICE_SOURCE)))
+    .limit(1);
+  return Boolean(closed);
+}
+
+/**
+ * The owner's price for a day, kept for history (#340), but only where the
+ * market feed doesn't price the symbol: its closes are what history uses,
+ * and an owner's price early on would stop it backfilling earlier ones.
+ */
+async function recordOwnerPrice(ctx: WriteContext, assetClass: "crypto" | "equity", symbol: string, on: string, price: string) {
+  if (await marketCovers(ctx.db, assetClass, symbol)) return false;
+  const [existing] = await ctx.db
+    .select()
+    .from(dailyPrices)
+    .where(and(eq(dailyPrices.assetClass, assetClass), eq(dailyPrices.symbol, symbol), eq(dailyPrices.on, on)));
+  if (existing) {
+    if (existing.price !== price || existing.source !== OWNER_PRICE_SOURCE) await ctx.update(dailyPrices, existing.id, { price, source: OWNER_PRICE_SOURCE });
+  } else await ctx.insert(dailyPrices, { assetClass, symbol, on, price, source: OWNER_PRICE_SOURCE });
+  return true;
+}
+
+/** A position's opening trade: the one marked as such, else (from before #320) its earliest buy. */
+async function openingTrade(db: Db, accountId: string, symbol: string) {
+  const own = await confirmedTrades(db, and(eq(trades.accountId, accountId), eq(trades.symbol, symbol)));
+  const buys = own.filter((t) => t.side === "buy" || t.side === "transfer_in").sort((a, b) => a.on.localeCompare(b.on) || a.createdAt.getTime() - b.createdAt.getTime());
+  return { opening: own.find((t) => t.source === "opening") ?? buys[0] ?? null, all: own };
+}
+
+export const setHeldSince = defineWrite({
+  name: "holdings.setHeldSince",
+  description:
+    "Say since when a hand-entered position has been held: moves its opening trade to that day, so its history starts there. " +
+    "Its quantity today doesn't change.",
+  allowedActors: ["user"],
+  input: z.object({ positionId: z.uuid(), heldSince: valueDate }),
+  apply: async (ctx, { positionId, heldSince }) => {
+    const row = await position(ctx.db, positionId);
+    const symbol = row.symbol.toUpperCase();
+    const { opening, all } = await openingTrade(ctx.db, row.accountId, symbol);
+    if (!opening) throw new NotFoundError(`${symbol} has no opening trade to date`);
+    if (opening.on === heldSince) throw new Error(`It's already held since ${heldSince}`);
+    // Later than a sale that it paid for would sell what wasn't held yet.
+    const short = firstShortfall(all.map((t) => (t.id === opening.id ? { ...t, on: heldSince } : t)));
+    if (short) throw new Error(`That's after a sale on ${short.on}, which needs it held by then; pick ${short.on} or earlier`);
+    await ctx.update(trades, opening.id, { on: heldSince });
+    return { id: positionId };
+  },
+});
+
+export const setPastPrice = defineWrite({
+  name: "holdings.setPastPrice",
+  description:
+    "Give a hand-entered position the owner's price on a past day, for a symbol the market price feed doesn't cover, so its " +
+    "history is valued from it until the next one. A second price for the same day replaces the first.",
+  allowedActors: ["user"],
+  input: z.object({ positionId: z.uuid(), on: valueDate, price: decimal("Price") }),
+  apply: async (ctx, { positionId, on, price }) => {
+    const row = await position(ctx.db, positionId);
+    const recorded = await recordOwnerPrice(ctx, row.assetClass, row.symbol.toUpperCase(), on, price);
+    if (!recorded) throw new Error(`${row.symbol.toUpperCase()} has market prices; its history uses those`);
+    return { id: positionId };
+  },
+});
+
+export const removePastPrice = defineWrite({
+  name: "holdings.removePastPrice",
+  description: "Remove the owner's price for a hand-entered position on a past day.",
+  allowedActors: ["user"],
+  input: z.object({ positionId: z.uuid(), on: z.iso.date() }),
+  apply: async (ctx, { positionId, on }) => {
+    const row = await position(ctx.db, positionId);
+    const [existing] = await ctx.db
+      .select({ id: dailyPrices.id })
+      .from(dailyPrices)
+      .where(and(eq(dailyPrices.assetClass, row.assetClass), eq(dailyPrices.symbol, row.symbol.toUpperCase()), eq(dailyPrices.on, on), eq(dailyPrices.source, OWNER_PRICE_SOURCE)));
+    if (!existing) throw new NotFoundError(`No price of yours for ${on}`);
+    await ctx.remove(dailyPrices, existing.id);
     return { id: positionId };
   },
 });
@@ -172,20 +280,41 @@ export type ManualPosition = {
   costBasisCents: number | null;
   assetClass: "crypto" | "equity";
   valueCents: number;
+  // Its opening trade's day (#340), or null without one.
+  heldSince: string | null;
+  // The owner's own prices on past days, oldest first, where the market feed doesn't price it.
+  pastPrices: { on: string; price: string }[];
 };
 
 /** Every hand-entered position with its value, for the pages. Not an operation: see above. */
 export async function listManualPositions(db: Db): Promise<ManualPosition[]> {
   const rows = await db.select().from(manualPositions).orderBy(manualPositions.symbol);
-  return rows.map((p) => ({
-    id: p.id,
-    accountId: p.accountId,
-    symbol: p.symbol,
-    quantity: p.quantity,
-    unitPrice: p.unitPrice,
-    priceOn: p.priceOn,
-    costBasisCents: p.costBasisCents,
-    assetClass: p.assetClass,
-    valueCents: positionValueCents(p.quantity, p.unitPrice),
-  }));
+  if (!rows.length) return [];
+  const symbols = [...new Set(rows.map((p) => p.symbol.toUpperCase()))];
+  const [held, owned] = await Promise.all([
+    confirmedTrades(db, inArray(trades.accountId, [...new Set(rows.map((p) => p.accountId))])),
+    db
+      .select({ assetClass: dailyPrices.assetClass, symbol: dailyPrices.symbol, on: dailyPrices.on, price: dailyPrices.price })
+      .from(dailyPrices)
+      .where(and(eq(dailyPrices.source, OWNER_PRICE_SOURCE), inArray(dailyPrices.symbol, symbols)))
+      .orderBy(dailyPrices.on),
+  ]);
+  return rows.map((p) => {
+    const symbol = p.symbol.toUpperCase();
+    const own = held.filter((t) => t.accountId === p.accountId && t.symbol === symbol);
+    const opening = own.find((t) => t.source === "opening") ?? own.filter((t) => t.side === "buy" || t.side === "transfer_in").sort((a, b) => a.on.localeCompare(b.on))[0];
+    return {
+      id: p.id,
+      accountId: p.accountId,
+      symbol: p.symbol,
+      quantity: p.quantity,
+      unitPrice: p.unitPrice,
+      priceOn: p.priceOn,
+      costBasisCents: p.costBasisCents,
+      assetClass: p.assetClass,
+      valueCents: positionValueCents(p.quantity, p.unitPrice),
+      heldSince: opening?.on ?? null,
+      pastPrices: owned.filter((o) => o.assetClass === p.assetClass && o.symbol === symbol).map((o) => ({ on: o.on, price: o.price })),
+    };
+  });
 }
