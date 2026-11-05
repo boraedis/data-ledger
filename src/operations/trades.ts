@@ -1,10 +1,12 @@
-import { and, count, desc, eq, gte, lte, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, manualPositions, trades } from "@/db/schema";
+import { accounts, commandLog, manualPositions, tradeHintDismissals, trades, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { firstShortfall, holdingsOn, inOrder, SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
 import { confirmedTrades } from "@/lib/trades/confirmed";
+import { planCashRows } from "@/lib/trades/cash-plan";
+import { priceFrom, recognize } from "@/lib/trades/cash-rows";
 import { planTradeGaps } from "@/lib/trades/plan";
 import { valueDate } from "@/operations/accounts";
 import { defineRead, defineWrite } from "@/operations/define";
@@ -95,7 +97,7 @@ export const addTrade = defineWrite({
   description:
     "Record a trade in an investment account: the date, a symbol, buy, sell, transfer in or transfer out, the quantity " +
     "and optionally the price per unit, as exact decimals. Recorded as confirmed. In a manual account, its positions follow its trades; " +
-    "assetClass (crypto by default, or equity) is the kind of asset for a symbol new to the account.",
+    "assetClass (crypto by default, or equity) is the kind of asset for a symbol new to the account. transactionId links the cash row it settled through.",
   allowedActors: ["user"],
   input: z.object({
     accountId: z.uuid(),
@@ -105,11 +107,22 @@ export const addTrade = defineWrite({
     quantity: decimal("Quantity"),
     price: decimal("Price").nullable().optional(),
     assetClass: assetClassInput.optional(),
+    // The cash row it settled through, when the owner records one from a hint (#321).
+    transactionId: z.uuid().optional(),
     today: valueDate.optional(),
   }),
   apply: async (ctx, input) => {
     const { drivesPositions } = await tradeAccount(ctx.db, input.accountId);
-    const row = await ctx.insert(trades, { accountId: input.accountId, on: input.on, symbol: input.symbol, side: input.side, quantity: input.quantity, price: input.price ?? null });
+    if (input.transactionId) await cashRowFor(ctx.db, input.accountId, input.transactionId);
+    const row = await ctx.insert(trades, {
+      accountId: input.accountId,
+      on: input.on,
+      symbol: input.symbol,
+      side: input.side,
+      quantity: input.quantity,
+      price: input.price ?? null,
+      transactionId: input.transactionId ?? null,
+    });
     if (drivesPositions) await followTrades(ctx, input.accountId, [input.symbol], input.today ?? today(), input.assetClass);
     return { id: row.id };
   },
@@ -207,6 +220,104 @@ export const draftGaps = defineWrite({
       }
     }
     return { opening, drafted };
+  },
+});
+
+/** A cash row in the account that no trade has yet, or an error saying why not. */
+async function cashRowFor(db: Db, accountId: string, transactionId: string) {
+  const [row] = await db.select().from(transactions).where(eq(transactions.id, transactionId));
+  if (!row) throw new NotFoundError("Transaction not found");
+  if (row.accountId !== accountId) throw new Error("That cash row is in another account");
+  const [taken] = await db.select({ id: trades.id }).from(trades).where(eq(trades.transactionId, transactionId));
+  if (taken) throw new Error("That cash row is already a trade's");
+  return row;
+}
+
+/**
+ * A cash row onto a draft (#321): its day, and the price its amount gives.
+ * The day stays inside the draft's range (a row can post a few days after
+ * the trade, and a draft dated after the snapshot it came from would leave
+ * its gap open and be drafted again).
+ */
+async function attachRow(ctx: WriteContext, tradeId: string, transactionId: string) {
+  const draft = await trade(ctx.db, tradeId);
+  if (draft.status !== "draft") throw new Error("Only a draft takes a cash row");
+  if (draft.transactionId) throw new Error("That draft already has its cash row");
+  const row = await cashRowFor(ctx.db, draft.accountId, transactionId);
+  const seen = recognize({ id: row.id, accountId: row.accountId, postedOn: row.postedOn, amountCents: row.amountCents, text: [row.description, row.payee, row.memo].filter(Boolean).join(" ") });
+  if (!seen || seen.side !== (draft.side === "sell" || draft.side === "transfer_out" ? "sell" : "buy")) throw new Error("That cash row isn't a " + (draft.side === "sell" ? "sale" : "buy"));
+  const earliest = draft.onFrom ?? draft.on;
+  const on = row.postedOn < earliest ? earliest : row.postedOn > draft.on ? draft.on : row.postedOn;
+  await ctx.update(trades, tradeId, {
+    transactionId,
+    on,
+    onFrom: null,
+    price: priceFrom(row.amountCents, draft.quantity),
+    ...(draft.symbol || !seen.symbol ? {} : { symbol: seen.symbol }),
+  });
+}
+
+export const attachCash = defineWrite({
+  name: "trades.attachCash",
+  description: "Attach a buy or sell cash row in an investment account to the draft trade it settled, giving the draft its day and price.",
+  allowedActors: ["matcher", "user"],
+  input: z.object({ tradeId: z.uuid(), transactionId: z.uuid() }),
+  apply: async (ctx, { tradeId, transactionId }) => {
+    await attachRow(ctx, tradeId, transactionId);
+    return { id: tradeId };
+  },
+});
+
+export const matchCash = defineWrite({
+  name: "trades.matchCash",
+  description: "After a sync: attach each buy or sell cash row to the one draft it fits, where each is the other's only fit. For the matcher only.",
+  allowedActors: ["matcher"],
+  input: z.object({}),
+  apply: async (ctx) => {
+    const { attach } = await planCashRows(ctx.db);
+    for (const pair of attach) await attachRow(ctx, pair.tradeId, pair.transactionId);
+    return { attached: attach.length };
+  },
+});
+
+export const detachCash = defineWrite({
+  name: "trades.detachCash",
+  description: "Take a cash row off a draft trade, putting back the day, range and price the draft had before it.",
+  allowedActors: ["user"],
+  input: z.object({ tradeId: z.uuid() }),
+  apply: async (ctx, { tradeId }) => {
+    const draft = await trade(ctx.db, tradeId);
+    if (draft.status !== "draft") throw new Error("Only a draft's cash row can be taken off; edit a confirmed trade instead");
+    if (!draft.transactionId) throw new Error("That draft has no cash row");
+    // What it was before the cash row: from the command that attached it.
+    const attaching = await ctx.db
+      .select({ changes: commandLog.changes })
+      .from(commandLog)
+      .where(and(inArray(commandLog.operation, ["trades.attachCash", "trades.matchCash"]), eq(commandLog.status, "applied")))
+      .orderBy(desc(commandLog.createdAt));
+    const before = attaching
+      .flatMap((c) => c.changes)
+      .find((c) => c.table === "trades" && c.id === tradeId && c.before && (c.after as Record<string, unknown> | null)?.transaction_id === draft.transactionId)?.before as
+      | { on: string; on_from: string | null; price: string | null; symbol: string | null }
+      | undefined;
+    await ctx.update(trades, tradeId, {
+      transactionId: null,
+      ...(before ? { on: before.on, onFrom: before.on_from, price: before.price, symbol: before.symbol } : { price: null }),
+    });
+    return { id: tradeId };
+  },
+});
+
+export const dismissHint = defineWrite({
+  name: "trades.dismissHint",
+  description: "Hide a buy or sell cash row from the Trades page's hints: it isn't a trade to record.",
+  allowedActors: ["user"],
+  input: z.object({ transactionId: z.uuid() }),
+  apply: async (ctx, { transactionId }) => {
+    const [row] = await ctx.db.select({ id: transactions.id }).from(transactions).where(eq(transactions.id, transactionId));
+    if (!row) throw new NotFoundError("Transaction not found");
+    const added = await ctx.insert(tradeHintDismissals, { transactionId });
+    return { id: added.id };
   },
 });
 

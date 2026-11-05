@@ -276,6 +276,10 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     ) : t.transferUnmatched ? (
                       <span className="rounded bg-warning/15 px-1.5 text-warning">Transfer, other half not found</span>
                     ) : null}
+                    {/* A brokerage cash row that settled a trade (#321): it's on the Trades page, not spending. */}
+                    {t.trade ? (
+                      <span className="rounded border border-dashed px-1.5 text-muted-foreground">{t.trade === "draft" ? "Trade, draft" : "Trade"}</span>
+                    ) : null}
                     {t.payStub ? (
                       <span className="rounded border border-dashed px-1.5 text-muted-foreground">
                         Pay stub {t.payStub.payDate} · {t.payStub.employer}

@@ -330,6 +330,13 @@
       "when": 1793837935040,
       "tag": "0046_trades_baseline",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1793838844462,
+      "tag": "0047_trade_hint_dismissals",
+      "breakpoints": true
     }
   ]
 }

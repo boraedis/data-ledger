@@ -400,6 +400,17 @@ export const trades = pgTable(
   ],
 );
 
+// Buy and sell cash rows the owner said aren't a trade to record (#321):
+// hidden from the Trades page's hints. Undoable like everything else.
+export const tradeHintDismissals = pgTable("trade_hint_dismissals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  transactionId: uuid("transaction_id")
+    .notNull()
+    .unique()
+    .references(() => transactions.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 // Market prices (#229): the latest quote per symbol, and one price per
 // symbol per day for history (#232). Public prices, refreshed at most once
 // an hour when a page that shows values is opened, and by the nightly sync

@@ -1,12 +1,17 @@
 import Link from "next/link";
-import { accounts as accountsTable } from "@/db/schema";
+import { inArray } from "drizzle-orm";
+import { accounts as accountsTable, transactions } from "@/db/schema";
 import { getDb } from "@/lib/db";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
+import { planCashRows } from "@/lib/trades/cash-plan";
+import { recognize } from "@/lib/trades/cash-rows";
 import { read } from "@/operations/runtime";
 import { listTradesRead } from "@/operations/trades";
-import { AddTrade, type TradeAccount } from "./add-trade";
+import { AddTrade, type AddTradeFill, type TradeAccount } from "./add-trade";
+import { CashHints } from "./cash-hints";
 import { DraftCard } from "./draft-card";
 import { TradeItem } from "./trade-item";
+import type { CashRowView } from "./fields";
 
 // Trades (#319), in the Wealth section: every trade across accounts, with
 // the drafts that need the owner first. A draft is a trade inferred from what
@@ -40,10 +45,31 @@ export default async function TradesPage(props: PageProps<"/trades">) {
   const from = isDay(one(sp.from));
   const to = isDay(one(sp.to));
 
-  const [drafts, listed] = await Promise.all([
+  const [drafts, listed, cashPlan] = await Promise.all([
     read(db, listTradesRead, { status: "draft", accountId, symbol }),
     read(db, listTradesRead, { accountId, symbol, from, to, ...(status ? { status } : {}) }),
+    planCashRows(db),
   ]);
+  // The cash rows drafts already have (#321), to show with them.
+  const attachedIds = drafts.flatMap((d) => (d.transactionId ? [d.transactionId] : []));
+  const attachedRows = attachedIds.length ? await db.select().from(transactions).where(inArray(transactions.id, attachedIds)) : [];
+  const view = (r: { id: string; accountId: string; postedOn: string; amountCents: number; text: string }): CashRowView => {
+    const seen = recognize(r);
+    return { ...r, symbol: seen?.symbol ?? null, quantity: seen?.quantity ?? null, side: seen?.side ?? (r.amountCents < 0 ? "buy" : "sell") };
+  };
+  const attached = new Map(
+    attachedRows.map((r) => [r.id, view({ id: r.id, accountId: r.accountId, postedOn: r.postedOn, amountCents: r.amountCents, text: [r.description, r.payee, r.memo].filter(Boolean).join(" ") })]),
+  );
+  const hints = cashPlan.hints.filter((h) => !accountId || h.accountId === accountId).map(view);
+  const fill: AddTradeFill = {
+    account: accountId,
+    symbol,
+    side: (["buy", "sell", "transfer_in", "transfer_out"] as const).find((x) => x === one(sp.side)),
+    on: isDay(one(sp.on)),
+    quantity: one(sp.quantity)?.slice(0, 32),
+    price: one(sp.price)?.slice(0, 32),
+    cash: one(sp.cash)?.slice(0, 64),
+  };
   // Drafts have their own section above; the list is everything else unless asked for.
   const rows = status ? listed : listed.filter((t) => t.status !== "draft");
   const manual = new Set(tradeAccounts.filter((a) => a.manual).map((a) => a.id));
@@ -66,7 +92,14 @@ export default async function TradesPage(props: PageProps<"/trades">) {
         {drafts.length ? (
           <ul className="space-y-2">
             {drafts.map((t) => (
-              <DraftCard key={t.id} trade={t} accountName={nameOf.get(t.accountId) ?? "An account"} drivesPositions={manual.has(t.accountId)} />
+              <DraftCard
+                key={t.id}
+                trade={t}
+                accountName={nameOf.get(t.accountId) ?? "An account"}
+                drivesPositions={manual.has(t.accountId)}
+                cash={t.transactionId ? (attached.get(t.transactionId) ?? null) : null}
+                offers={(cashPlan.offers.get(t.id) ?? []).map(view)}
+              />
             ))}
           </ul>
         ) : (
@@ -74,11 +107,21 @@ export default async function TradesPage(props: PageProps<"/trades">) {
         )}
       </section>
 
+      {hints.length ? (
+        <section className="space-y-2" aria-labelledby="hints">
+          <h2 id="hints" className="text-lg font-medium">
+            Cash rows with no trade ({hints.length})
+          </h2>
+          <p className="text-sm text-muted-foreground">Buys and sells your brokerage reported, with no change in shares to go with them yet.</p>
+          <CashHints hints={hints} accountName={Object.fromEntries(nameOf)} />
+        </section>
+      ) : null}
+
       <section className="space-y-2" aria-labelledby="add-heading" id="add">
         <h2 id="add-heading" className="text-lg font-medium">
           Add a trade
         </h2>
-        <AddTrade accounts={tradeAccounts} account={accountId} symbol={symbol} />
+        <AddTrade key={JSON.stringify(fill)} accounts={tradeAccounts} fill={fill} />
       </section>
 
       <section className="space-y-3" aria-labelledby="all">

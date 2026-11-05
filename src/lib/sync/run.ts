@@ -5,7 +5,7 @@ import { connectorFor as defaultConnectorFor } from "@/lib/connectors";
 import { MAX_WINDOW_DAYS } from "@/lib/connectors/simplefin";
 import { ConnectorAuthError, type Connector } from "@/lib/connectors/types";
 import { backfillMerchantsIfNeeded, runCategorization } from "@/lib/categorize/pipeline";
-import { draftTradeGaps } from "@/lib/trades/draft-gaps";
+import { attachCashRows, draftTradeGaps } from "@/lib/trades/draft-gaps";
 import { execute } from "@/operations/runtime";
 
 // Runs one sync for one connection: checks the rate budget, fetches from
@@ -114,6 +114,8 @@ export async function syncConnection(
     // sync; the gaps are still there next time.
     try {
       await draftTradeGaps(db);
+      // And the cash rows that settled them (#321).
+      await attachCashRows(db);
     } catch (error) {
       console.error("Drafting trades after sync failed", error);
       messages.push({ code: "app.trades", message: "Drafting trades from your positions failed this time; it will try again on the next sync." });
