@@ -23,7 +23,13 @@ describe("investmentActivity", () => {
     ["ROLLOVER FROM PRIOR PLAN", "transfer"],
     ["DISTRIBUTION", "transfer"],
     ["JOURNAL ENTRY", "transfer"],
+    ["FUNDS TRANSFER FROM EXAMPLE BANK", "transfer"],
+    ["FUNDS RECEIVED", "transfer"],
+    ["WIRE FUNDS SENT", "transfer"],
     ["CORPORATE ACTION XYZ", "other"],
+    // A row that only names a fund isn't known to be a transfer (#337).
+    ["EXAMPLE INCOME FUND CL A 12 34 EXAMPLE INCOME FUND", "other"],
+    ["EXAMPLE FUNDS GROUP STATEMENT", "other"],
   ])("%s → %s", (description, activity) => {
     expect(investmentActivity(description)).toBe(activity);
   });

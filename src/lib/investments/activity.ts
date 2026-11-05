@@ -51,6 +51,10 @@ export const ACTIVITY_LABELS: Record<InvestmentActivity, string> = {
 //   income the holding paid out. A retirement "distribution" on its own is a
 //   withdrawal, so only the capital-gain wording matches here.
 // - Fees before buys and sells: "COMMISSION ON BUY" is a fee.
+// - "Funds" is money moving only next to a word that says so ("FUNDS
+//   RECEIVED"; "FUNDS TRANSFER" and "FUNDS DEPOSITED" already match). On its
+//   own it's usually a fund's name, and a row that only names a fund isn't
+//   known to be a transfer (#337): it's other.
 const PATTERNS: [InvestmentActivity, RegExp][] = [
   ["reinvestment", /reinvest|\bdrip\b/i],
   ["dividend", /dividend|\bdiv\b|cap(ital)?\.? ?gains?|\bltcg\b|\bstcg\b/i],
@@ -58,7 +62,7 @@ const PATTERNS: [InvestmentActivity, RegExp][] = [
   ["fee", /\bfees?\b|commission|advisory|management charge/i],
   ["sell", /\bsell\b|\bsold\b|\bsale\b|redemption|redeemed/i],
   ["buy", /\bbuy\b|\bbought\b|purchase/i],
-  ["transfer", /transfer|deposit|withdraw|contribution|\bach\b|journal|rollover|distribution|wire|\bfunds?\b/i],
+  ["transfer", /transfer|deposit|withdraw|contribution|\bach\b|journal|rollover|distribution|wire|\bfunds? (received|sent|disbursed)\b/i],
 ];
 
 export function investmentActivity(description: string): InvestmentActivity {
