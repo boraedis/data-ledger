@@ -4,6 +4,7 @@ import type { Db } from "@/db/types";
 import { positionValueCents } from "@/lib/holdings/value";
 import { holdingsOn, inOrder, type Trade } from "@/lib/holdings/replay";
 import type { AssetClass } from "@/lib/prices/source";
+import { isConfirmed, type ConfirmedTrade } from "@/lib/trades/confirmed";
 
 // History rebuilt from trades (#232): what each account's positions were
 // worth on each past day, as the quantity held that day (replaying its
@@ -126,14 +127,17 @@ export async function rebuiltHistory(db: Db, through: string): Promise<RebuiltHi
   const rows = await db
     .select({ trade: trades, source: accounts.source })
     .from(trades)
-    .innerJoin(accounts, eq(accounts.id, trades.accountId));
+    .innerJoin(accounts, eq(accounts.id, trades.accountId))
+    // Confirmed only (#318): a draft never rewrites the past.
+    .where(isConfirmed);
   if (!rows.length) return { days: [], accounts: [], total: [], completeFrom: null };
   const classes = await manualClasses(db);
   const byAccount = new Map<string, PricedTrade[]>();
   const wanted = new Map<AssetClass, Set<string>>([["crypto", new Set()], ["equity", new Set()]]);
   // Each trade's symbol is keyed by its class, so the same ticker as a coin and as a stock never share prices.
   const keyOf = (assetClass: AssetClass, symbol: string) => `${assetClass}:${symbol}`;
-  for (const { trade, source } of rows) {
+  for (const { trade: row, source } of rows) {
+    const trade = row as ConfirmedTrade;
     const assetClass: AssetClass = source === "manual" ? (classes.get(`${trade.accountId}:${trade.symbol}`) ?? "crypto") : "equity";
     byAccount.set(trade.accountId, [...(byAccount.get(trade.accountId) ?? []), { ...trade, accountId: trade.accountId, symbol: keyOf(assetClass, trade.symbol) }]);
     wanted.get(assetClass)!.add(trade.symbol);
