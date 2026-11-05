@@ -36,7 +36,8 @@ describe("hand-entered positions (#231)", () => {
     expect(await net()).toBe(2_010_000);
 
     const [zqc] = (await listManualPositions(db)).filter((p) => p.symbol === "ZQC");
-    await run("holdings.setQuantity", { positionId: zqc.id, quantity: "0.75" });
+    // How much is held changes by a trade (#319).
+    await run("trades.add", { accountId: wallet, on: day, symbol: "ZQC", side: "buy", quantity: "0.25" });
     expect(await net()).toBe(3_000_000 + 10_000);
     await run("holdings.setPrice", { positionId: zqc.id, unitPrice: "42000", priceOn: day });
     expect(await net()).toBe(3_150_000 + 10_000);
@@ -45,7 +46,7 @@ describe("hand-entered positions (#231)", () => {
   it("makes each add, change and remove one undoable command", async () => {
     const added = await add("ZQC", "0.5", "40000");
     const positionId = added.output.id;
-    const changed = await run("holdings.setQuantity", { positionId, quantity: "2" });
+    const changed = await run("trades.add", { accountId: wallet, on: day, symbol: "ZQC", side: "buy", quantity: "1.5" });
     const removed = await run("holdings.remove", { positionId });
     expect(await value()).toBe(0);
 

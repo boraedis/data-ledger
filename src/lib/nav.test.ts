@@ -14,6 +14,8 @@ describe("navigation", () => {
     expect(sectionFor("/owed")?.id).toBe("plan");
     expect(sectionFor("/pay")?.id).toBe("wealth");
     expect(pageFor("/pay/taxes")?.label).toBe("Taxes");
+    expect(pageFor("/trades")?.label).toBe("Trades");
+    expect(sectionFor("/trades")?.id).toBe("wealth");
     // Home matches only itself, not every path.
     expect(sectionFor("/settings")).toBeNull();
     expect(pageFor("/settings")?.label).toBe("Settings");

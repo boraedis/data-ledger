@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,7 +8,7 @@ import { normalizeQuantity } from "@/lib/holdings/value";
 import { formatCents, parseAmountCents } from "@/lib/money";
 import { priceTime } from "@/lib/prices/describe";
 import type { ManualPosition } from "@/operations/holdings";
-import { addPosition, removePosition, setPositionAssetClass, setPositionPrice, setPositionQuantity } from "./actions";
+import { addPosition, removePosition, setPositionAssetClass, setPositionPrice } from "./actions";
 
 // Positions kept by hand in a manual account (#231): crypto, say, until a
 // connection covers it. Each is a symbol, how much is held and a price per
@@ -78,7 +79,7 @@ export function Positions({ account, positions }: { account: { id: string; name:
       {positions.length ? (
         <ul className="divide-y rounded-md border">
           {positions.map((p) => (
-            <PositionRow key={p.id} position={p} />
+            <PositionRow key={p.id} position={p} accountId={account.id} />
           ))}
         </ul>
       ) : null}
@@ -93,9 +94,10 @@ export function Positions({ account, positions }: { account: { id: string; name:
   );
 }
 
-function PositionRow({ position: p }: { position: PositionWithMarket }) {
+// How much is held changes only by a trade, recorded on the Trades page
+// (#319): one way to do it, so a quantity is always what its trades add up to.
+function PositionRow({ position: p, accountId }: { position: PositionWithMarket; accountId: string }) {
   const [editing, setEditing] = useState(false);
-  const [quantity, setQuantity] = useState(p.quantity);
   const [price, setPrice] = useState(p.unitPrice);
   const [priceOn, setPriceOn] = useState(localToday);
   const [kind, setKind] = useState<AssetClass>(p.assetClass);
@@ -104,14 +106,11 @@ function PositionRow({ position: p }: { position: PositionWithMarket }) {
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
-    const q = normalizeQuantity(quantity);
     const u = normalizeQuantity(price);
-    if (!q || !/[1-9]/.test(q)) return setError("Quantity should be a positive number like 0.5");
     if (!u || !/[1-9]/.test(u)) return setError("Price should be a positive number like 61,234.50");
     startTransition(async () => {
-      // Separate operations, each logged and undoable on its own: how much is held, what it's worth, and what kind it is.
+      // Separate operations, each logged and undoable on its own: what it's worth, and what kind it is.
       const results = [
-        q !== p.quantity ? await setPositionQuantity(p.id, p.symbol, q) : undefined,
         u !== p.unitPrice || priceOn !== p.priceOn ? await setPositionPrice(p.id, p.symbol, u, priceOn) : undefined,
         kind !== p.assetClass ? await setPositionAssetClass(p.id, p.symbol, kind) : undefined,
       ];
@@ -147,14 +146,17 @@ function PositionRow({ position: p }: { position: PositionWithMarket }) {
           {editing ? "Cancel" : "Update"}
         </button>{" "}
         ·{" "}
+        <Link href={`/trades?account=${accountId}&symbol=${encodeURIComponent(p.symbol)}#add`} className="underline underline-offset-2 hover:text-foreground">
+          Buy or sell
+        </Link>{" "}
+        ·{" "}
         <button type="button" className="underline underline-offset-2 hover:text-destructive" onClick={remove} disabled={pending}>
           Remove
         </button>
       </p>
       {editing ? (
         <form onSubmit={save} className="flex flex-wrap items-center gap-2">
-          <Input aria-label={`${p.symbol} quantity`} value={quantity} onChange={(e) => setQuantity(e.target.value)} inputMode="decimal" className="h-8 w-32" />
-          <span className="text-muted-foreground">at</span>
+          <span className="text-muted-foreground">Price</span>
           <Input aria-label={`${p.symbol} price per unit`} value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" className="h-8 w-32" />
           <Input aria-label="Price as of" type="date" value={priceOn} max={localToday()} onChange={(e) => setPriceOn(e.target.value)} className="h-8 w-40" />
           <select aria-label="Kind of asset" value={kind} onChange={(e) => setKind(e.target.value as AssetClass)} className="h-8 rounded-md border bg-background px-2 text-sm">
