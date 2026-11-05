@@ -12,7 +12,8 @@ describe("recognize", () => {
   it("knows buys and sells by their words and the direction of the money", () => {
     expect(recognize(row("r", "2026-05-04", -25_000, "YOU BOUGHT ZQXV 2 SHARES @ 125.00"))).toMatchObject({ side: "buy", symbol: "ZQXV", quantity: "2" });
     expect(recognize(row("r", "2026-05-04", 25_000, "SOLD ZQXV"))).toMatchObject({ side: "sell", symbol: "ZQXV", quantity: null });
-    expect(recognize(row("r", "2026-05-04", -1_200, "DIVIDEND REINVESTMENT ZQXV"))).toBeNull();
+    // A reinvestment is a buy the dividend paid for (#324); the dividend itself is income.
+    expect(recognize(row("r", "2026-05-04", -1_200, "DIVIDEND REINVESTMENT ZQXV"))).toMatchObject({ side: "buy", reinvestment: true });
     expect(recognize(row("r", "2026-05-04", 4_200, "DIVIDEND RECEIVED"))).toBeNull();
     // Words and money disagreeing is something else (a correction, a reversal): not a trade to match.
     expect(recognize(row("r", "2026-05-04", 25_000, "BUY ZQXV"))).toBeNull();

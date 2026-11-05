@@ -1,4 +1,4 @@
-import { and, eq, gt, inArray, isNotNull, isNull, ne } from "drizzle-orm";
+import { and, eq, gt, inArray, isNotNull, isNull, ne, notInArray } from "drizzle-orm";
 import { accounts, dailyPrices, tradeHintDismissals, trades, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
@@ -35,7 +35,8 @@ export async function planCashRows(db: Db): Promise<CashPlan & { rows: Map<strin
     db
       .select({ id: trades.id, accountId: trades.accountId, side: trades.side, symbol: trades.symbol, quantity: trades.quantity, on: trades.on, onFrom: trades.onFrom })
       .from(trades)
-      .where(and(inArray(trades.accountId, ids), eq(trades.status, "draft"), isNull(trades.transactionId))),
+      // A split or a share transfer has no cash to it (#324).
+      .where(and(inArray(trades.accountId, ids), eq(trades.status, "draft"), isNull(trades.transactionId), notInArray(trades.kind, ["split", "transfer"]))),
   ]);
   const taken = new Set([...linked, ...dismissed].map((r) => r.id));
   const rows: Recognized[] = [];

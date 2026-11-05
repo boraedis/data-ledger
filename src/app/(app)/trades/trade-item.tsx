@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
 import type { TradeRow } from "@/operations/trades";
 import { removeTrade, restoreTrade, updateTrade } from "./actions";
-import { localToday, positive, select, SIDES, SOURCE_LABELS, when } from "./fields";
+import { KIND_LABELS, localToday, positive, ratioWords, select, SIDES, SOURCE_LABELS, when } from "./fields";
 
 // A confirmed or dismissed trade in the Trades page's list (#319): edit or
 // remove a confirmed one, restore a dismissed one to the drafts.
@@ -54,7 +54,8 @@ export function TradeItem({ trade: t, accountName }: { trade: TradeRow; accountN
     <li className="space-y-1 px-3 py-2 text-sm">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="min-w-0 tabular-nums">
-          {t.label} <span className="font-medium">{name}</span> {t.quantity}
+          {t.kind === "trade" ? t.label : KIND_LABELS[t.kind]}
+          {t.kind === "split" && t.ratio ? ` ${ratioWords(t.ratio)}` : ""} <span className="font-medium">{name}</span> {t.quantity}
           {t.price ? <span className="text-muted-foreground"> at ${t.price}</span> : null}
           <span className="block text-xs text-muted-foreground">
             {when(t)} · {accountName} · {SOURCE_LABELS[t.source]}
