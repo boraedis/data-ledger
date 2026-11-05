@@ -32,7 +32,7 @@ import { deleteTag, listTags, renameTag, setTransactionTags } from "@/operations
 import { merchantDetail, merchantOverviewRead, mergeSuggestions } from "@/operations/merchant-views";
 import { addMerchantType, createMerchant, dismissMerge, rederiveMerchants, rederivePreviewRead, listMerchants, listMerchantTypes, mergeMerchants, renameMerchant, setMerchantType, splitAlias, setTransactionMerchant, similarTransactions, unpinTransactionMerchant, recordTypeAsks, removeNameChoice } from "@/operations/merchants";
 import type { Operation } from "@/operations/define";
-import { merchants, merchantAliases, merchantMergeDismissals, merchantNameOverrides, merchantTypes, taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, trades, tradeHintDismissals, tallyPromotions, quotes, dailyPrices, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
+import { merchants, merchantAliases, merchantMergeDismissals, merchantNameOverrides, merchantTypes, taxAssumptions, importMappings, payStubDeposits, payStubEmployerLines, payStubLines, payStubs, accounts, alerts, balanceSnapshots, goalAccounts, goals, budgetAdjustments, budgetTargets, categories, people, recurringSeries, reimbursementMatches, reimbursements, holdingSnapshots, manualPositions, trades, tradeHintDismissals, tradeKindMemory, tallyPromotions, quotes, dailyPrices, categorySuggestions, rules, tags, transactionSplits, transactionTags, transactions } from "@/db/schema";
 import {
   applyCategories,
   backfillMerchants,
@@ -56,7 +56,7 @@ import {
 import { moveToCategory, moveToCategoryPreview } from "@/operations/recategorize";
 import { addManualPosition, removeManualPosition, setManualAssetClass, setManualPrice } from "@/operations/holdings";
 import { backfillPrices, refreshQuotes } from "@/operations/market";
-import { addTrade, attachCash, confirmTrade, detachCash, dismissHint, dismissTrade, draftGaps, draftTrade, listTradesRead, matchCash, removeTrade, restoreTrade, updateTrade } from "@/operations/trades";
+import { addTrade, attachCash, confirmTrade, detachCash, dismissHint, dismissTrade, draftGaps, draftTrade, listTradesRead, matchCash, setTradeKind, splitDraft, removeTrade, restoreTrade, updateTrade } from "@/operations/trades";
 import { demoteForTally, promoteForTally } from "@/operations/promotions";
 
 // The one list of everything that can be done to the ledger. The UI calls
@@ -120,6 +120,8 @@ export const operations: Operation[] = [
   attachCash,
   detachCash,
   dismissHint,
+  setTradeKind,
+  splitDraft,
   updateTrade,
   confirmTrade,
   dismissTrade,
@@ -260,6 +262,7 @@ export const trackedTables = {
   manual_positions: manualPositions,
   trades,
   trade_hint_dismissals: tradeHintDismissals,
+  trade_kind_memory: tradeKindMemory,
   tally_promotions: tallyPromotions,
   quotes,
   daily_prices: dailyPrices,

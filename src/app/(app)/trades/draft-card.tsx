@@ -8,6 +8,7 @@ import type { TradeRow } from "@/operations/trades";
 import { formatCents } from "@/lib/money";
 import type { Suggested } from "@/lib/trades/suggest-load";
 import { acceptSuggestion, attachCash, detachCash, dismissTrade, finishAndConfirm, updateTrade } from "./actions";
+import { KindControls } from "./kind-controls";
 import { draftHeadline, missing, positive, select, SIDES, SOURCE_LABELS, validSymbol, type CashRowView } from "./fields";
 
 // One draft trade to finish (#319): what's known, what's missing and where
@@ -23,6 +24,7 @@ export function DraftCard({
   cash,
   offers,
   suggested,
+  otherAccount,
 }: {
   trade: TradeRow;
   accountName: string;
@@ -32,6 +34,8 @@ export function DraftCard({
   offers: CashRowView[];
   // What's missing, worked out from what's known (#323): saved only when used.
   suggested: Suggested;
+  // For a share transfer: the account at its other end (#324).
+  otherAccount?: string;
 }) {
   const [symbol, setSymbol] = useState(t.symbol ?? "");
   const [side, setSide] = useState<TradeSide>(t.side);
@@ -84,7 +88,7 @@ export function DraftCard({
   return (
     <li className="space-y-2 rounded-lg border p-3 text-sm">
       <div className="space-y-0.5">
-        <p className="font-medium">{draftHeadline(t)}</p>
+        <p className="font-medium">{draftHeadline(t, otherAccount)}</p>
         <p className="text-xs text-muted-foreground">
           {accountName} · {SOURCE_LABELS[t.source]}
           {t.positionId && !t.symbol ? " · position id only" : ""}
@@ -174,6 +178,7 @@ export function DraftCard({
           </select>
         ) : null}
       </div>
+      <KindControls trade={t} />
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" onClick={() => act(true)} disabled={pending}>
           Confirm

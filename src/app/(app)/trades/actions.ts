@@ -82,3 +82,14 @@ export async function acceptSuggestion(tradeId: string, symbol: string | null, f
   const changes = field === "on" ? { on: value, onFrom: null } : { [field]: value };
   return run("trades.update", { tradeId, ...changes }, `Used the suggested ${FIELD_WORDS[field]} for a draft trade of ${named(field === "symbol" ? value : symbol)}`, "Couldn't use the suggestion");
 }
+
+// Kinds and net changes (#324).
+const KIND_REASON = { trade: "a trade", reinvestment: "a reinvested dividend", split: "a split", transfer: "a transfer of shares", fee: "a fee paid in shares" } as const;
+
+export async function setKind(tradeId: string, symbol: string | null, kind: keyof typeof KIND_REASON, ratio?: string): Result {
+  return run("trades.setKind", { tradeId, kind, ...(ratio ? { ratio } : {}) }, `Said a change in ${named(symbol)} is ${KIND_REASON[kind]}`, "Couldn't change the kind");
+}
+
+export async function splitDraft(tradeId: string, symbol: string | null, quantities: string[]): Result {
+  return run("trades.splitDraft", { tradeId, parts: quantities.map((quantity) => ({ quantity })) }, `Split a draft trade of ${named(symbol)} into ${quantities.length}`, "Couldn't split the draft");
+}

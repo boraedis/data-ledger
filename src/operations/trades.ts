@@ -1,12 +1,13 @@
 import { and, count, desc, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, commandLog, manualPositions, tradeHintDismissals, trades, transactions } from "@/db/schema";
+import { accounts, commandLog, manualPositions, tradeHintDismissals, tradeKindMemory, trades, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
-import { firstShortfall, holdingsOn, inOrder, SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
+import { difference, firstShortfall, holdingsOn, inOrder, SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
 import { confirmedTrades } from "@/lib/trades/confirmed";
 import { planCashRows } from "@/lib/trades/cash-plan";
 import { priceFrom, recognize } from "@/lib/trades/cash-rows";
+import { tradeKey } from "@/lib/trades/gaps";
 import { planTradeGaps } from "@/lib/trades/plan";
 import { valueDate } from "@/operations/accounts";
 import { defineRead, defineWrite } from "@/operations/define";
@@ -181,6 +182,7 @@ export const draftGaps = defineWrite({
   apply: async (ctx, { accountId }) => {
     let opening = 0;
     let drafted = 0;
+    const pairs = new Map<string, string[]>();
     for (const plan of await planTradeGaps(ctx.db, accountId)) {
       if (plan.baseline) {
         await ctx.update(accounts, plan.accountId, { tradesBaselineOn: plan.baseline.on });
@@ -204,7 +206,7 @@ export const draftGaps = defineWrite({
         }
       }
       for (const t of plan.drafts) {
-        await ctx.insert(trades, {
+        const row = await ctx.insert(trades, {
           accountId: plan.accountId,
           on: t.on,
           onFrom: t.onFrom,
@@ -215,9 +217,22 @@ export const draftGaps = defineWrite({
           price: null,
           status: "draft",
           source: "position_gap",
+          kind: t.kind,
+          ratio: t.ratio,
         });
+        if (t.pair) pairs.set(t.pair, [...(pairs.get(t.pair) ?? []), row.id]);
         drafted++;
       }
+      // A waiting draft that turned out to be a new one's other end.
+      for (const r of plan.relabel) {
+        await ctx.update(trades, r.id, { side: r.side, kind: "transfer" });
+        pairs.set(r.pair, [...(pairs.get(r.pair) ?? []), r.id]);
+      }
+    }
+    // The two ends of each share transfer point at each other (#324).
+    for (const [a, b] of pairs.values()) {
+      await ctx.update(trades, a, { pairedTradeId: b });
+      await ctx.update(trades, b, { pairedTradeId: a });
     }
     return { opening, drafted };
   },
@@ -242,6 +257,7 @@ async function cashRowFor(db: Db, accountId: string, transactionId: string) {
 async function attachRow(ctx: WriteContext, tradeId: string, transactionId: string) {
   const draft = await trade(ctx.db, tradeId);
   if (draft.status !== "draft") throw new Error("Only a draft takes a cash row");
+  if (draft.kind === "split" || draft.kind === "transfer") throw new Error("A split or a share transfer has no cash row");
   if (draft.transactionId) throw new Error("That draft already has its cash row");
   const row = await cashRowFor(ctx.db, draft.accountId, transactionId);
   const seen = recognize({ id: row.id, accountId: row.accountId, postedOn: row.postedOn, amountCents: row.amountCents, text: [row.description, row.payee, row.memo].filter(Boolean).join(" ") });
@@ -254,6 +270,8 @@ async function attachRow(ctx: WriteContext, tradeId: string, transactionId: stri
     onFrom: null,
     price: priceFrom(row.amountCents, draft.quantity),
     ...(draft.symbol || !seen.symbol ? {} : { symbol: seen.symbol }),
+    // Paid for by a dividend (#324).
+    ...(seen.reinvestment ? { kind: "reinvestment" as const } : {}),
   });
 }
 
@@ -298,11 +316,11 @@ export const detachCash = defineWrite({
     const before = attaching
       .flatMap((c) => c.changes)
       .find((c) => c.table === "trades" && c.id === tradeId && c.before && (c.after as Record<string, unknown> | null)?.transaction_id === draft.transactionId)?.before as
-      | { on: string; on_from: string | null; price: string | null; symbol: string | null }
+      | { on: string; on_from: string | null; price: string | null; symbol: string | null; kind?: "trade" | "reinvestment" | "split" | "transfer" | "fee" }
       | undefined;
     await ctx.update(trades, tradeId, {
       transactionId: null,
-      ...(before ? { on: before.on, onFrom: before.on_from, price: before.price, symbol: before.symbol } : { price: null }),
+      ...(before ? { on: before.on, onFrom: before.on_from, price: before.price, symbol: before.symbol, ...(before.kind ? { kind: before.kind } : {}) } : { price: null }),
     });
     return { id: tradeId };
   },
@@ -318,6 +336,92 @@ export const dismissHint = defineWrite({
     if (!row) throw new NotFoundError("Transaction not found");
     const added = await ctx.insert(tradeHintDismissals, { transactionId });
     return { id: added.id };
+  },
+});
+
+const kinds = z.enum(["trade", "reinvestment", "split", "transfer", "fee"]);
+
+export const setTradeKind = defineWrite({
+  name: "trades.setKind",
+  description:
+    "Say what kind of change in shares a trade is: a plain trade, a reinvested dividend, a split (with its ratio, new shares per old), " +
+    "a transfer of shares between the owner's accounts, or a fee paid in shares. A reinvestment, fee or plain trade is remembered for " +
+    "the account's position and side, so its next draft is made that kind.",
+  allowedActors: ["user"],
+  input: z.object({ tradeId: z.uuid(), kind: kinds, ratio: decimal("Ratio").optional() }),
+  apply: async (ctx, { tradeId, kind, ratio }) => {
+    const row = await trade(ctx.db, tradeId);
+    if (row.status === "dismissed") throw new Error("Restore that trade before changing its kind");
+    if (kind === "split" && !ratio) throw new Error("A split needs its ratio: new shares per old, like 2 for 2-for-1");
+    if (row.kind === kind && (kind !== "split" || ratio === row.ratio)) throw new Error("It's already that kind");
+    // Which way shares moved doesn't change; a transfer only names it differently.
+    const inward = row.side === "buy" || row.side === "transfer_in";
+    const side = kind === "transfer" ? (inward ? "transfer_in" : "transfer_out") : row.side.startsWith("transfer") ? (inward ? "buy" : "sell") : row.side;
+    await ctx.update(trades, tradeId, { kind, side, ratio: kind === "split" ? ratio! : null, ...(kind !== "transfer" && row.pairedTradeId ? { pairedTradeId: null } : {}) });
+    // Leaving a transfer: its other end isn't one either.
+    if (kind !== "transfer" && row.pairedTradeId) {
+      const other = await trade(ctx.db, row.pairedTradeId);
+      const otherIn = other.side === "buy" || other.side === "transfer_in";
+      await ctx.update(trades, other.id, { pairedTradeId: null, kind: "trade", side: otherIn ? "buy" : "sell" });
+    }
+    // Remembered for next time (#324), except the one-offs: a split or a transfer doesn't repeat by position.
+    if (kind !== "split" && kind !== "transfer" && row.source === "position_gap") {
+      const position = tradeKey(row);
+      const memSide = inward ? "buy" : "sell";
+      const [known] = await ctx.db
+        .select()
+        .from(tradeKindMemory)
+        .where(and(eq(tradeKindMemory.accountId, row.accountId), eq(tradeKindMemory.position, position), eq(tradeKindMemory.side, memSide)));
+      if (known) {
+        if (known.kind !== kind) await ctx.update(tradeKindMemory, known.id, { kind });
+      } else if (kind !== "trade") await ctx.insert(tradeKindMemory, { accountId: row.accountId, position, side: memSide, kind });
+    }
+    if (row.status === "confirmed") {
+      const { drivesPositions } = await tradeAccount(ctx.db, row.accountId);
+      if (drivesPositions) await followTrades(ctx, row.accountId, [row.symbol!], today());
+    }
+    return { id: tradeId };
+  },
+});
+
+export const splitDraft = defineWrite({
+  name: "trades.splitDraft",
+  description:
+    "Split one draft trade into several, when more than one trade happened between two syncs and they look like one net change. " +
+    "The parts' quantities must add up to the draft's exactly; each may have its own day.",
+  allowedActors: ["user"],
+  input: z.object({
+    tradeId: z.uuid(),
+    parts: z.array(z.object({ quantity: decimal("Quantity"), on: valueDate.optional() })).min(2).max(20),
+  }),
+  apply: async (ctx, { tradeId, parts }) => {
+    const row = await trade(ctx.db, tradeId);
+    if (row.status !== "draft") throw new Error("Only a draft can be split");
+    if (row.kind === "split" || row.kind === "transfer") throw new Error("A split or a share transfer can't be split into parts");
+    const total = holdingsOn(parts.map((p) => ({ on: row.on, symbol: "x", side: "buy" as const, quantity: p.quantity }))).get("x") ?? "0";
+    if (difference(total, row.quantity) !== "0") throw new Error(`The parts add up to ${total}, not ${row.quantity}`);
+    for (const p of parts) if (p.on && (p.on > row.on || (row.onFrom && p.on < row.onFrom))) throw new Error("Each part's day has to be inside the draft's range");
+    const dated = (p: (typeof parts)[number]) => (p.on ? { on: p.on, onFrom: null } : { on: row.on, onFrom: row.onFrom });
+    const [first, ...rest] = parts;
+    // The first part keeps the draft, and its cash row if it has one; the price was for the whole.
+    await ctx.update(trades, tradeId, { quantity: first.quantity, ...dated(first), price: null });
+    const ids = [tradeId];
+    for (const p of rest) {
+      const added = await ctx.insert(trades, {
+        accountId: row.accountId,
+        symbol: row.symbol,
+        positionId: row.positionId,
+        side: row.side,
+        quantity: p.quantity,
+        ...dated(p),
+        price: null,
+        status: "draft",
+        source: row.source,
+        kind: row.kind,
+      });
+      ids.push(added.id);
+    }
+    return { ids };
   },
 });
 
@@ -427,6 +531,9 @@ export type TradeRow = {
   status: "draft" | "confirmed" | "dismissed";
   source: "hand" | "opening" | "position_gap";
   transactionId: string | null;
+  kind: "trade" | "reinvestment" | "split" | "transfer" | "fee";
+  ratio: string | null;
+  pairedTradeId: string | null;
   label: string;
 };
 
@@ -474,6 +581,9 @@ export const listTradesRead = defineRead({
       status: t.status,
       source: t.source,
       transactionId: t.transactionId,
+      kind: t.kind,
+      ratio: t.ratio,
+      pairedTradeId: t.pairedTradeId,
       label: SIDE_LABELS[t.side],
     }));
   },

@@ -337,6 +337,13 @@
       "when": 1793838844462,
       "tag": "0047_trade_hint_dismissals",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "7",
+      "when": 1793839985189,
+      "tag": "0048_trade_kinds",
+      "breakpoints": true
     }
   ]
 }

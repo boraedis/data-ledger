@@ -358,6 +358,11 @@ export const tradeStatus = pgEnum("trade_status", ["draft", "confirmed", "dismis
 // position (#320 reuses it for synced accounts), or a gap between what the
 // sync reports and what the trades replay to (#320).
 export const tradeSource = pgEnum("trade_source", ["hand", "opening", "position_gap"]);
+// What kind of change in shares it is (#324). A plain trade, a dividend
+// reinvested (a buy the dividend paid for), a split (shares change, value
+// doesn't), shares moved between two of the owner's accounts, or a fee paid
+// in shares. The side still says which way; replay only needs the quantity.
+export const tradeKind = pgEnum("trade_kind", ["trade", "reinvestment", "split", "transfer", "fee"]);
 
 export const trades = pgTable(
   "trades",
@@ -385,6 +390,12 @@ export const trades = pgTable(
     // so a trade needs only its quantity.
     price: numeric("price"),
     status: tradeStatus("status").notNull().default("confirmed"),
+    kind: tradeKind("kind").notNull().default("trade"),
+    // A split's ratio, new shares per old (2 for 2-for-1, 0.5 for 1-for-2).
+    // Its quantity is still the change in shares, so replay needs nothing new.
+    ratio: numeric("ratio"),
+    // The other end of a share transfer between two of the owner's accounts.
+    pairedTradeId: uuid("paired_trade_id").references((): AnyPgColumn => trades.id, { onDelete: "set null" }),
     source: tradeSource("source").notNull().default("hand"),
     // The cash row it settled through, when there is one (#317, #321).
     transactionId: uuid("transaction_id").references(() => transactions.id, { onDelete: "set null" }),
@@ -398,6 +409,25 @@ export const trades = pgTable(
     check("trades_confirmed_complete", sql`${t.status} <> 'confirmed' or (${t.symbol} is not null and ${t.onFrom} is null)`),
     check("trades_draft_identified", sql`${t.symbol} is not null or ${t.positionId} is not null`),
   ],
+);
+
+// What kind a draft of this position and side turned out to be, as the
+// owner said (#324): the next draft of it is made that kind. One per
+// account, position and side; the latest choice wins.
+export const tradeKindMemory = pgTable(
+  "trade_kind_memory",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => accounts.id, { onDelete: "cascade" }),
+    // The trade key (lib/trades/gaps.ts): a symbol, or "id:" and a position id.
+    position: text("position").notNull(),
+    side: tradeSide("side").notNull(),
+    kind: tradeKind("kind").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("trade_kind_memory_account_position_side_idx").on(t.accountId, t.position, t.side)],
 );
 
 // Buy and sell cash rows the owner said aren't a trade to record (#321):

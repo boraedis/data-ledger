@@ -21,20 +21,22 @@ export const AMOUNT_TOLERANCE = { share: 0.02, cents: 1_000 };
 
 export type CashRow = { id: string; accountId: string; postedOn: string; amountCents: number; text: string };
 export type DraftForCash = { id: string; accountId: string; side: TradeSide; symbol: string | null; quantity: string; on: string; onFrom: string | null };
-export type Recognized = CashRow & { side: "buy" | "sell"; symbol: string | null; quantity: string | null };
+export type Recognized = CashRow & { side: "buy" | "sell"; symbol: string | null; quantity: string | null; reinvestment: boolean };
 
 /**
  * A buy or sell row, by the existing patterns (#24), with a symbol and a
- * quantity when its text carries them. A reinvestment isn't one: the
- * dividend that paid for it is its own row (#324 handles both).
+ * quantity when its text carries them. A dividend reinvestment is a buy the
+ * dividend paid for (#324): it attaches to its share change the same way,
+ * and makes that draft a reinvestment. The dividend itself is its own row,
+ * income, and not a trade.
  */
 export function recognize(row: CashRow): Recognized | null {
   const kind = investmentActivity(row.text);
-  if (kind !== "buy" && kind !== "sell") return null;
+  if (kind !== "buy" && kind !== "sell" && kind !== "reinvestment") return null;
   // Money out is a buy, whatever the words say; a sale brings money in.
   const side = row.amountCents < 0 ? "buy" : "sell";
-  if ((kind === "buy") !== (side === "buy")) return null;
-  return { ...row, side, symbol: symbolIn(row.text), quantity: quantityIn(row.text) };
+  if ((kind !== "sell") !== (side === "buy")) return null;
+  return { ...row, side, symbol: symbolIn(row.text), quantity: quantityIn(row.text), reinvestment: kind === "reinvestment" };
 }
 
 /** The first ticker-like token that isn't a brokerage word. */

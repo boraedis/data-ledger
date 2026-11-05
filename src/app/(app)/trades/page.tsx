@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { inArray } from "drizzle-orm";
-import { accounts as accountsTable, transactions } from "@/db/schema";
+import { accounts as accountsTable, trades as tradesTable, transactions } from "@/db/schema";
 import { getDb } from "@/lib/db";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { planCashRows } from "@/lib/trades/cash-plan";
@@ -51,6 +51,11 @@ export default async function TradesPage(props: PageProps<"/trades">) {
     read(db, listTradesRead, { accountId, symbol, from, to, ...(status ? { status } : {}) }),
     planCashRows(db),
   ]);
+  // The other end of each share transfer (#324), to name its account.
+  const pairIds = drafts.flatMap((d) => (d.pairedTradeId ? [d.pairedTradeId] : []));
+  const pairAccount = new Map(
+    pairIds.length ? (await db.select({ id: tradesTable.id, accountId: tradesTable.accountId }).from(tradesTable).where(inArray(tradesTable.id, pairIds))).map((r) => [r.id, r.accountId]) : [],
+  );
   // The cash rows drafts already have (#321), to show with them.
   const attachedIds = drafts.flatMap((d) => (d.transactionId ? [d.transactionId] : []));
   const attachedRows = attachedIds.length ? await db.select().from(transactions).where(inArray(transactions.id, attachedIds)) : [];
@@ -110,6 +115,7 @@ export default async function TradesPage(props: PageProps<"/trades">) {
                 cash={t.transactionId ? (attached.get(t.transactionId) ?? null) : null}
                 offers={(cashPlan.offers.get(t.id) ?? []).map(view)}
                 suggested={suggested.get(t.id) ?? { suggestions: [], notes: [] }}
+                otherAccount={t.pairedTradeId ? nameOf.get(pairAccount.get(t.pairedTradeId) ?? "") : undefined}
               />
             ))}
           </ul>
