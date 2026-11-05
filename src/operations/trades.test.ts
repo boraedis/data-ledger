@@ -8,7 +8,7 @@ import { testDb } from "@/lib/test-utils/db";
 import { confirmedTrades } from "@/lib/trades/confirmed";
 import { listManualPositions } from "@/operations/holdings";
 import { execute, undoCommand } from "@/operations/runtime";
-import { tradeCheck } from "@/operations/trades";
+import { planTradeGaps } from "@/lib/trades/plan";
 
 // The trade log (#247), in an empty ledger. Symbols, quantities and prices invented.
 
@@ -90,16 +90,17 @@ describe("a synced brokerage's trades (#247)", () => {
     ]);
   });
 
-  it("builds the past without touching positions or value, and says where it doesn't add up", async () => {
+  it("builds the past without touching positions or value, and what it doesn't explain is where the account starts", async () => {
     await run("trades.add", { accountId: broker, on: "2026-03-01", symbol: "ZZIX", side: "buy", quantity: "10" });
     await run("trades.add", { accountId: broker, on: "2026-05-01", symbol: "ZZIX", side: "sell", quantity: "1.75" });
     expect(await db.select().from(manualPositions)).toEqual([]);
     expect(await value(broker)).toBe(1_000_000);
-    // ZZIX adds up; the fund has no trades yet.
-    expect((await tradeCheck(db)).get(broker)).toEqual([{ symbol: "ZQFDX", synced: "100", traded: "0", difference: "-100" }]);
+    // ZZIX adds up; the fund has no trades yet, so it's what the account starts with (#320).
+    const opening = async () => (await planTradeGaps(db, broker))[0].baseline?.opening.map((t) => [t.symbol, t.side, t.quantity]);
+    expect(await opening()).toEqual([["ZQFDX", "buy", "100"]]);
 
     await run("trades.add", { accountId: broker, on: "2026-02-01", symbol: "ZQFDX", side: "transfer_in", quantity: "100" });
-    expect((await tradeCheck(db)).get(broker)).toBeUndefined();
+    expect(await opening()).toEqual([]);
   });
 
   it("refuses trades in a cash account, and from anyone but the owner", async () => {

@@ -3,7 +3,7 @@ import { accounts as accountsTable } from "@/db/schema";
 import { getDb } from "@/lib/db";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { read } from "@/operations/runtime";
-import { listTradesRead, tradeCheck } from "@/operations/trades";
+import { listTradesRead } from "@/operations/trades";
 import { AddTrade, type TradeAccount } from "./add-trade";
 import { DraftCard } from "./draft-card";
 import { TradeItem } from "./trade-item";
@@ -40,15 +40,13 @@ export default async function TradesPage(props: PageProps<"/trades">) {
   const from = isDay(one(sp.from));
   const to = isDay(one(sp.to));
 
-  const [drafts, listed, mismatches] = await Promise.all([
+  const [drafts, listed] = await Promise.all([
     read(db, listTradesRead, { status: "draft", accountId, symbol }),
     read(db, listTradesRead, { accountId, symbol, from, to, ...(status ? { status } : {}) }),
-    tradeCheck(db),
   ]);
   // Drafts have their own section above; the list is everything else unless asked for.
   const rows = status ? listed : listed.filter((t) => t.status !== "draft");
   const manual = new Set(tradeAccounts.filter((a) => a.manual).map((a) => a.id));
-  const off = [...mismatches.entries()].filter(([id]) => !accountId || id === accountId);
   const filtered = Boolean(accountId || symbol || status || from || to);
 
   return (
@@ -75,23 +73,6 @@ export default async function TradesPage(props: PageProps<"/trades">) {
           <p className="text-sm text-muted-foreground">No drafts waiting.</p>
         )}
       </section>
-
-      {/* Until gap drafting (#320) turns these into drafts. */}
-      {off.length ? (
-        <section className="space-y-1 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm" aria-label="Trades that don't add up">
-          <p className="font-medium">Your trades don&apos;t add up to what the brokerage reports</p>
-          <ul className="space-y-0.5 text-xs tabular-nums">
-            {off.flatMap(([id, list]) =>
-              list.map((m) => (
-                <li key={`${id}:${m.symbol}`}>
-                  {nameOf.get(id)}: <span className="font-medium">{m.symbol}</span>: your trades add up to {m.traded}, the brokerage reports {m.synced} (
-                  {m.difference.startsWith("-") ? m.difference : `+${m.difference}`})
-                </li>
-              )),
-            )}
-          </ul>
-        </section>
-      ) : null}
 
       <section className="space-y-2" aria-labelledby="add-heading" id="add">
         <h2 id="add-heading" className="text-lg font-medium">

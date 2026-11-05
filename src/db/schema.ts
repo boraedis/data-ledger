@@ -228,6 +228,11 @@ export const accounts = pgTable("accounts", {
   balanceCents: bigint("balance_cents", { mode: "number" }),
   availableBalanceCents: bigint("available_balance_cents", { mode: "number" }),
   balanceAt: timestamp("balance_at", { withTimezone: true }),
+  // Where gap drafting (#320) starts for a synced investment account: the
+  // snapshot day its opening trades were recorded at. Before it, what the
+  // account held is what it held; after it, a share count its trades don't
+  // explain becomes a draft. Null until the first sync after #320.
+  tradesBaselineOn: date("trades_baseline_on"),
   // The card's name in Apple Wallet, which is all an Apple Pay purchase
   // alert says about the card (#32). Set by the owner; it maps the alert
   // to this account. Unique, ignoring case, so an alert never has two

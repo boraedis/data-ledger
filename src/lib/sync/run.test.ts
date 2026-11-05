@@ -404,10 +404,10 @@ describe("syncConnection", () => {
       await sync(new Date(now.getTime() + 3_600_000));
       expect(await held()).toHaveLength(2);
 
-      const [first] = await db.select().from(commandLog).orderBy(commandLog.createdAt).limit(1);
-      const [second] = await db.select().from(commandLog).orderBy(desc(commandLog.createdAt)).limit(1);
-      await undoCommand(db, second.id);
-      await undoCommand(db, first.id);
+      // Newest first: the first sync also recorded where trade drafting starts (#320), a later change to the same account.
+      const all = await db.select().from(commandLog).orderBy(desc(commandLog.createdAt));
+      expect(all.map((c) => c.operation)).toEqual(["import.applySnapshot", "trades.draftGaps", "import.applySnapshot"]);
+      for (const c of all) await undoCommand(db, c.id);
       expect(await held()).toHaveLength(0);
     });
   });

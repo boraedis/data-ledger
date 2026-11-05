@@ -1,4 +1,5 @@
 import { investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
+import { cashSignal } from "@/lib/trades/cash";
 
 // What the brokerages actually return (#316), as a survey the owner runs on
 // their own machine (scripts/trades-survey.ts). It answers the questions the
@@ -54,17 +55,7 @@ export type InstitutionSurvey = {
   shapes: Partial<Record<InvestmentActivity, { shape: string; n: number }[]>>;
 };
 
-// How uninvested cash usually shows up in positions: a sweep or money-market
-// fund, or a plain cash line. A position priced at exactly $1.00 is the other tell.
-const CASH_WORDS = /money ?market|\bcash\b|sweep|core position|settlement fund|liquidity|deposit program|\bfdic\b|\bmmf\b/i;
-
-/** Why a position looks like cash rather than a holding, or null. Exported for #320 to start from. */
-export function cashSignal(p: Pick<SurveySnapshot, "symbol" | "description" | "shares" | "marketValueCents">): string | null {
-  if (CASH_WORDS.test(p.description) || (p.symbol && CASH_WORDS.test(p.symbol))) return "named as cash";
-  const shares = Number(p.shares);
-  if (shares > 0 && Math.abs(p.marketValueCents / 100 / shares - 1) < 0.0005) return "priced at $1.00";
-  return null;
-}
+export { cashSignal } from "@/lib/trades/cash";
 
 // Words that say what a brokerage row is, kept in shapes. Anything else is masked.
 const VOCAB = new Set(

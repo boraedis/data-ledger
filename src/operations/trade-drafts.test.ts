@@ -7,7 +7,7 @@ import { tallyOperations } from "@/lib/tally/tools";
 import { testDb } from "@/lib/test-utils/db";
 import { listManualPositions } from "@/operations/holdings";
 import { execute, read, undoCommand } from "@/operations/runtime";
-import { draftCounts, listTradesRead, tradeCheck } from "@/operations/trades";
+import { draftCounts, listTradesRead } from "@/operations/trades";
 
 // Draft trades (#318): inferred, partly filled in, and counted nowhere until
 // the owner confirms them. Invented accounts, symbols and quantities.
@@ -52,18 +52,16 @@ describe("a draft", () => {
     await expect(run("trades.draft", { accountId: broker, symbol: "ZQXV", side: "buy", quantity: "2", onFrom: "2026-05-06", on: "2026-05-05" }, "import")).rejects.toThrow();
   });
 
-  it("counts nowhere until confirmed: not the log, the check, or the history's symbols", async () => {
+  it("counts nowhere until confirmed: not the log or the history's symbols", async () => {
     await db.insert(holdingSnapshots).values({ accountId: broker, on: "2026-05-05", externalId: "ZQXV", symbol: "ZQXV", description: "Example Growth Fund", shares: "2", marketValueCents: 25_000, currency: "USD" });
     await run("trades.add", { accountId: broker, on: "2026-04-01", symbol: "ZZIX", side: "buy", quantity: "1" });
     const draft = await run("trades.draft", { accountId: broker, symbol: "ZQXV", side: "buy", quantity: "2", on: "2026-05-04" }, "import");
 
     expect((await read(db, listTradesRead, { status: "confirmed" })).map((t) => t.symbol)).toEqual(["ZZIX"]);
-    expect((await tradeCheck(db)).get(broker)?.map((m) => m.symbol)).toEqual(["ZQXV", "ZZIX"]);
     expect((await tradedSymbols(db)).map((s) => s.symbol)).toEqual(["ZZIX"]);
 
     await run("trades.confirm", { tradeId: draft.output.id });
     expect((await read(db, listTradesRead, { status: "confirmed" })).map((t) => t.symbol).sort()).toEqual(["ZQXV", "ZZIX"]);
-    expect((await tradeCheck(db)).get(broker)?.map((m) => m.symbol)).toEqual(["ZZIX"]);
   });
 
   it("in a manual account moves no position until confirmed, and undoing the confirm puts it back", async () => {
