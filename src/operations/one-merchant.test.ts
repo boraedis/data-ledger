@@ -7,7 +7,7 @@ import { applySeed } from "@/lib/seed/apply";
 import { testDb } from "@/lib/test-utils/db";
 import { listRecurring } from "@/operations/recurring";
 import { execute, read, undoCommand } from "@/operations/runtime";
-import { listTransactions, spendingLines } from "@/operations/transactions";
+import { listTransactions, spendingLines, transactionTypeCounts } from "@/operations/transactions";
 
 // One merchant everywhere (#292), on the synthetic seed with invented
 // merchants: a merchant spelled two ways is one merchant to recurring
@@ -129,6 +129,45 @@ describe("the transactions list", () => {
     const types = await byId();
     expect(types.get(typed.id)).toBe("Subscription");
     expect(types.get(loose.id)).toBeNull();
+  });
+});
+
+describe("the list's merchant filters (#333)", () => {
+  it("lists exactly the rows with an untyped merchant, or none, with counts, under the other filters", async () => {
+    // An account of its own, apart from the seed's rows.
+    [{ id: card }] = await db.insert(accounts).values({ name: "Example Second Card", institution: "Example", type: "credit", source: "simplefin", externalId: "one-card" }).returning({ id: accounts.id });
+    const untyped = await charge("2026-06-12", 12, "Lumen Streaming");
+    const loose = await charge("2026-06-13", 9, "Corner Kiosk", null);
+    const [{ id: typeId }] = await db.select({ id: merchantTypes.id }).from(merchantTypes).where(eq(merchantTypes.name, "Restaurant"));
+    const [{ id: typed }] = await db.insert(merchants).values({ name: "Harbor Diner", typeId }).returning();
+    const diner = await charge("2026-06-14", 30, "Harbor Diner", typed);
+    const span = { from: "2026-06-12", to: "2026-06-14", accountId: card };
+    const ids = async (input: Record<string, unknown>) => (await read(db, listTransactions, { ...span, ...input })).map((t) => t.id);
+
+    expect(await ids({ noMerchantType: true })).toEqual([untyped.id]);
+    expect(await ids({ noMerchant: true })).toEqual([loose.id]);
+    expect(await ids({})).toContain(diner.id);
+    // Combined with another filter, and counted the same way.
+    expect(await ids({ noMerchantType: true, search: "Lumen" })).toEqual([untyped.id]);
+    expect(await ids({ noMerchantType: true, search: "Kiosk" })).toEqual([]);
+    expect(await read(db, transactionTypeCounts, span)).toMatchObject({ noMerchantType: 1, noMerchant: 1 });
+
+    // Typing the merchant clears it from every row.
+    const [{ id: sub }] = await db.select({ id: merchantTypes.id }).from(merchantTypes).where(eq(merchantTypes.name, "Subscription"));
+    await run("merchants.setType", { merchantId: lumen, typeId: sub });
+    expect(await ids({ noMerchantType: true })).toEqual([]);
+    expect(await read(db, transactionTypeCounts, span)).toMatchObject({ noMerchantType: 0 });
+  });
+
+  it("leaves a paired transfer between the owner's accounts out of No merchant", async () => {
+    const out = await charge("2026-06-15", 100, "Transfer to savings", null);
+    const [savings] = await db.insert(accounts).values({ name: "Example Savings", institution: "Example", type: "savings", source: "simplefin", externalId: "s1" }).returning();
+    const [into] = await db.insert(transactions).values({ accountId: savings.id, postedOn: "2026-06-15", amountCents: 10_000, description: "TRANSFER FROM CARD", externalId: "one-in" }).returning();
+    await db.update(transactions).set({ transferPairId: into.id }).where(eq(transactions.id, out.id));
+    await db.update(transactions).set({ transferPairId: out.id }).where(eq(transactions.id, into.id));
+    const listed = (await read(db, listTransactions, { from: "2026-06-15", to: "2026-06-15", noMerchant: true })).map((t) => t.id);
+    expect(listed).not.toContain(out.id);
+    expect(listed).not.toContain(into.id);
   });
 });
 

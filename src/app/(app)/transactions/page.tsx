@@ -9,6 +9,7 @@ import { listTags } from "@/operations/tags";
 import { manualMatches } from "@/operations/manual";
 import { listTransactions, transactionTypeCounts } from "@/operations/transactions";
 import { categoryBadge } from "./category-badge";
+import { MerchantChip } from "./merchant-chip";
 import { SubmitOnChange } from "./submit-on-change";
 import { MORE_FILTERS, SOURCE_LABELS, TYPES, datePresets, dollars, parseView, viewHref } from "./view";
 
@@ -263,10 +264,8 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     {/* A suspicious-charge flag (#210), until it's called fine. */}
                     {t.flagged ? <span className="rounded bg-destructive/15 px-1.5 text-destructive">Flagged</span> : null}
                     <Badge badge={categoryBadge(t, (id) => labelOf.get(id))} />
-                    {/* The merchant's type, only once the row is linked to a merchant
-                        that has one: an unlinked or untyped name shows nothing,
-                        rather than a guess. */}
-                    {t.merchantType ? <span className="rounded bg-muted px-1.5 text-muted-foreground">{t.merchantType}</span> : null}
+                    {/* The merchant's type, a warning when it has none yet, or a quiet note with no merchant (#333). */}
+                    <MerchantChip merchantId={t.merchantId} merchantType={t.merchantType} transfer={Boolean(t.transfer)} />
                     {/* What it's connected to, so nothing reads as counted twice:
                         the other side of a transfer, a paycheck's pay stub. */}
                     {t.transfer ? (

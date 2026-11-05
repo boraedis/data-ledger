@@ -13,6 +13,9 @@ export const TYPES = {
   uncategorized: { label: "Uncategorized", filter: "uncategorized" },
   paystub: { label: "Connected to a pay stub", filter: "payStubLinked" },
   flagged: { label: "Flagged", filter: "flagged" },
+  // Merchants still to type, and rows with no merchant (#333).
+  untyped: { label: "No merchant type", filter: "noMerchantType" },
+  nomerchant: { label: "No merchant", filter: "noMerchant" },
 } as const;
 export type TypeKey = keyof typeof TYPES;
 const isType = (value: string | undefined): value is TypeKey => value !== undefined && Object.hasOwn(TYPES, value);
