@@ -15,6 +15,10 @@ describe("recognize", () => {
     // A reinvestment is a buy the dividend paid for (#324); the dividend itself is income.
     expect(recognize(row("r", "2026-05-04", -1_200, "DIVIDEND REINVESTMENT ZQXV"))).toMatchObject({ side: "buy", reinvestment: true });
     expect(recognize(row("r", "2026-05-04", 4_200, "DIVIDEND RECEIVED"))).toBeNull();
+    // A sweep into or out of the core account reads like a buy or sale, but isn't one (#316).
+    expect(recognize(row("r", "2026-05-04", -25_000, "PURCHASE INTO CORE ACCOUNT EXAMPLE MONEY MARKET (CASH)"))).toBeNull();
+    expect(recognize(row("r", "2026-05-04", 25_000, "REDEMPTION FROM CORE ACCOUNT ZZCXX (CASH)"))).toBeNull();
+    expect(recognize(row("r", "2026-05-04", -25_000, "YOU BOUGHT ZQXV EXAMPLE GROWTH FUND (CASH)"))).toMatchObject({ side: "buy", symbol: "ZQXV" });
     // Words and money disagreeing is something else (a correction, a reversal): not a trade to match.
     expect(recognize(row("r", "2026-05-04", 25_000, "BUY ZQXV"))).toBeNull();
   });

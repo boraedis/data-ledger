@@ -1,7 +1,8 @@
 import { and, eq, gt, inArray, isNotNull, isNull, ne, notInArray } from "drizzle-orm";
-import { accounts, dailyPrices, tradeHintDismissals, trades, transactions } from "@/db/schema";
+import { accounts, dailyPrices, holdingSnapshots, tradeHintDismissals, trades, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
+import { cashSignal } from "@/lib/trades/cash";
 import { planCash, recognize, type CashPlan, type DraftForCash, type Recognized } from "@/lib/trades/cash-rows";
 
 // Loading what cash-row matching (#321) needs: each synced investment
@@ -25,7 +26,7 @@ export async function planCashRows(db: Db): Promise<CashPlan & { rows: Map<strin
   const ids = synced.map((a) => a.id);
   const baseline = new Map(synced.map((a) => [a.id, a.baselineOn!]));
 
-  const [cash, linked, dismissed, drafts] = await Promise.all([
+  const [cash, linked, dismissed, drafts, positions] = await Promise.all([
     db
       .select({ id: transactions.id, accountId: transactions.accountId, postedOn: transactions.postedOn, amountCents: transactions.amountCents, description: transactions.description, payee: transactions.payee, memo: transactions.memo })
       .from(transactions)
@@ -37,13 +38,20 @@ export async function planCashRows(db: Db): Promise<CashPlan & { rows: Map<strin
       .from(trades)
       // A split or a share transfer has no cash to it (#324).
       .where(and(inArray(trades.accountId, ids), eq(trades.status, "draft"), isNull(trades.transactionId), notInArray(trades.kind, ["split", "transfer"]))),
+    db
+      .selectDistinct({ accountId: holdingSnapshots.accountId, symbol: holdingSnapshots.symbol, description: holdingSnapshots.description, shares: holdingSnapshots.shares, marketValueCents: holdingSnapshots.marketValueCents })
+      .from(holdingSnapshots)
+      .where(and(inArray(holdingSnapshots.accountId, ids), isNotNull(holdingSnapshots.symbol))),
   ]);
+  // Each account's own cash funds, by symbol: a row buying or selling one is
+  // a sweep, whatever its words say (#316).
+  const cashFunds = new Set(positions.filter((p) => cashSignal(p)).map((p) => `${p.accountId}|${p.symbol!.toUpperCase()}`));
   const taken = new Set([...linked, ...dismissed].map((r) => r.id));
   const rows: Recognized[] = [];
   for (const t of cash) {
     if (taken.has(t.id) || t.postedOn <= baseline.get(t.accountId)!) continue;
     const r = recognize({ id: t.id, accountId: t.accountId, postedOn: t.postedOn, amountCents: t.amountCents, text: [t.description, t.payee, t.memo].filter(Boolean).join(" ") });
-    if (r) rows.push(r);
+    if (r && !(r.symbol && cashFunds.has(`${r.accountId}|${r.symbol}`))) rows.push(r);
   }
   if (!rows.length) return empty;
 
