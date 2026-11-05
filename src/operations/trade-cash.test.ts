@@ -122,6 +122,12 @@ describe("hints", () => {
     expect((await planCashRows(db)).hints).toHaveLength(1);
   });
 
+  it("leaves out a buy of the account's own cash fund: a sweep, whatever it's called (#316)", async () => {
+    await db.insert(holdingSnapshots).values({ accountId: broker, on: "2026-05-05", externalId: "ZZCXX", symbol: "ZZCXX", description: "Example Liquid Reserve", shares: "300", marketValueCents: 30_000, currency: "USD" });
+    await cash("2026-05-20", -9_000, "BUY ZZCXX");
+    expect((await planCashRows(db)).hints).toEqual([]);
+  });
+
   it("becomes a trade by hand, linked to its row, and refuses a row already a trade's", async () => {
     const stray = await cash("2026-05-20", -9_000, "BUY ZZIX");
     const made = await run("trades.add", { accountId: broker, on: "2026-05-20", symbol: "ZZIX", side: "buy", quantity: "1", transactionId: stray.id });

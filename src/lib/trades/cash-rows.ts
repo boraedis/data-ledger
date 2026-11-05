@@ -1,5 +1,6 @@
 import { investmentActivity } from "@/lib/investments/activity";
 import type { TradeSide } from "@/lib/holdings/replay";
+import { isCashMove } from "@/lib/trades/cash";
 import { BROKERAGE_WORDS } from "@/lib/trades/survey";
 
 // Cash rows and drafts (#321). With positions as the record that a trade
@@ -31,6 +32,8 @@ export type Recognized = CashRow & { side: "buy" | "sell"; symbol: string | null
  * income, and not a trade.
  */
 export function recognize(row: CashRow): Recognized | null {
+  // Money moving into or out of the account's own cash fund isn't a trade (#316).
+  if (isCashMove(row.text)) return null;
   const kind = investmentActivity(row.text);
   if (kind !== "buy" && kind !== "sell" && kind !== "reinvestment") return null;
   // Money out is a buy, whatever the words say; a sale brings money in.
