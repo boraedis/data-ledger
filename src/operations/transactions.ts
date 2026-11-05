@@ -13,6 +13,7 @@ import {
   tags,
   transactionSplits,
   transactionTags,
+  merchants,
   trades,
   transactions,
 } from "@/db/schema";
@@ -85,6 +86,9 @@ export type TransactionFilter = {
   unmatchedTransfers?: boolean;
   payStubLinked?: boolean;
   flagged?: boolean;
+  // Rows whose merchant has no type yet, and rows with no merchant (#333).
+  noMerchantType?: boolean;
+  noMerchant?: boolean;
   // The More filters panel (#211).
   amountMinCents?: number;
   amountMaxCents?: number;
@@ -128,6 +132,12 @@ export function transactionFilters(db: Db, input: TransactionFilter): SQL[] {
   if (input.payStubLinked)
     filters.push(inArray(transactions.id, db.select({ id: payStubDeposits.transactionId }).from(payStubDeposits)));
   if (input.flagged) filters.push(flaggedSql(db));
+  // The rows the list badges "No type" and "No merchant" (#333). A paired
+  // transfer between the owner's own accounts has no merchant by nature, so
+  // it isn't one, as it isn't uncategorized.
+  if (input.noMerchantType)
+    filters.push(inArray(transactions.merchantId, db.select({ id: merchants.id }).from(merchants).where(isNull(merchants.typeId))));
+  if (input.noMerchant) filters.push(isNull(transactions.merchantId), isNull(transactions.transferPairId));
   // An amount range is on the size of the amount unless it's signed, so
   // "$10 to $50" finds charges and refunds alike, as the search does.
   const amount = input.amountSigned ? sql`${transactions.amountCents}` : sql`abs(${transactions.amountCents})`;
@@ -208,7 +218,8 @@ export const listTransactions = defineRead({
     "is money out only), uncategorized only (no category and no transfer or " +
     "reimbursement that explains it), unmatchedTransfers (transfers with no other half) or payStubLinked " +
     "(paycheck deposits linked to a pay stub) or flagged (a suspicious-charge alert waiting for a verdict or " +
-    "marked suspicious). Also: amountMinCents/amountMaxCents (on the amount's size, or signed with " +
+    "marked suspicious), or noMerchantType (linked to a merchant with no type yet) or noMerchant (no merchant, " +
+    "paired transfers aside). Also: amountMinCents/amountMaxCents (on the amount's size, or signed with " +
     "amountSigned), transferAccountId (paired transfers whose other side is that account), hasTags, split, " +
     "pending, and source (bank, manual or provisional). budgetOnly limits to accounts " +
     "that count toward budgets (excludes investment, retirement, loan and asset accounts) — use it for " +
@@ -229,6 +240,8 @@ export const listTransactions = defineRead({
     budgetOnly: z.boolean().optional(),
     unmatchedTransfers: z.boolean().optional(),
     flagged: z.boolean().optional(),
+    noMerchantType: z.boolean().optional(),
+    noMerchant: z.boolean().optional(),
     limit: z.number().int().min(1).max(500).default(100),
     offset: z.number().int().min(0).default(0),
   }),
@@ -244,6 +257,7 @@ export const listTransactions = defineRead({
         amountCents: transactions.amountCents,
         description: transactions.description,
         merchant: transactions.merchant,
+        merchantId: transactions.merchantId,
         // Set only when the row is linked to a merchant the owner has given a
         // type: the type's name ("Restaurant"). Null for an unlinked or untyped one.
         merchantType: merchantTypeName,
@@ -391,23 +405,25 @@ export const transactionTypeCounts = defineRead({
   name: "transactions.typeCounts",
   description:
     "Counts for the Transactions list's type filter, under the same filters as transactions.list: " +
-    "unmatchedTransfers, uncategorized, payStubLinked and flagged.",
+    "unmatchedTransfers, uncategorized, payStubLinked, flagged, noMerchantType and noMerchant.",
   input: z.object(listFilterInput),
   run: async (db, input) => {
-    const countOf = async (type: Pick<TransactionFilter, "unmatchedTransfers" | "uncategorized" | "payStubLinked" | "flagged">) => {
+    const countOf = async (type: Pick<TransactionFilter, "unmatchedTransfers" | "uncategorized" | "payStubLinked" | "flagged" | "noMerchantType" | "noMerchant">) => {
       const [{ n }] = await db
         .select({ n: count() })
         .from(transactions)
         .where(and(...transactionFilters(db, { ...input, ...type })));
       return n;
     };
-    const [unmatchedTransfers, uncategorized, payStubLinked, flagged] = await Promise.all([
+    const [unmatchedTransfers, uncategorized, payStubLinked, flagged, noMerchantType, noMerchant] = await Promise.all([
       countOf({ unmatchedTransfers: true }),
       countOf({ uncategorized: true }),
       countOf({ payStubLinked: true }),
       countOf({ flagged: true }),
+      countOf({ noMerchantType: true }),
+      countOf({ noMerchant: true }),
     ]);
-    return { unmatchedTransfers, uncategorized, payStubLinked, flagged };
+    return { unmatchedTransfers, uncategorized, payStubLinked, flagged, noMerchantType, noMerchant };
   },
 });
 
