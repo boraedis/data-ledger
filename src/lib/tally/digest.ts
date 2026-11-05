@@ -2,6 +2,7 @@ import { desc, eq, gte, inArray, lt, lte, max, sum } from "drizzle-orm";
 import { accounts, digests, holdingSnapshots, syncRuns } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { merchantReviewCounts } from "@/lib/merchants/review";
+import { draftTotal } from "@/operations/trades";
 import { chat as defaultChat } from "@/lib/model/client";
 import { formatCents } from "@/lib/money";
 import { getConnectionHealth, healthProblems } from "@/lib/sync/health";
@@ -41,11 +42,14 @@ export type DigestFacts = {
   // Merchant suggestions waiting on the owner (#303): counts only, the same
   // the Inbox shows. Optional, since older digests don't have them.
   merchants?: { duplicates: number; types: number };
+  // Draft trades waiting on the owner (#325): a count only, never a symbol,
+  // quantity or value. Optional for the same reason.
+  tradesToReview?: number;
 };
 
 export async function gatherFacts(db: Db, today: string): Promise<DigestFacts> {
   const since = new Date(Date.parse(today) - 86_400_000);
-  const [health, inbox, flags, alerts, budgets, owed, [{ value: inserted }], merchants] = await Promise.all([
+  const [health, inbox, flags, alerts, budgets, owed, [{ value: inserted }], merchants, tradesToReview] = await Promise.all([
     getConnectionHealth(db),
     inboxCount(db),
     read(db, listFlags, {}),
@@ -54,6 +58,7 @@ export async function gatherFacts(db: Db, today: string): Promise<DigestFacts> {
     read(db, owedToMe, { on: today }),
     db.select({ value: sum(syncRuns.inserted) }).from(syncRuns).where(gte(syncRuns.startedAt, since)),
     merchantReviewCounts(db),
+    draftTotal(db),
   ]);
   return {
     date: today,
@@ -77,6 +82,7 @@ export async function gatherFacts(db: Db, today: string): Promise<DigestFacts> {
     })),
     owedToYou: owed.totalCents ? formatCents(owed.totalCents) : null,
     merchants,
+    tradesToReview,
   };
 }
 

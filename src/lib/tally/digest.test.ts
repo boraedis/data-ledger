@@ -26,6 +26,8 @@ describe("digest", () => {
     expect(facts.alerts.map((a) => a.title)).toContain("Streamflix went up to $17.99");
     expect(facts.budgets[0]).toMatchObject({ name: "Everything else (buffer)", periodElapsed: "100%" });
     expect(JSON.stringify(facts)).not.toMatch(/balance/i);
+    // Draft trades are a count and nothing else (#325).
+    expect(facts.tradesToReview).toBe(0);
   });
 
   it("asks the model with just the facts, stores the note beside them, and replaces it on a rerun", async () => {

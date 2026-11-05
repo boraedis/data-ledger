@@ -796,6 +796,15 @@ Net worth and the investments page are deliberately **not** operations:
 every registered read becomes one of Tally's tools, and balances and
 holdings never go to a model.
 
+**Trades** (#247, the Trades epic #315), a tab in Wealth:
+- **The trade log:** dated buys, sells, share transfers and the like, per account, as exact decimals. In a manual account its confirmed trades *are* its positions; in a synced one they rebuild what was held in the past (#232). A trade is its own record, linked to the cash row it settled through when there is one, never a transaction (#317).
+- **Drafts:** SimpleFIN has no trades endpoint, so trades are inferred. After each sync, any position whose synced share count its trades don't explain becomes a draft (`src/lib/trades/gaps.ts`, #320). Each account first gets a baseline of opening trades, so only changes after it are drafted. Cash and money-market positions are left out. Waiting and dismissed drafts count toward that comparison, so nothing is drafted twice. Drafts count nowhere else until the owner confirms them (#318).
+- **Cash rows** (#321): a brokerage's buy or sell row attaches to its draft when each is the other's only fit, giving it the day and the price. Otherwise it's offered, or shown as a hint with no trade yet.
+- **Kinds** (#324): splits (by a clean ratio, value steady), share transfers between the owner's accounts (paired), reinvested dividends and fees paid in shares, rather than plain buys and sells. A net change can be split into parts.
+- **Suggestions** (#323): a missing price, day or symbol, worked out from cost basis, the cash row and the price cache, never a model, and saved only when used.
+- **Where the owner hears about them** (#325): a count on the Trades tab, a line in the Inbox, and a count in Tally's summary. Trades are owner-only operations, never offered to Tally, and no symbol, quantity or value reaches a model.
+- **The survey** (#316): `npm run trades:survey` is a read-only report, run by the owner, on what each brokerage actually returns.
+
 ## Operations layer
 
 Every change to ledger data is an **operation** (`src/operations/`): a

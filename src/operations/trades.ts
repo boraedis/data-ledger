@@ -589,6 +589,12 @@ export const listTradesRead = defineRead({
   },
 });
 
+/** How many drafts wait in all, for the Inbox, the Trades tab and Tally's summary (#325). A count, nothing more. */
+export async function draftTotal(db: Db): Promise<number> {
+  const [{ n }] = await db.select({ n: count() }).from(trades).where(eq(trades.status, "draft"));
+  return n;
+}
+
 /** How many drafts wait in each account, for the links into the Trades page. */
 export async function draftCounts(db: Db): Promise<Map<string, number>> {
   const rows = await db.select({ accountId: trades.accountId, n: count() }).from(trades).where(eq(trades.status, "draft")).groupBy(trades.accountId);

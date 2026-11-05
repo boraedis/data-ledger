@@ -15,7 +15,8 @@ function Badge({ count }: { count: number }) {
   return count ? <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{count}</span> : null;
 }
 
-export function TopBar({ inbox }: { inbox: number }) {
+// counts: work waiting on a page, badged on its tab: drafts on Trades (#325).
+export function TopBar({ inbox, counts = {} }: { inbox: number; counts?: Record<string, number> }) {
   const pathname = usePathname();
   const section = sectionFor(pathname);
   const page = pageFor(pathname);
@@ -116,6 +117,7 @@ export function TopBar({ inbox }: { inbox: number }) {
               className={`-mb-px border-b-2 py-1.5 ${page?.href === p.href ? "border-primary font-medium" : "border-transparent text-muted-foreground hover:text-foreground"}`}
             >
               {p.label}
+              <Badge count={counts[p.href] ?? 0} />
             </Link>
           ))}
         </nav>
@@ -138,6 +140,7 @@ export function TopBar({ inbox }: { inbox: number }) {
                     {s.pages.map((p) => (
                       <Link key={p.href} href={p.href} onClick={close} className={`block py-1.5 ${page?.href === p.href ? "font-medium" : ""}`}>
                         {p.label}
+                        <Badge count={counts[p.href] ?? 0} />
                       </Link>
                     ))}
                   </div>

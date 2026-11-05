@@ -51,6 +51,15 @@ describe("what's printed", () => {
     expect(chips.map((c) => c.label)).toEqual(["14 new", "12 in inbox", "2 flagged", "$64.00 owed to you"]);
   });
 
+  it("counts draft trades waiting (#325), and says nothing at zero", () => {
+    const { lines, chips, tone } = summaryView(note, { ...calm, tradesToReview: 3 });
+    expect(lines.find((l) => l.label === "Trades to review")).toEqual({ label: "Trades to review", value: "3", tone: "look", count: 3 });
+    expect(chips.map((c) => c.label)).toContain("3 trades to review");
+    // A nudge, not a problem.
+    expect(tone).toBe("calm");
+    expect(summaryView(note, { ...calm, tradesToReview: 0 }).lines.map((l) => l.label)).not.toContain("Trades to review");
+  });
+
   it("names each budget that's over, three at most, and says how many more", () => {
     const budgets = ["A", "B", "C", "D", "E"].map((name) => ({ name: `Budget ${name}`, over: true, overBy: "$5.00" }));
     const { lines } = summaryView(note, { ...calm, budgets });

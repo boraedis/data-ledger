@@ -7,7 +7,7 @@ import { tallyOperations } from "@/lib/tally/tools";
 import { testDb } from "@/lib/test-utils/db";
 import { listManualPositions } from "@/operations/holdings";
 import { execute, read, undoCommand } from "@/operations/runtime";
-import { draftCounts, listTradesRead } from "@/operations/trades";
+import { draftCounts, draftTotal, listTradesRead } from "@/operations/trades";
 
 // Draft trades (#318): inferred, partly filled in, and counted nowhere until
 // the owner confirms them. Invented accounts, symbols and quantities.
@@ -137,6 +137,10 @@ describe("the Trades page's list (#319)", () => {
     expect(await symbols({ symbol: "zqc" })).toEqual(["ZQC"]);
     expect(await symbols({ from: "2026-04-02", to: "2026-04-30" })).toEqual(["ZQC"]);
     expect(await draftCounts(db)).toEqual(new Map([[broker, 1]]));
+    // What the Inbox, the Trades tab and Tally's summary show (#325).
+    expect(await draftTotal(db)).toBe(1);
+    await run("trades.dismiss", { tradeId: (await read(db, listTradesRead, { status: "draft" }))[0].id });
+    expect(await draftTotal(db)).toBe(0);
   });
 
   it("is the owner's alone", () => {

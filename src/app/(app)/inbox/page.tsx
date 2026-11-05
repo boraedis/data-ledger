@@ -12,6 +12,8 @@ import { read } from "@/operations/runtime";
 import { listProvisional } from "@/operations/provisional";
 import { listFlags } from "@/operations/suspicious";
 import { listInbox } from "@/operations/transactions";
+import { draftTotal } from "@/operations/trades";
+import Link from "next/link";
 import { FlagList } from "./flags";
 import { Inbox } from "./inbox";
 import { ProvisionalList } from "./provisional";
@@ -31,7 +33,7 @@ export const maxDuration = 300;
 // the assistant sees.
 export default async function InboxPage() {
   const db = getDb();
-  const [inbox, cats, accts, alerted, flags, digest, merchants] = await Promise.all([
+  const [inbox, cats, accts, alerted, flags, digest, merchants, tradeDrafts] = await Promise.all([
     read(db, listInbox, { limit: LIMIT }),
     read(db, listCategories, {}),
     read(db, listAccounts, {}),
@@ -39,6 +41,7 @@ export default async function InboxPage() {
     read(db, listFlags, {}),
     latestDigest(db),
     merchantReview(db, { pairs: MERCHANT_PAIRS }),
+    draftTotal(db),
   ]);
   const merchantsWaiting = merchants.pairTotal + merchants.types.length;
   const accountName = new Map(accts.map((a) => [a.id, a.name]));
@@ -50,7 +53,7 @@ export default async function InboxPage() {
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold">Inbox</h1>
         <p className="text-sm text-muted-foreground">
-          {rows.length === 0 && merchantsWaiting === 0
+          {rows.length === 0 && merchantsWaiting === 0 && tradeDrafts === 0
             ? "Nothing to review."
             : rows.length === 0
               ? `No transactions waiting for a category; ${merchantsWaiting} merchant suggestion${merchantsWaiting === 1 ? "" : "s"} below.`
@@ -71,6 +74,17 @@ export default async function InboxPage() {
           rejected pair never comes back. Hidden when there's nothing. */}
       {merchants.pairs.length ? <MergeSuggestions suggestions={merchants.pairs} total={merchants.pairTotal} seeAll /> : null}
       {merchants.types.length ? <TypeSuggestions suggestions={merchants.types} /> : null}
+      {/* Trades (#325): drafts inferred from what the brokerages report, to
+          finish on the Trades page. A count and a link: finishing one needs
+          the page's fields, not a one-click answer. Gone at zero. */}
+      {tradeDrafts ? (
+        <Link href="/trades#drafts" className="block rounded-lg border p-3 text-sm hover:bg-accent">
+          <span className="font-medium">
+            {tradeDrafts} {tradeDrafts === 1 ? "trade" : "trades"} to review
+          </span>
+          <span className="block text-xs text-muted-foreground">Inferred from what your brokerages report. Finish and confirm them on Trades.</span>
+        </Link>
+      ) : null}
       {options.length === 0 ? (
         <p className="text-muted-foreground">
           Create some categories first, under <a className="underline" href="/categories">Categories</a>.
