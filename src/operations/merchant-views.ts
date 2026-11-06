@@ -2,6 +2,7 @@ import { and, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, categories, merchantMergeDismissals, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
+import { merchantExpectedSql, merchantsOutOfScope } from "@/lib/merchants/expected";
 import { nearDuplicates, REASON_TEXT } from "@/lib/merchants/near";
 import { merchantOverview, spendByMonth } from "@/lib/merchants/overview";
 import { defineRead } from "@/operations/define";
@@ -31,21 +32,25 @@ export const merchantOverviewRead = defineRead({
   name: "merchants.overview",
   description:
     "Every merchant with its type, aliases, total net spend (gross if asked) over all history, number of transactions, " +
-    "last seen date, usual category and whether it has a recurring charge. Totals are the lines Spending and Budgets count.",
+    "last seen date, usual category and whether it has a recurring charge. Totals are the lines Spending and Budgets count. " +
+    "Transfers, brokerage and retirement rows and $0 rows aren't counted, and a merchant made only of them is left out.",
   input: z.object({ gross: z.boolean().default(false) }),
   run: async (db, { gross }) => {
-    const [merchants, txns, lines, category, recurring] = await Promise.all([
+    // Only the rows that are a merchant's business (#349): a merchant built
+    // from transfers or brokerage rows isn't one the owner needs to type.
+    const [merchants, txns, lines, category, recurring, outOfScope] = await Promise.all([
       listMerchants.run(db, {}),
       db
         .select({ id: transactions.id, merchantId: transactions.merchantId, postedOn: transactions.postedOn })
         .from(transactions)
-        .where(isNotNull(transactions.merchantId)),
+        .where(and(isNotNull(transactions.merchantId), merchantExpectedSql(db))),
       spendingLines.run(db, { budgetOnly: true, gross }),
       categoryLookup(db),
       listRecurring.run(db, {}),
+      merchantsOutOfScope(db),
     ]);
     return merchantOverview({
-      merchants: merchants.map((m) => ({ id: m.id, name: m.name, typeId: m.typeId, type: m.type, aliases: m.aliases.map((a) => a.alias) })),
+      merchants: merchants.filter((m) => !outOfScope.has(m.id)).map((m) => ({ id: m.id, name: m.name, typeId: m.typeId, type: m.type, aliases: m.aliases.map((a) => a.alias) })),
       txns: txns.map((t) => ({ id: t.id, merchantId: t.merchantId!, postedOn: t.postedOn })),
       lines,
       category,

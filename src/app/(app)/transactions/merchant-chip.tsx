@@ -6,15 +6,17 @@ import { useRouter } from "next/navigation";
 // merchant to have a type, so a missing one is a warning, like Uncategorized
 // (#212), and opens the merchant's page, where the type is set. A row with
 // no merchant gets a quiet chip: linking or making one is a different job
-// (#291). A paired transfer between the owner's accounts gets neither.
+// (#291). A row that needs no merchant (#349) — a transfer, a brokerage or
+// retirement row, a $0 row — gets neither.
 //
 // Each row is already one link to its transaction, and a link can't hold
 // another, so the warning opens the merchant's page itself, without
 // opening the transaction.
 
-export function MerchantChip({ merchantId, merchantType, transfer }: { merchantId: string | null; merchantType: string | null; transfer: boolean }) {
+export function MerchantChip({ merchantId, merchantType, expected }: { merchantId: string | null; merchantType: string | null; expected: boolean }) {
   const router = useRouter();
   if (merchantType) return <span className="rounded bg-muted px-1.5 text-muted-foreground">{merchantType}</span>;
+  if (!expected) return null;
   if (merchantId) {
     const open = (e: React.SyntheticEvent) => {
       e.preventDefault();
@@ -34,5 +36,5 @@ export function MerchantChip({ merchantId, merchantType, transfer }: { merchantI
       </span>
     );
   }
-  return transfer ? null : <span className="rounded bg-secondary px-1.5 text-muted-foreground">No merchant</span>;
+  return <span className="rounded bg-secondary px-1.5 text-muted-foreground">No merchant</span>;
 }

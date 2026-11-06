@@ -265,7 +265,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     {t.flagged ? <span className="rounded bg-destructive/15 px-1.5 text-destructive">Flagged</span> : null}
                     <Badge badge={categoryBadge(t, (id) => labelOf.get(id))} />
                     {/* The merchant's type, a warning when it has none yet, or a quiet note with no merchant (#333). */}
-                    <MerchantChip merchantId={t.merchantId} merchantType={t.merchantType} transfer={Boolean(t.transfer)} />
+                    <MerchantChip merchantId={t.merchantId} merchantType={t.merchantType} expected={t.merchantExpected} />
                     {/* What it's connected to, so nothing reads as counted twice:
                         the other side of a transfer, a paycheck's pay stub. */}
                     {t.transfer ? (
