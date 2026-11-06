@@ -75,6 +75,7 @@ export const SOURCE_LABELS = {
   hand: "Entered by hand",
   opening: "Opening position",
   position_gap: "From a change in what the brokerage reports",
+  import: "Imported from a brokerage export",
 } as const;
 
 /** A cash row as the Trades page shows it (#321): the owner's own description, day and amount. */

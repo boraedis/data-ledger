@@ -46,7 +46,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 const sides = z.enum(["buy", "sell", "transfer_in", "transfer_out"]);
 
 /** The account a trade can go in, and whether its trades drive its positions. */
-async function tradeAccount(db: Db, accountId: string): Promise<{ drivesPositions: boolean }> {
+export async function tradeAccount(db: Db, accountId: string): Promise<{ drivesPositions: boolean }> {
   const [account] = await db.select().from(accounts).where(eq(accounts.id, accountId));
   if (!account) throw new NotFoundError("Account not found");
   if (account.source === "manual") {
@@ -69,7 +69,7 @@ async function trade(db: Db, tradeId: string) {
  * revalues the account. A symbol new to the account takes its first price
  * from its trades, since a position needs one to be valued.
  */
-async function followTrades(ctx: WriteContext, accountId: string, symbols: string[], on: string, assetClass: "crypto" | "equity" = "crypto") {
+export async function followTrades(ctx: WriteContext, accountId: string, symbols: string[], on: string, assetClass: "crypto" | "equity" = "crypto") {
   const all = await confirmedTrades(ctx.db, eq(trades.accountId, accountId));
   const short = firstShortfall(all);
   if (short) throw new Error(`That sells more ${short.symbol} than was held on ${short.on}`);
@@ -529,7 +529,7 @@ export type TradeRow = {
   quantity: string;
   price: string | null;
   status: "draft" | "confirmed" | "dismissed";
-  source: "hand" | "opening" | "position_gap";
+  source: "hand" | "opening" | "position_gap" | "import";
   transactionId: string | null;
   kind: "trade" | "reinvestment" | "split" | "transfer" | "fee";
   ratio: string | null;

@@ -357,7 +357,9 @@ export const tradeStatus = pgEnum("trade_status", ["draft", "confirmed", "dismis
 // Where a trade came from: typed by the owner, the opening trade of a
 // position (#320 reuses it for synced accounts), or a gap between what the
 // sync reports and what the trades replay to (#320).
-export const tradeSource = pgEnum("trade_source", ["hand", "opening", "position_gap"]);
+// Where a trade came from: the owner, an account's opening, a gap the sync
+// showed, or a brokerage export the owner imported (#356).
+export const tradeSource = pgEnum("trade_source", ["hand", "opening", "position_gap", "import"]);
 // What kind of change in shares it is (#324). A plain trade, a dividend
 // reinvested (a buy the dividend paid for), a split (shares change, value
 // doesn't), shares moved between two of the owner's accounts, or a fee paid
@@ -399,12 +401,16 @@ export const trades = pgTable(
     source: tradeSource("source").notNull().default("hand"),
     // The cash row it settled through, when there is one (#317, #321).
     transactionId: uuid("transaction_id").references(() => transactions.id, { onDelete: "set null" }),
+    // The export row it came from (#356): the row's stable ID, so importing
+    // the same file again skips a trade with no cash row to carry it (a split).
+    importKey: text("import_key"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
     index("trades_account_symbol_on_idx").on(t.accountId, t.symbol, t.on),
     // One trade per cash row.
     uniqueIndex("trades_transaction_idx").on(t.transactionId).where(sql`${t.transactionId} is not null`),
+    uniqueIndex("trades_import_key_idx").on(t.accountId, t.importKey).where(sql`${t.importKey} is not null`),
     // What every reader of confirmed trades relies on: a symbol and one day.
     check("trades_confirmed_complete", sql`${t.status} <> 'confirmed' or (${t.symbol} is not null and ${t.onFrom} is null)`),
     check("trades_draft_identified", sql`${t.symbol} is not null or ${t.positionId} is not null`),
