@@ -10,7 +10,7 @@ import { checkSuspicious, listFlags, reviewFlag } from "@/operations/suspicious"
 import { setTaxAssumptions, taxEstimate } from "@/operations/taxes";
 import { createProvisional, discardProvisional, listProvisional, matchProvisional } from "@/operations/provisional";
 import { getImportMapping, importHistory, saveImportMapping } from "@/operations/history";
-import { importTrades } from "@/operations/trade-import";
+import { importTrades, saveTradeImportMapping, tradeImportMapping } from "@/operations/trade-import";
 import { addOtherHalf, createManual, deleteManual, keepManual, manualMatches, mergeManual, updateManual } from "@/operations/manual";
 import { cancelRecurring, dismissAlert, markStillActive, listAlerts, listCancelled, listRecurring, markAlertsNotified, refreshAlerts, setRecurringStatus } from "@/operations/recurring";
 import {
@@ -146,6 +146,8 @@ export const operations: Operation[] = [
   saveImportMapping,
   importHistory,
   importTrades,
+  tradeImportMapping,
+  saveTradeImportMapping,
   createManual,
   addOtherHalf,
   updateManual,

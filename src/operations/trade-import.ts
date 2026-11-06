@@ -1,10 +1,11 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, trades, transactions } from "@/db/schema";
-import { ACTION_CATEGORIES } from "@/lib/trades/import-csv";
+import { accounts, importMappings, trades, transactions } from "@/db/schema";
+import { DATE_FORMATS } from "@/lib/history/csv";
+import { ACTION_CATEGORIES, type BrokerageMapping } from "@/lib/trades/import-csv";
 import { previewBrokerageImport } from "@/lib/trades/import-load";
 import { valueDate } from "@/operations/accounts";
-import { defineWrite } from "@/operations/define";
+import { defineRead, defineWrite } from "@/operations/define";
 import { assetClassInput, decimal, symbol } from "@/operations/holdings";
 import { followTrades, tradeAccount } from "@/operations/trades";
 import { MAX_IMPORT_ROWS } from "@/operations/history";
@@ -50,6 +51,49 @@ const row = z.object({
 });
 
 const today = () => new Date().toISOString().slice(0, 10);
+
+// How an account's brokerage lays out its export (#357), saved for next
+// time in the same table as a bank's (#35): the bank import refuses
+// investment accounts, so an account only ever has one kind.
+const column = z.number().int().min(0).max(200);
+const mapping = z.object({
+  skipRows: z.number().int().min(0).max(50),
+  hasHeader: z.boolean(),
+  dateFormat: z.enum(DATE_FORMATS),
+  date: column,
+  settleDate: column.nullable(),
+  action: column,
+  symbol: column,
+  quantity: column,
+  price: column.nullable(),
+  amount: column,
+  description: column.nullable(),
+  actions: z.record(z.string().max(200), z.enum(ACTION_CATEGORIES)),
+});
+
+export const tradeImportMapping = defineRead({
+  name: "trades.importMapping",
+  description: "The saved column and action mapping for an investment account's brokerage CSV import, or null. Owner only.",
+  allowedActors: ["user"],
+  input: z.object({ accountId: z.uuid() }),
+  run: async (db, { accountId }) => {
+    const [row] = await db.select({ mapping: importMappings.mapping }).from(importMappings).where(eq(importMappings.accountId, accountId));
+    return row ? (row.mapping as BrokerageMapping) : null;
+  },
+});
+
+export const saveTradeImportMapping = defineWrite({
+  name: "trades.saveImportMapping",
+  description: "Save how an investment account's brokerage lays out its CSV export: its columns, and what each of its actions means.",
+  allowedActors: ["user"],
+  input: z.object({ accountId: z.uuid(), mapping }),
+  apply: async (ctx, { accountId, mapping }) => {
+    await tradeAccount(ctx.db, accountId);
+    const [existing] = await ctx.db.select({ id: importMappings.id }).from(importMappings).where(eq(importMappings.accountId, accountId));
+    if (existing) return ctx.update(importMappings, existing.id, { mapping, updatedAt: new Date() });
+    return ctx.insert(importMappings, { accountId, mapping });
+  },
+});
 
 export const importTrades = defineWrite({
   name: "trades.import",
