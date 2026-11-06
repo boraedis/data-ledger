@@ -543,7 +543,7 @@ export const listTradesRead = defineRead({
   name: "trades.list",
   description:
     "Trades, newest first, for the owner's Trades page: drafts, confirmed and dismissed, optionally by account, status, symbol and " +
-    "date range (on the trade's latest possible day). Owner only.",
+    "date range (on the trade's latest possible day), or the one settled through a cash row (transactionId). Owner only.",
   allowedActors: ["user"],
   input: z.object({
     accountId: z.uuid().optional(),
@@ -551,6 +551,8 @@ export const listTradesRead = defineRead({
     symbol: z.string().trim().min(1).max(16).optional(),
     from: valueDate.optional(),
     to: valueDate.optional(),
+    // The trade a cash row settled, for the transaction's own page (#351).
+    transactionId: z.uuid().optional(),
     limit: z.number().int().min(1).max(1000).default(500),
   }),
   run: async (db, input): Promise<TradeRow[]> => {
@@ -564,6 +566,7 @@ export const listTradesRead = defineRead({
           input.symbol ? eq(trades.symbol, input.symbol.toUpperCase()) : undefined,
           input.from ? gte(trades.on, input.from) : undefined,
           input.to ? lte(trades.on, input.to) : undefined,
+          input.transactionId ? eq(trades.transactionId, input.transactionId) : undefined,
         ),
       )
       .orderBy(desc(trades.on), desc(trades.createdAt))
