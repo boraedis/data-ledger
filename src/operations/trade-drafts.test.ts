@@ -1,6 +1,6 @@
 import { eq, sql } from "drizzle-orm";
 import { beforeEach, describe, expect, it } from "vitest";
-import { accounts, holdingSnapshots, trades } from "@/db/schema";
+import { accounts, holdingSnapshots, trades, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
 import { tradedSymbols } from "@/lib/prices/backfill";
 import { tallyOperations } from "@/lib/tally/tools";
@@ -8,6 +8,7 @@ import { testDb } from "@/lib/test-utils/db";
 import { listManualPositions } from "@/operations/holdings";
 import { execute, read, undoCommand } from "@/operations/runtime";
 import { draftCounts, draftTotal, listTradesRead } from "@/operations/trades";
+import { getTransaction } from "@/operations/transactions";
 
 // Draft trades (#318): inferred, partly filled in, and counted nowhere until
 // the owner confirms them. Invented accounts, symbols and quantities.
@@ -145,5 +146,23 @@ describe("the Trades page's list (#319)", () => {
 
   it("is the owner's alone", () => {
     expect(listTradesRead.allowedActors).toEqual(["user"]);
+  });
+
+  it("finds the trade a cash row settled, for the transaction's page, and transactions.get still says nothing of it (#351)", async () => {
+    const [cash, other] = await db
+      .insert(transactions)
+      .values([
+        { accountId: broker, postedOn: "2026-04-01", amountCents: -50_000, description: "BOUGHT ZZIX", externalId: "c1" },
+        { accountId: broker, postedOn: "2026-04-02", amountCents: 1_200, description: "DIVIDEND ZZIX", externalId: "c2" },
+      ])
+      .returning();
+    await run("trades.add", { accountId: broker, on: "2026-04-01", symbol: "ZZIX", side: "buy", quantity: "5", price: "100", transactionId: cash.id });
+    await run("trades.add", { accountId: broker, on: "2026-04-03", symbol: "ZQXV", side: "buy", quantity: "1" });
+
+    expect((await read(db, listTradesRead, { transactionId: cash.id })).map((t) => [t.symbol, t.quantity, t.price])).toEqual([["ZZIX", "5", "100"]]);
+    expect(await read(db, listTradesRead, { transactionId: other.id })).toEqual([]);
+    // Tally reads the transaction; the trade stays on the owner's pages.
+    const keys = Object.keys(await read(db, getTransaction, { transactionId: cash.id }));
+    expect(keys.filter((k) => /trade|quantity|price|symbol/i.test(k))).toEqual([]);
   });
 });
