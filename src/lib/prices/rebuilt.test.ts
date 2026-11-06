@@ -53,6 +53,15 @@ describe("rebuild (#232)", () => {
     expect(h.completeFrom).toBe("2026-03-04");
   });
 
+  it("names what keeps an account from being valued: an unpriced symbol, or a sale with no buy", () => {
+    const unpriced = rebuild(new Map([["a", [trade("a", "2026-03-02", "ZQXV", "buy", "2")]]]), new Map(), "2026-03-04");
+    expect(unpriced.accounts[0]).toMatchObject({ coverageStart: null, blocker: { symbol: "ZQXV", reason: "no price" } });
+    const short = rebuild(new Map([["a", [trade("a", "2026-03-02", "ZQXV", "sell", "2")]]]), new Map([closes("ZQXV", [["2026-03-02", "10"]])]), "2026-03-04");
+    expect(short.accounts[0].blocker).toEqual({ symbol: "ZQXV", reason: "sold short" });
+    const fine = rebuild(new Map([["a", [trade("a", "2026-03-02", "ZQXV", "buy", "2")]]]), new Map([closes("ZQXV", [["2026-03-02", "10"]])]), "2026-03-04");
+    expect(fine.accounts[0].blocker).toBeNull();
+  });
+
   it("treats selling more than a partial log shows as unknown, not negative wealth", () => {
     const h = rebuild(new Map([["a", [trade("a", "2026-03-02", "ZZIX", "sell", "1")]]]), new Map([closes("ZZIX", [["2026-03-02", "10"]])]), "2026-03-02");
     expect(h.accounts[0].values).toEqual([null]);
