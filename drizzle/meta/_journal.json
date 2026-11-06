@@ -351,6 +351,13 @@
       "when": 1793846598884,
       "tag": "0049_intraday_prices",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1793984482336,
+      "tag": "0050_trades_import",
+      "breakpoints": true
     }
   ]
 }

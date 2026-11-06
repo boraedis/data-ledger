@@ -28,11 +28,12 @@ export async function previewBrokerageImport(db: Db, accountId: string, rows: Br
   ]);
   if (!account) throw new Error("Account not found");
   const withTrade = new Set(linked.map((l) => l.transactionId));
-  // Imported before: a cash row carries its stable ID as external ID. A
-  // trade with no cash (a split, shares moved in) has nowhere to carry one
-  // yet; re-imported, it matches its own confirmed trade as "already here"
-  // by symbol, side, quantity and day, which leaves it unticked all the same.
-  const importedIds = new Set(cash.filter((c) => c.externalId?.startsWith("brk:")).map((c) => c.externalId!));
+  // Imported before: a cash row carries its stable ID as external ID, and
+  // a trade as its import key (#356), so a split with no cash is known too.
+  const importedIds = new Set([
+    ...cash.filter((c) => c.externalId?.startsWith("brk:")).map((c) => c.externalId!),
+    ...all.flatMap((t) => (t.importKey ? [t.importKey] : [])),
+  ]);
   const planned = planImport({
     rows,
     importedIds,
