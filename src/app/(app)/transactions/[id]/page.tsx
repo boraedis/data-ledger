@@ -23,6 +23,8 @@ import { TransferNote } from "./transfer-note";
 import { merchantExplanation } from "@/lib/merchants/trail";
 import { MerchantNote } from "./merchant-note";
 import { listMerchants, similarTransactions } from "@/operations/merchants";
+import { listTradesRead } from "@/operations/trades";
+import { TradeNote } from "./trade-note";
 
 export default async function TransactionPage(props: PageProps<"/transactions/[id]">) {
   const { id } = await props.params;
@@ -34,7 +36,7 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
     throw error;
   });
   if (!txn) notFound();
-  const [cats, tagList, accts, peopleList, shared, merge, merchantInfo, merchantList, similar] = await Promise.all([
+  const [cats, tagList, accts, peopleList, shared, merge, merchantInfo, merchantList, similar, linkedTrades] = await Promise.all([
     read(db, listCategories, {}),
     read(db, listTags, {}),
     read(db, listAccounts, {}),
@@ -44,6 +46,9 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
     merchantExplanation(db, txn.id),
     read(db, listMerchants, {}),
     read(db, similarTransactions, { transactionId: txn.id }),
+    // The trade this cash row settled (#351), read here and not in
+    // transactions.get: that's one of Tally's tools, and trades stay owner-only.
+    read(db, listTradesRead, { transactionId: txn.id, limit: 1 }),
   ]);
   const otherAccount = txn.transfer ? accts.find((a) => a.id === txn.transfer!.accountId)?.name ?? "another account" : null;
   // Where an unpaired transfer's other half could be: accounts the matcher would pair it with.
@@ -97,6 +102,7 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
           income below, or it counts as neither.
         </p>
       ) : null}
+      {linkedTrades[0] ? <TradeNote trade={linkedTrades[0]} /> : null}
       {existingHalves.length > 0 ? <PairWithExisting transactionId={txn.id} amountCents={txn.amountCents} candidates={existingHalves} /> : null}
       {otherHalfAccounts.length > 0 ? (
         <AddOtherHalf transactionId={txn.id} accounts={otherHalfAccounts} description={txn.description} />
