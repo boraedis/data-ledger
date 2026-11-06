@@ -70,6 +70,12 @@ export default async function AccountsPage() {
           </Link>
           <span className="text-muted-foreground"> · for the time before the sync reaches back (about 90 days)</span>
         </p>
+        <p className="text-sm">
+          <Link href="/trades/import" className="underline">
+            Import a brokerage or retirement account&apos;s activity
+          </Link>
+          <span className="text-muted-foreground"> · its trades and cash rows, from the brokerage&apos;s CSV export</span>
+        </p>
       </div>
       {byInstitution.size === 0 ? (
         <p className="text-muted-foreground">No bank accounts yet. Connect a bank under Settings.</p>

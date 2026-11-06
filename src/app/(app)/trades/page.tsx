@@ -101,6 +101,12 @@ export default async function TradesPage(props: PageProps<"/trades">) {
           Buys, sells and share transfers in your investment accounts. In a manual account each position is what its trades add up to; in a synced one,
           trades rebuild what you held in the past. A draft counts nowhere until you confirm it.
         </p>
+        <p className="text-sm">
+          <Link href="/trades/import" className="underline">
+            Import trades from a brokerage export
+          </Link>
+          <span className="text-muted-foreground"> · a CSV of an account&apos;s activity, its cash and its trades together</span>
+        </p>
       </div>
 
       <section className="space-y-2" aria-labelledby="drafts">

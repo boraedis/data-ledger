@@ -10,7 +10,8 @@ import { confirmedTrades } from "@/lib/trades/confirmed";
 import { draftTradeGaps } from "@/lib/trades/draft-gaps";
 import { applyBrokerageMapping, guessBrokerageMapping, type BrokerageRow } from "@/lib/trades/import-csv";
 import { listManualPositions } from "@/operations/holdings";
-import { execute, undoCommand } from "@/operations/runtime";
+import { execute, read, undoCommand } from "@/operations/runtime";
+import { tradeImportMapping } from "@/operations/trade-import";
 
 // Writing a brokerage import (#356): an invented synced brokerage with a
 // baseline, a draft from a gap and a synced cash row, and an invented
@@ -140,5 +141,29 @@ describe("trades.import", () => {
 
   it("isn't one of Tally's tools", () => {
     expect(tallyOperations().some((op) => op.name === "trades.import")).toBe(false);
+  });
+});
+
+describe("an account's saved layout (#357)", () => {
+  it("is saved and read back, replaced the second time, and only for an investment account", async () => {
+    const all = readCsv(FILE);
+    const mapping = guessBrokerageMapping(all);
+    const save = (accountId: string, m = mapping) => execute(db, { operation: "trades.saveImportMapping", input: { accountId, mapping: m }, actor: "user", reason: "test" });
+    await save(broker);
+    expect(await read(db, tradeImportMapping, { accountId: broker })).toEqual(mapping);
+    await save(broker, { ...mapping, actions: { ...mapping.actions, MYSTERY: "ignore" } });
+    expect((await read(db, tradeImportMapping, { accountId: broker }))?.actions.MYSTERY).toBe("ignore");
+
+    const [{ id: checking }] = await db
+      .insert(accounts)
+      .values({ name: "Everyday Checking", institution: "Example Bank", type: "checking", source: "simplefin", externalId: "c1" })
+      .returning({ id: accounts.id });
+    await expect(save(checking)).rejects.toThrow(/brokerage or retirement/);
+  });
+
+  it("is the owner's alone", () => {
+    const names = tallyOperations().map((op) => op.name);
+    expect(names).not.toContain("trades.importMapping");
+    expect(names).not.toContain("trades.saveImportMapping");
   });
 });
