@@ -9,7 +9,7 @@ import { confirmedTrades } from "@/lib/trades/confirmed";
 import { draftTradeGaps } from "@/lib/trades/draft-gaps";
 import { applyBrokerageMapping, guessBrokerageMapping, type BrokerageRow } from "@/lib/trades/import-csv";
 import { previewBrokerageImport } from "@/lib/trades/import-load";
-import { moveBaseline } from "@/lib/trades/import-plan";
+import { moveBaseline, planImport } from "@/lib/trades/import-plan";
 import { planTradeGaps } from "@/lib/trades/plan";
 
 // What a brokerage import would do against what's already there (#355): an
@@ -156,5 +156,20 @@ describe("the baseline", () => {
       ],
     });
     expect(move).toEqual({ from: "2026-05-01", to: "2026-01-31", openings: [{ symbol: "ZZIX", side: "buy", quantity: "2" }], removes: ["o1"], conflicts: [] });
+  });
+});
+
+// A row the reader flagged (its quantity and its cash disagree about which
+// way it went) is offered but not ticked; its neighbours are ticked as usual.
+describe("a flagged row", () => {
+  it("starts unticked while the rest of the file starts ticked", () => {
+    const all = readCsv("Trade Date,Type,Symbol,Quantity,Amount\n2026-06-01,Trades,ZZIX,5,-500.00\n2026-06-02,Trades,ZZIX,-1,-101.00\n2026-06-03,Trades,ZQXV,-2,100.50\n");
+    const { rows } = applyBrokerageMapping(all, guessBrokerageMapping(all));
+    const planned = planImport({ rows, importedIds: new Set(), existingCash: [], trades: [], cashFunds: new Set() });
+    expect(planned.map((r) => [r.row, r.ticked, r.warning != null])).toEqual([
+      [2, true, false],
+      [3, false, true],
+      [4, true, false],
+    ]);
   });
 });

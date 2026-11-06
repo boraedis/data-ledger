@@ -6,7 +6,7 @@ import { hasValidSession } from "@/lib/auth/session";
 import { getDb } from "@/lib/db";
 import { readCsv } from "@/lib/history/csv";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
-import { actionKey, applyBrokerageMapping, distinctActions, guessAction, guessBrokerageMapping, type ActionCategory, type BrokerageMapping } from "@/lib/trades/import-csv";
+import { actionKey, applyBrokerageMapping, distinctActions, guessActions, guessBrokerageMapping, quantitySigns, type ActionCategory, type BrokerageMapping } from "@/lib/trades/import-csv";
 import { previewBrokerageImport } from "@/lib/trades/import-load";
 import type { BaselineMove, PlannedRow } from "@/lib/trades/import-plan";
 import { MAX_IMPORT_ROWS } from "@/operations/history";
@@ -31,24 +31,21 @@ async function analyse(db: Db, accountId: string, text: string, given: Brokerage
   // seen is guessed, for the owner to confirm with the rest.
   const base = given ?? saved ?? guessed;
   const mapping: BrokerageMapping = { ...base, actions: { ...base.actions } };
-  for (const key of distinctActions(grid, mapping)) {
-    if (mapping.actions[key]) continue;
-    const guess = guessAction(key);
-    if (guess && !given) mapping.actions[key] = guess;
-  }
+  if (!given) Object.assign(mapping.actions, guessActions(grid, mapping, mapping.actions));
   const { rows, errors } = applyBrokerageMapping(grid, mapping);
   if (rows.length > MAX_IMPORT_ROWS) throw new Error(`That file has ${rows.length} rows; one import takes up to ${MAX_IMPORT_ROWS}. Export a year at a time.`);
   return { grid, mapping, rows, errors };
 }
 
-export type PreviewRow = Pick<PlannedRow, "row" | "id" | "action" | "category" | "cash" | "trade" | "cashPlan" | "tradePlan" | "linkTo" | "ticked">;
+export type PreviewRow = Pick<PlannedRow, "row" | "id" | "action" | "category" | "cash" | "trade" | "cashPlan" | "tradePlan" | "linkTo" | "ticked" | "warning">;
 
 export type Preview = {
   mapping: BrokerageMapping;
   // The first rows as they are in the file, for mapping columns by eye.
   sample: string[][];
   // Each of the file's actions once, with how many rows have it and what it's mapped to.
-  actions: { key: string; rows: number; category: ActionCategory | null }[];
+  // `signs` is how many of its rows have a positive and a negative quantity, shown beside the by-sign meanings.
+  actions: { key: string; rows: number; category: ActionCategory | null; signs: { positive: number; negative: number } }[];
   errors: { row: number; message: string }[];
   rows: PreviewRow[];
   reimported: number;
@@ -62,6 +59,7 @@ export async function previewTradeImport(accountId: string, text: string, mappin
     const db = getDb();
     const a = await analyse(db, accountId, text, mapping);
     const plan = await previewBrokerageImport(db, accountId, a.rows, ticked ? new Set(ticked) : undefined);
+    const signs = quantitySigns(a.grid, a.mapping);
     const counts = new Map<string, number>();
     for (const cells of a.grid.slice(a.mapping.skipRows + (a.mapping.hasHeader ? 1 : 0))) {
       const key = actionKey(cells[a.mapping.action] ?? "");
@@ -70,11 +68,11 @@ export async function previewTradeImport(accountId: string, text: string, mappin
     return {
       mapping: a.mapping,
       sample: a.grid.slice(0, a.mapping.skipRows + 6),
-      actions: distinctActions(a.grid, a.mapping).map((key) => ({ key, rows: counts.get(key) ?? 0, category: a.mapping.actions[key] ?? null })),
+      actions: distinctActions(a.grid, a.mapping).map((key) => ({ key, rows: counts.get(key) ?? 0, category: a.mapping.actions[key] ?? null, signs: signs.get(key) ?? { positive: 0, negative: 0 } })),
       errors: a.errors,
       rows: plan.rows
         .filter((r) => !r.reimported)
-        .map(({ row, id, action, category, cash, trade, cashPlan, tradePlan, linkTo, ticked: on }) => ({ row, id, action, category, cash, trade, cashPlan, tradePlan, linkTo, ticked: ticked ? ticked.includes(id) : on })),
+        .map(({ row, id, action, category, cash, trade, cashPlan, tradePlan, linkTo, warning, ticked: on }) => ({ row, id, action, category, cash, trade, cashPlan, tradePlan, linkTo, warning, ticked: ticked ? ticked.includes(id) : on })),
       reimported: plan.rows.filter((r) => r.reimported).length,
       baseline: plan.baseline,
     };

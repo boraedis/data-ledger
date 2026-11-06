@@ -6,8 +6,10 @@ import {
   categoryFor,
   distinctActions,
   guessAction,
+  guessActions,
   guessBrokerageMapping,
   parseSignedDecimal,
+  quantitySigns,
   type BrokerageMapping,
 } from "@/lib/trades/import-csv";
 
@@ -154,5 +156,79 @@ describe("layout B", () => {
     ]);
     // A buy with its amount left blank is still its shares, with no cash and no price.
     expect(rows).toMatchObject([{ row: 4, cash: null, trade: { quantity: "1", price: null } }]);
+  });
+});
+
+// Layout C: the action column says what kind of thing a row is about
+// ("Trades", "Securities"), never which way it went. The way is the sign of
+// the quantity, and a buy's cash is negative. Invented funds and amounts.
+const LAYOUT_C = `Trade Date,Type,Symbol,Description,Quantity,Price,Amount
+2026-06-01,Trades,ZZIX,Example Index Fund,5,100.00,-500.00
+2026-06-02,Trades,ZQXV,Example Growth Fund,-2,50.25,100.50
+2026-06-03,Trades,ZZIX,Example Index Fund,-1,101.00,-101.00
+2026-06-04,Securities,ZMMF,Example Money Fund,4,,
+2026-06-05,Securities,ZMMF,Example Money Fund,-1,,
+2026-06-06,Trades,ZZIX,Example Index Fund,,,-10.00
+2026-06-07,Trades,ZQXV,Example Growth Fund,1,50.00,
+`;
+
+describe("layout C: the way a row went is the sign of its quantity", () => {
+  const all = readCsv(LAYOUT_C);
+  const guessed = guessBrokerageMapping(all);
+
+  it("counts each action's positive and negative quantities", () => {
+    expect(guessed).toMatchObject({ action: 1, quantity: 4, amount: 6 });
+    expect(quantitySigns(all, guessed).get("TRADES")).toEqual({ positive: 2, negative: 2 });
+    expect(quantitySigns(all, guessed).get("SECURITIES")).toEqual({ positive: 1, negative: 1 });
+  });
+
+  it("guesses the sign meaning for an action whose quantities run both ways, and only then", () => {
+    expect(guessed.actions).toEqual({ TRADES: "trade_by_sign", SECURITIES: "trade_by_sign" });
+    // One sign only says nothing about the way, so it's left for the owner.
+    const oneWay = readCsv("Date,Type,Symbol,Quantity,Amount\n2026-06-01,Trades,ZZIX,5,-500.00\n2026-06-02,Trades,ZZIX,2,-200.00\n");
+    expect(guessBrokerageMapping(oneWay).actions).toEqual({});
+    // Words win over signs: a file that says bought is a buy whatever its quantities.
+    const worded = readCsv("Date,Action,Symbol,Quantity,Amount\n2026-06-01,Bought,ZZIX,5,-500.00\n2026-06-02,Bought,ZZIX,-2,200.00\n");
+    expect(guessBrokerageMapping(worded).actions).toEqual({ BOUGHT: "buy" });
+  });
+
+  it("does not guess over an action the owner already mapped", () => {
+    expect(guessActions(all, guessed, { TRADES: "ignore" })).toEqual({ SECURITIES: "trade_by_sign" });
+  });
+
+  it("makes a buy of a positive quantity and a sell of a negative one, priced as the file says", () => {
+    const { rows } = applyBrokerageMapping(all, guessed);
+    const at = (row: number) => rows.find((r) => r.row === row)!;
+    expect(at(2)).toMatchObject({ category: "trade_by_sign", trade: { kind: "trade", side: "buy", symbol: "ZZIX", quantity: "5", price: "100" }, cash: { amountCents: -50_000 }, warning: null });
+    expect(at(3)).toMatchObject({ trade: { kind: "trade", side: "sell", symbol: "ZQXV", quantity: "2", price: "50.25" }, cash: { amountCents: 10_050 }, warning: null });
+  });
+
+  it("flags a row whose cash disagrees with its quantity, and still reads it", () => {
+    const { rows } = applyBrokerageMapping(all, guessed);
+    const odd = rows.find((r) => r.row === 4)!;
+    // A sell by its quantity, with money leaving.
+    expect(odd.trade?.side).toBe("sell");
+    expect(odd.warning).toMatch(/negative, a sell.*money out/);
+    // The same disagreement the other way round: a buy by its quantity with money arriving.
+    const flipped = readCsv("Date,Type,Symbol,Quantity,Amount\n2026-06-01,Trades,ZZIX,5,500.00\n2026-06-02,Trades,ZZIX,-5,-500.00\n");
+    const rowsFlipped = applyBrokerageMapping(flipped, { ...guessBrokerageMapping(flipped), actions: { TRADES: "trade_by_sign" } }).rows;
+    expect(rowsFlipped.map((r) => [r.trade?.side, r.warning !== null])).toEqual([["buy", true], ["sell", true]]);
+  });
+
+  it("does not flag a row with no cash to check against, and errors on one with no quantity", () => {
+    const { rows, errors } = applyBrokerageMapping(all, guessed);
+    expect(rows.find((r) => r.row === 8)).toMatchObject({ trade: { side: "buy", quantity: "1" }, cash: null, warning: null });
+    expect(errors).toEqual([{ row: 7, message: expect.stringContaining("with no quantity") }]);
+  });
+
+  it("reads the other action as shares moved in and out when the owner says so", () => {
+    const { rows } = applyBrokerageMapping(all, { ...guessed, actions: { TRADES: "trade_by_sign", SECURITIES: "shares_by_sign" } });
+    expect(rows.find((r) => r.row === 5)).toMatchObject({ category: "shares_by_sign", cash: null, trade: { kind: "transfer", side: "transfer_in", symbol: "ZMMF", quantity: "4", price: null } });
+    expect(rows.find((r) => r.row === 6)).toMatchObject({ trade: { kind: "transfer", side: "transfer_out", quantity: "1" } });
+  });
+
+  it("keeps stable IDs, so the same file twice matches every row", () => {
+    const again = applyBrokerageMapping(readCsv(LAYOUT_C), guessed).rows.map((r) => r.id);
+    expect(applyBrokerageMapping(all, guessed).rows.map((r) => r.id)).toEqual(again);
   });
 });
