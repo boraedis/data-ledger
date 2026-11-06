@@ -7,6 +7,7 @@ import { formatCents } from "@/lib/money";
 import { GROUP_LABELS, employerKindLabel, kindLabel, type EmployerPayKind, type PayLineGroup, type PayLineKind } from "@/lib/pay/stubs";
 import { deleteStub } from "./actions";
 import { StubForm, type FormStub } from "./stub-form";
+import { privateName } from "@/lib/privacy/names";
 
 type Stub = Omit<FormStub, "lines"> & {
   id: string;
@@ -33,7 +34,7 @@ function StubCard({ stub }: { stub: Stub }) {
       <button type="button" className="flex w-full items-start justify-between gap-3 text-left" onClick={() => setOpen(!open)} aria-expanded={open}>
         <span className="min-w-0">
           <span className="block font-medium">
-            {stub.payDate} · {stub.employer}
+            {stub.payDate} · {privateName("employer", stub.employer)}
             {stub.oneTime ? (
               // Why the tax estimate leaves it out of its pace (#113).
               <span className="ml-2 rounded-sm border px-1 py-px text-[10px] font-normal text-muted-foreground" title="Counted in the year so far, not in the tax estimate's pace">
@@ -67,7 +68,7 @@ function StubCard({ stub }: { stub: Stub }) {
               <span key={d.id}>
                 {i ? " + " : ""}
                 <Link href={`/transactions/${d.id}`} className="underline">
-                  {formatCents(d.amountCents)} to {d.accountName}
+                  {formatCents(d.amountCents)} to {privateName("account", d.accountName)}
                 </Link>
               </span>
             ))}

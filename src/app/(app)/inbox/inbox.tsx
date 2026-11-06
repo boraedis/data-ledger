@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { filterOptions, type CategoryOption } from "@/lib/categorize/labels";
 import { formatCents, moneyText } from "@/lib/money";
 import { askModel, categorize, confirmSuggestions, createMerchantRule } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 export type InboxRow = {
   id: string;
@@ -210,7 +211,7 @@ export function Inbox({
         setError(result.error);
         return;
       }
-      let text = `${row.merchant ?? row.description} → ${option.label}`;
+      let text = `${privateName("merchant", row.merchant ?? row.description)} → ${option.label}`;
       let autoCount = result.autoCategorized;
       if (withRule && row.merchant) {
         const ruleResult = await createMerchantRule(row.merchant, option.id);
@@ -251,7 +252,7 @@ export function Inbox({
     startTransition(async () => {
       const result = await createMerchantRule(offer.merchant, offer.categoryId);
       if ("error" in result) setError(result.error);
-      else setNotice({ text: `Rule created: ${offer.merchant} → ${labelOf.get(offer.categoryId)}${result.autoCategorized ? ` · ${result.autoCategorized} more categorized` : ""}` });
+      else setNotice({ text: `Rule created: ${privateName("merchant", offer.merchant)} → ${labelOf.get(offer.categoryId)}${result.autoCategorized ? ` · ${result.autoCategorized} more categorized` : ""}` });
       router.refresh();
     });
   }
@@ -337,7 +338,7 @@ export function Inbox({
           <p>{notice.text}</p>
           {notice.offer ? (
             <Button size="sm" variant="outline" disabled={pending} onClick={() => makeRule(notice.offer!)}>
-              Always categorize {notice.offer.merchant} this way
+              Always categorize {privateName("merchant", notice.offer.merchant)} this way
             </Button>
           ) : null}
         </div>
@@ -368,7 +369,7 @@ export function Inbox({
                         else next.delete(row.id);
                         setChecked(next);
                       }}
-                      aria-label={`Confirm ${row.merchant ?? row.description} as ${labelOf.get(row.suggestedCategoryId) ?? "the suggestion"}`}
+                      aria-label={`Confirm ${privateName("merchant", row.merchant ?? row.description)} as ${labelOf.get(row.suggestedCategoryId) ?? "the suggestion"}`}
                     />
                   </label>
                 ) : (
@@ -386,12 +387,12 @@ export function Inbox({
                   aria-current={i === selected}
                 >
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{row.merchant ?? row.description}</span>
+                    <span className="block truncate font-medium">{privateName("merchant", row.merchant ?? row.description)}</span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {row.postedOn} · {row.accountName}
+                      {row.postedOn} · {privateName("account", row.accountName)}
                       {row.pending ? " · pending" : ""}
                       {row.provisionalSource ? " · from an alert" : ""}
-                      {row.manual ? " · added by hand" : ""} · {row.description}
+                      {row.manual ? " · added by hand" : ""} · {privateName("description", row.description)}
                     </span>
                     {row.suggestedCategoryId ? (
                       <span className="block truncate text-xs text-muted-foreground">

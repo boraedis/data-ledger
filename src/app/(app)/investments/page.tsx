@@ -10,6 +10,7 @@ import { pricesNote } from "@/lib/prices/describe";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 import { draftCounts } from "@/operations/trades";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Investments (#27): what's held, how it's split, and how it's done against
 // what was paid — display only. Data comes from balance and holding
@@ -82,7 +83,7 @@ function HoldingsAcross({ combined }: { combined: ReturnType<typeof combineHoldi
                       ▸
                     </span>
                     {h.symbol ? <span className="font-medium">{h.symbol} </span> : null}
-                    <span className={h.symbol ? "text-muted-foreground" : ""}>{h.description}</span>
+                    <span className={h.symbol ? "text-muted-foreground" : ""}>{privateName("description", h.description)}</span>
                   </span>
                   <span className="block pl-4 text-xs text-muted-foreground">
                     {h.accounts.length === 1 ? h.accounts[0].accountName : `${h.accounts.length} accounts`}
@@ -125,7 +126,7 @@ function HoldingsAcross({ combined }: { combined: ReturnType<typeof combineHoldi
                 <tbody>
                   {h.accounts.map((a) => (
                     <tr key={a.accountId} className="border-t">
-                      <td className="py-1 pr-2">{a.accountName}</td>
+                      <td className="py-1 pr-2">{privateName("account", a.accountName)}</td>
                       <td className="py-1 pr-2 text-right tabular-nums">{a.shares}</td>
                       <td className="py-1 pr-2 text-right tabular-nums">{formatCents(a.marketValueCents)}</td>
                       <td className="py-1 text-right tabular-nums">{a.costBasisCents === null ? "—" : formatCents(a.costBasisCents)}</td>
@@ -140,7 +141,7 @@ function HoldingsAcross({ combined }: { combined: ReturnType<typeof combineHoldi
           <li className={`${columns} py-2 text-muted-foreground`}>
             <span className="min-w-0">
               <span className="block pl-4">Cash and other</span>
-              <span className="block truncate pl-4 text-xs">{cashAndOther.map((c) => `${c.accountName} ${formatCents(c.cents)}`).join(" · ")}</span>
+              <span className="block truncate pl-4 text-xs">{cashAndOther.map((c) => `${privateName("account", c.accountName)} ${formatCents(c.cents)}`).join(" · ")}</span>
             </span>
             <span className="hidden sm:block" />
             <span className="text-right tabular-nums">{formatCents(cashAndOther.reduce((s, c) => s + c.cents, 0))}</span>
@@ -149,7 +150,7 @@ function HoldingsAcross({ combined }: { combined: ReturnType<typeof combineHoldi
         ) : null}
         {unreported.map((u) => (
           <li key={u.accountName} className={`${columns} py-2 text-muted-foreground`}>
-            <span className="block truncate pl-4">{u.accountName} (positions not reported)</span>
+            <span className="block truncate pl-4">{privateName("account", u.accountName)} (positions not reported)</span>
             <span className="hidden sm:block" />
             <span className="text-right tabular-nums">{formatCents(u.cents)}</span>
             <span className="hidden sm:block" />
@@ -238,11 +239,11 @@ export default async function InvestmentsPage() {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
                   <h2 className="truncate text-lg font-medium">
-                    {a.name} {a.manual ? <ManualBadge /> : null}
+                    {privateName("account", a.name)} {a.manual ? <ManualBadge /> : null}
                   </h2>
                   <p className="text-xs text-muted-foreground">
                     {KIND_LABELS[a.kind]}
-                    {a.manual && a.institution === "Manual" ? "" : ` · ${a.institution}`}
+                    {a.manual && a.institution === "Manual" ? "" : ` · ${privateName("institution", a.institution)}`}
                     {a.balanceAt ? ` · balance as of ${a.balanceAt.toISOString().slice(0, 10)}` : ""}
                     {a.holdingsOn ? ` · positions as of ${a.holdingsOn}` : ""}
                     {/* Valued live from prices (#230), or, with no positions to price, its balance. */}
@@ -266,7 +267,7 @@ export default async function InvestmentsPage() {
 
               {a.series.length > 1 ? (
                 <ValueChart
-                  label={`${a.name} value`}
+                  label={`${privateName("account", a.name)} value`}
                   height={160}
                   series={a.series.map((p) => ({
                     on: p.on,
@@ -285,7 +286,7 @@ export default async function InvestmentsPage() {
                       <span className="min-w-0">
                         <span className="block truncate">
                           {p.symbol ? <span className="font-medium">{p.symbol} </span> : null}
-                          <span className={p.symbol ? "text-muted-foreground" : ""}>{p.description}</span>
+                          <span className={p.symbol ? "text-muted-foreground" : ""}>{privateName("description", p.description)}</span>
                         </span>
                         <span className="block text-xs text-muted-foreground tabular-nums">
                           {p.shares} shares
@@ -323,7 +324,7 @@ export default async function InvestmentsPage() {
             <p className="text-xs text-muted-foreground">
               Not included:{" "}
               {summary.excluded
-                .map((e) => `${e.name} (${e.reason === "currency" ? "not in USD" : "no balance reported yet"})`)
+                .map((e) => `${privateName("account", e.name)} (${e.reason === "currency" ? "not in USD" : "no balance reported yet"})`)
                 .join(", ")}
               .
             </p>

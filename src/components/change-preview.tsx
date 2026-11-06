@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { formatCents, moneyText } from "@/lib/money";
+import { privateName } from "@/lib/privacy/names";
 
 // A preview of recategorizing many transactions (#100 re-applying a rule,
 // #116 moving them to one category): every transaction that would change,
@@ -68,11 +69,11 @@ export function ChangePreview({ changes, onApply }: { changes: Change[]; onApply
               />
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap justify-between gap-x-3">
-                  <span className="truncate">{c.description}</span>
+                  <span className="truncate">{privateName("description", c.description)}</span>
                   <span className="tabular-nums">{formatCents(c.amountCents)}</span>
                 </span>
                 <span className="block text-xs text-muted-foreground">
-                  {day(c.postedOn)} · {c.accountName} · {c.fromCategoryName} → <span className="text-foreground">{c.toCategoryName}</span>
+                  {day(c.postedOn)} · {privateName("account", c.accountName)} · {c.fromCategoryName} → <span className="text-foreground">{c.toCategoryName}</span>
                   {c.skipReason ? <span className="text-warning"> · {c.skipReason}</span> : null}
                 </span>
               </span>

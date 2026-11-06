@@ -4,6 +4,7 @@ import { rederivePreviewRead } from "@/operations/merchants";
 import { read } from "@/operations/runtime";
 import { ChoiceList, CleanupForm } from "./apply";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Re-running the merchant name cleanup over history (#288): what it would
 // change, read before applying. Only the cleaned name moves (and with it the
@@ -71,7 +72,7 @@ export default async function MerchantCleanupPage() {
               <ul className="divide-y rounded-lg border text-sm">
                 {preview.series.map((s) => (
                   <li key={s.merchant} className="flex justify-between gap-2 px-3 py-1.5">
-                    <span className="min-w-0 truncate">{s.merchant}</span>
+                    <span className="min-w-0 truncate">{privateName("merchant", s.merchant)}</span>
                     <span className="shrink-0 text-xs text-muted-foreground">{s.status}</span>
                   </li>
                 ))}

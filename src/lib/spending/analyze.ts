@@ -1,3 +1,5 @@
+import { privateName } from "@/lib/privacy/names";
+
 // Where the money went (#66): spending grouped by category, merchant or
 // account over a period, each group against the period before. Pure: the
 // page reads transactions.spendingLines (the same lines Budgets counts) and
@@ -122,14 +124,14 @@ const SELF = ":self";
  * Exported so Cash flow (#62) groups exactly as this page does.
  */
 export function keysFor(line: SpendLine, by: Grouping, lookup: Lookup): { key: string; label: string; child?: { key: string; label: string } } {
-  if (by === "merchant") return { key: line.merchant ?? "", label: line.merchant ?? "No merchant" };
+  if (by === "merchant") return { key: line.merchant ?? "", label: privateName("merchant", line.merchant) ?? "No merchant" };
   // By merchant type (#293), each type opening into its merchants.
   if (by === "type") {
     const type = line.merchantType ?? "";
     const merchant = line.merchant ?? "No merchant";
-    return { key: `type:${type}`, label: line.merchantType ?? "No type yet", child: { key: `type:${type}|${merchant}`, label: merchant } };
+    return { key: `type:${type}`, label: line.merchantType ?? "No type yet", child: { key: `type:${type}|${merchant}`, label: privateName("merchant", line.merchant) ?? merchant } };
   }
-  if (by === "account") return { key: line.accountId, label: lookup.accountNames.get(line.accountId) ?? "Unknown account" };
+  if (by === "account") return { key: line.accountId, label: privateName("account", lookup.accountNames.get(line.accountId)) ?? "Unknown account" };
   const category = lookup.categories.get(line.categoryId)!;
   const parent = category.parentId ? lookup.categories.get(category.parentId) : undefined;
   if (!parent) return { key: category.id, label: category.name, child: { key: `${category.id}${SELF}`, label: `${category.name}, not in a subcategory` } };

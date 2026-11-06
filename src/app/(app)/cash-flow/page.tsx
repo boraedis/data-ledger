@@ -18,6 +18,7 @@ import { MisfiledTransfers } from "./misfiled-transfers";
 import { PayPeriods } from "./pay-periods";
 import { Sankey } from "./sankey";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Cash flow (#62, #168): Annual (the default), Monthly and Weekly tabs, each
 // first saying whether money came in faster than it went out
@@ -391,7 +392,7 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
               <li key={u.transactionId}>
                 <Link href={`/transactions/${u.transactionId}`} className="flex justify-between gap-3 py-1.5 hover:underline">
                   <span className="min-w-0 truncate">
-                    {u.postedOn} · {u.accountName} · {u.label}
+                    {u.postedOn} · {privateName("account", u.accountName)} · {u.label}
                   </span>
                   <span className="shrink-0 tabular-nums">{formatCents(u.amountCents)}</span>
                 </Link>

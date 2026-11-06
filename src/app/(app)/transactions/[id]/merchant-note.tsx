@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { merchantExplanation } from "@/lib/merchants/trail";
 import { MerchantFix } from "./merchant-fix";
+import { privateName } from "@/lib/privacy/names";
+import { privateText } from "@/lib/privacy/names";
 
 // How this transaction's merchant was chosen (#290): where the name came
 // from, what cleaning took out, the spelling that matched and its merchant,
@@ -15,7 +17,7 @@ const by = (actor: string) => ACTORS[actor] ?? (actor.startsWith("rule:") ? "a r
 type Info = NonNullable<Awaited<ReturnType<typeof merchantExplanation>>>;
 
 const merchantLink = (m: { id: string; name: string | null } | null) =>
-  !m ? "no merchant" : m.name ? <Link href={`/merchants/${m.id}`} className="underline">{m.name}</Link> : "a merchant since merged away";
+  !m ? "no merchant" : m.name ? <Link href={`/merchants/${m.id}`} className="underline">{privateName("merchant", m.name)}</Link> : "a merchant since merged away";
 
 export function MerchantNote({
   info,
@@ -108,7 +110,7 @@ export function MerchantNote({
                       {t.from?.id !== t.to?.id ? <>{merchantLink(t.from)} → {merchantLink(t.to)}</> : "same merchant"}
                     </>
                   )}
-                  <span className="text-muted-foreground"> ({t.reason})</span>
+                  <span className="text-muted-foreground"> ({privateText(t.reason)})</span>
                 </li>
               ))}
             </ol>

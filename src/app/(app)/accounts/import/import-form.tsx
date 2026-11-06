@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { DATE_FORMATS, type DateFormat, type Mapping } from "@/lib/history/csv";
 import { formatCents } from "@/lib/money";
 import { applyImport, previewImport, type Preview } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // The import's steps on one screen: pick the account and file; check the
 // columns (guessed, or as saved for this account); see what would be added
@@ -86,7 +87,7 @@ export function ImportForm({ accounts, initialAccountId }: { accounts: { id: str
           >
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name}
+                {privateName("account", a.name)}
               </option>
             ))}
           </select>
@@ -246,10 +247,10 @@ export function ImportForm({ accounts, initialAccountId }: { accounts: { id: str
                       />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate">
-                          Row {o.row} · {o.postedOn} · {o.description}
+                          Row {o.row} · {o.postedOn} · {privateName("description", o.description)}
                         </span>
                         <span className="block truncate text-muted-foreground">
-                          Already here: {o.existing.postedOn} · {o.existing.description}
+                          Already here: {o.existing.postedOn} · {privateName("description", o.existing.description)}
                         </span>
                       </span>
                       <span className="shrink-0 tabular-nums">{formatCents(o.amountCents)}</span>

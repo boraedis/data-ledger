@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { rederiveMerchants, removeNameChoice } from "../actions";
+import { privateName } from "@/lib/privacy/names";
 
 // The cleanup preview as the owner shapes it (#305): each before → after
 // ticked by default, with its "after" name editable. Apply makes only the
@@ -100,7 +101,7 @@ export function CleanupForm({ examples, unlisted }: { examples: Example[]; unlis
                   </td>
                   <td className="py-2 pr-2">
                     <span className="block break-words">{e.before ?? "No name"}</span>
-                    <span className="block break-all font-mono text-[11px] text-muted-foreground">{e.description}</span>
+                    <span className="block break-all font-mono text-[11px] text-muted-foreground">{privateName("description", e.description)}</span>
                   </td>
                   <td className="py-2 pr-2">
                     <input
@@ -148,7 +149,7 @@ export function ChoiceList({ choices }: { choices: { id: string; source: string;
             <span className="min-w-0">
               <span className="block break-all font-mono text-[11px] text-muted-foreground">{c.source}</span>
               <span className="block">
-                → {c.name} <span className="text-xs text-muted-foreground tabular-nums">· {c.transactions}</span>
+                → {privateName("merchant", c.name)} <span className="text-xs text-muted-foreground tabular-nums">· {c.transactions}</span>
               </span>
             </span>
             <Button

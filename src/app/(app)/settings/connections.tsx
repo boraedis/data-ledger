@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { formatCents, moneyText } from "@/lib/money";
 import type { ConnectionHealth } from "@/lib/sync/health";
 import { addConnection, syncNow } from "./connection-actions";
+import { privateName } from "@/lib/privacy/names";
 
 const when = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
@@ -53,7 +54,7 @@ function ConnectionCard({ connection }: { connection: ConnectionHealth }) {
       {connection.institutions.map((inst) => (
         <div key={inst.institutionId} className="space-y-1 border-t pt-2">
           <p className="flex items-center gap-2 font-medium">
-            {inst.institution}
+            {privateName("institution", inst.institution)}
             {inst.messages.length || inst.stale ? (
               <span className="rounded bg-warning/15 px-1.5 py-0.5 text-xs text-warning">
                 needs attention
@@ -68,7 +69,7 @@ function ConnectionCard({ connection }: { connection: ConnectionHealth }) {
           <ul className="space-y-0.5">
             {inst.accounts.map((a) => (
               <li key={a.id} className="flex justify-between gap-3 text-xs">
-                <span>{a.name}</span>
+                <span>{privateName("account", a.name)}</span>
                 <span className="text-muted-foreground">
                   {a.balanceCents === null ? "—" : formatCents(a.balanceCents)}
                   {a.balanceAt ? ` · ${when.format(a.balanceAt)}` : ""}

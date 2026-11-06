@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { dismissCard, mapCard, newToken, revoke } from "./shortcut-actions";
+import { privateName } from "@/lib/privacy/names";
 
 // Apple Pay purchase alerts (#32): the tokens the iOS Shortcut sends, and
 // which Wallet card is which account. Setup is in docs/apple-pay-shortcut.md.
@@ -98,10 +99,10 @@ export function ApplePay({ endpoint, tokens, accounts, unmapped }: { endpoint: s
             {unmapped.map((u) => (
               <li key={u.name} className="flex flex-wrap items-center gap-2 px-3 py-2">
                 <span className="min-w-0 flex-1">
-                  “{u.name}” <span className="text-xs text-muted-foreground">· last seen {u.lastSeen}, not mapped</span>
+                  “{privateName("account", u.name)}” <span className="text-xs text-muted-foreground">· last seen {u.lastSeen}, not mapped</span>
                 </span>
                 <select
-                  aria-label={`Account for ${u.name}`}
+                  aria-label={`Account for ${privateName("account", u.name)}`}
                   className={input}
                   value={choice[u.name] ?? ""}
                   onChange={(e) => setChoice({ ...choice, [u.name]: e.target.value })}
@@ -109,7 +110,7 @@ export function ApplePay({ endpoint, tokens, accounts, unmapped }: { endpoint: s
                   <option value="">Account…</option>
                   {accounts.map((a) => (
                     <option key={a.id} value={a.id}>
-                      {a.name}
+                      {privateName("account", a.name)}
                     </option>
                   ))}
                 </select>
@@ -128,7 +129,7 @@ export function ApplePay({ endpoint, tokens, accounts, unmapped }: { endpoint: s
             {mapped.map((a) => (
               <li key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <span>
-                  “{a.walletCardName}” <span className="text-muted-foreground">→ {a.name}</span>
+                  “{privateName("account", a.walletCardName)}” <span className="text-muted-foreground">→ {privateName("account", a.name)}</span>
                 </span>
                 <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={pending} onClick={() => run(() => mapCard(a.id, null))}>
                   Unmap
@@ -161,7 +162,7 @@ export function ApplePay({ endpoint, tokens, accounts, unmapped }: { endpoint: s
             <option value="">Account…</option>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name}
+                {privateName("account", a.name)}
               </option>
             ))}
           </select>

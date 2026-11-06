@@ -27,6 +27,7 @@ import { DonutModal } from "./donut-modal";
 import { PaceChart } from "./pace-chart";
 import { SplitChart } from "./split-chart";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Spending (#66): where the money went over a period, by category, merchant
 // or account, each against the period before. The lines are
@@ -386,7 +387,7 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
                 <li key={t.transactionId}>
                   <Link href={`/transactions/${t.transactionId}`} className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-muted/50">
                     <span className="min-w-0">
-                      <span className="block truncate">{t.merchant ?? descriptions.get(t.transactionId) ?? "Transaction"}</span>
+                      <span className="block truncate">{privateName("merchant", t.merchant ?? descriptions.get(t.transactionId) ?? "Transaction")}</span>
                       <span className="block text-xs text-muted-foreground">
                         {fmtDay(t.date)} · {lookup.accountNames.get(t.accountId) ?? ""}
                       </span>

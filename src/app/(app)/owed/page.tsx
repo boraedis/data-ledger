@@ -5,6 +5,7 @@ import { AGING_BUCKETS, listPeople, owedToMe, proposals } from "@/operations/rei
 import { read } from "@/operations/runtime";
 import { AddPerson, ForgiveButton, PersonRow, ProposalActions } from "./controls";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Owed to me (#8): payments that look like friends paying back (to
 // confirm), what each person still owes with aging, and the people list.
@@ -37,10 +38,10 @@ export default async function OwedPage() {
                 <div className="flex flex-wrap justify-between gap-2">
                   <span className="min-w-0">
                     <Link href={`/transactions/${p.transactionId}`} className="font-medium underline-offset-2 hover:underline">
-                      {formatCents(p.amountCents)} from {p.personName}
+                      {formatCents(p.amountCents)} from {privateName("person", p.personName)}
                     </Link>
                     <span className="block text-xs text-muted-foreground">
-                      {p.date} · {p.accountName} · {p.description}
+                      {p.date} · {privateName("account", p.accountName)} · {privateName("description", p.description)}
                     </span>
                   </span>
                 </div>
@@ -48,7 +49,7 @@ export default async function OwedPage() {
                   {p.allocations.map((a) => (
                     <li key={a.reimbursementId} className="flex justify-between gap-3">
                       <span className="truncate">
-                        for {a.merchant} <span className="text-muted-foreground">({a.date})</span>
+                        for {privateName("merchant", a.merchant)} <span className="text-muted-foreground">({a.date})</span>
                       </span>
                       <span className="tabular-nums">{formatCents(a.amountCents)}</span>
                     </li>
@@ -90,7 +91,7 @@ export default async function OwedPage() {
               <tbody className="divide-y">
                 {owed.people.map((p) => (
                   <tr key={p.personId}>
-                    <td className="py-1.5">{p.personName}</td>
+                    <td className="py-1.5">{privateName("person", p.personName)}</td>
                     {p.buckets.map((cents, i) => (
                       <td key={i} className={`py-1.5 text-right ${cents && i >= 2 ? "text-negative" : ""}`}>
                         {cents ? formatCents(cents) : "—"}
@@ -113,9 +114,9 @@ export default async function OwedPage() {
               <li key={i.reimbursementId} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <span className="min-w-0">
                   <span className="block truncate">
-                    {i.personName} ·{" "}
+                    {privateName("person", i.personName)} ·{" "}
                     <Link href={`/transactions/${i.transactionId}`} className="underline-offset-2 hover:underline">
-                      {i.merchant}
+                      {privateName("merchant", i.merchant)}
                     </Link>
                   </span>
                   <span className="block text-xs text-muted-foreground">
@@ -125,7 +126,7 @@ export default async function OwedPage() {
                 </span>
                 <span className="flex items-center gap-2">
                   <span className="tabular-nums">{formatCents(i.remainingCents)}</span>
-                  <ForgiveButton reimbursementId={i.reimbursementId} summary={`Forgave ${i.personName}'s remaining ${formatCents(i.remainingCents)} for ${i.merchant}`} />
+                  <ForgiveButton reimbursementId={i.reimbursementId} about={{ personName: i.personName, remainingCents: i.remainingCents, merchant: i.merchant }} />
                 </span>
               </li>
             ))}

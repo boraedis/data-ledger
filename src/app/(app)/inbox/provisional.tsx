@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { formatCents } from "@/lib/money";
 import { discardAlert, matchAlert } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // Purchase alerts waiting for the bank (#30). Most are matched by the
 // nightly pipeline without anyone looking; what's left here after a week
@@ -39,9 +40,9 @@ function Row({ row }: { row: ProvisionalRow }) {
     <li className={`space-y-2 px-3 py-2 text-sm ${row.stale ? "bg-warning/10" : ""}`}>
       <div className="flex items-start justify-between gap-3">
         <Link href={`/transactions/${row.id}`} className="min-w-0 flex-1 hover:underline">
-          <span className="block truncate font-medium">{row.merchant ?? row.description}</span>
+          <span className="block truncate font-medium">{privateName("merchant", row.merchant ?? row.description)}</span>
           <span className="block truncate text-xs text-muted-foreground">
-            {row.postedOn} · {row.accountName} · {SOURCE[row.source]}
+            {row.postedOn} · {privateName("account", row.accountName)} · {SOURCE[row.source]}
             {row.counting ? " · counts toward budgets for now" : ""}
           </span>
         </Link>
@@ -57,7 +58,7 @@ function Row({ row }: { row: ProvisionalRow }) {
             {row.candidates.map((c) => (
               <Button key={c.id} size="sm" variant="outline" disabled={pending} onClick={() => act(() => matchAlert(row.id, c.id))}>
                 It was {formatCents(Math.abs(c.amountCents))} on {c.postedOn}
-                {c.merchant ? ` · ${c.merchant}` : ""}
+                {c.merchant ? ` · ${privateName("merchant", c.merchant)}` : ""}
               </Button>
             ))}
             <Button size="sm" variant="ghost" className="text-muted-foreground" disabled={pending} onClick={() => act(() => discardAlert(row.id))}>

@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { addTransaction } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 const select = "h-9 rounded-md border bg-background px-2 text-sm";
 const field = "flex flex-col gap-1 text-xs text-muted-foreground";
@@ -81,7 +82,7 @@ export function AddForm({
           <select name="accountId" className={select} defaultValue={accounts[0]?.id}>
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name}
+                {privateName("account", a.name)}
               </option>
             ))}
           </select>

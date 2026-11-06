@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { pairWithExisting } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 const select = "h-9 min-w-0 rounded-md border bg-background px-2 text-sm";
 
@@ -43,7 +44,7 @@ export function PairWithExisting({
           <select name="otherId" className={select} required defaultValue={candidates[0]?.id}>
             {candidates.map((c) => (
               <option key={c.id} value={c.id}>
-                {c.postedOn} · {c.accountName} · {c.description}
+                {c.postedOn} · {privateName("account", c.accountName)} · {privateName("description", c.description)}
                 {c.categoryName ? ` (filed as ${c.categoryName})` : ""}
               </option>
             ))}

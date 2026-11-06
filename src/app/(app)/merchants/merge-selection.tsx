@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { createContext, useContext, useState, useTransition, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { mergeSeveral } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // Merging several merchants at once from the list (#304): tick them, pick
 // the one to keep (the one with most transactions by default) and the name,
@@ -56,7 +57,7 @@ function MergeBar({ picked, onDone }: { picked: Choice[]; onDone: () => void }) 
         <select value={keepId} onChange={(e) => setKeepId(e.target.value)} className="h-9 rounded border bg-background px-2 text-sm text-foreground">
           {picked.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name} ({p.transactions})
+              {privateName("merchant", p.name)} ({p.transactions})
             </option>
           ))}
         </select>

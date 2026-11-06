@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { billHref } from "@/lib/recurring/links";
 import { DismissAlert } from "./controls";
-import { moneyText } from "@/lib/money";
+import { privateText } from "@/lib/privacy/names";
 
 // Open alerts, shared by Subscriptions and the Home digest.
 
@@ -41,7 +41,7 @@ export function AlertList({ alerts }: { alerts: AlertRow[] }) {
             ) : (
               <span className="font-medium">{a.title}</span>
             )}
-            <span className="mt-0.5 block text-xs text-muted-foreground">{moneyText(a.detail)}</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">{privateText(a.detail)}</span>
           </span>
           <DismissAlert alertId={a.id} title={a.title} />
         </li>

@@ -26,6 +26,7 @@ import { BudgetTabs } from "../tabs";
 import { TargetSettings } from "./settings";
 import { ItemStatus } from "./status";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // One budget item (#174): a category's target, or the buffer's, judged as
 // a whole over time (#206) rather than a month at a time. This month and
@@ -57,7 +58,7 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Shares({ title, shares, total }: { title: string; shares: Share[]; total: number }) {
+function Shares({ title, shares, total, names }: { title: string; shares: Share[]; total: number; names?: "merchant" }) {
   return (
     <div className="space-y-1">
       <h3 className="text-sm font-medium">{title}</h3>
@@ -65,7 +66,7 @@ function Shares({ title, shares, total }: { title: string; shares: Share[]; tota
         {shares.map((s) => (
           <li key={s.name} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-3 py-1.5">
             <span className="truncate">
-              {s.name} <span className="text-xs text-muted-foreground">· {s.lines}</span>
+              {names ? privateName(names, s.name) : s.name} <span className="text-xs text-muted-foreground">· {s.lines}</span>
             </span>
             <span className="text-right tabular-nums">{formatCents(s.spentCents)}</span>
             {/* Share of the period's spending. */}
@@ -214,9 +215,9 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
                 <li key={`${l.transactionId}-${i}`}>
                   <Link href={`/transactions/${l.transactionId}`} className="flex items-start justify-between gap-3 px-3 py-2 hover:bg-accent">
                     <span className="min-w-0">
-                      <span className="block truncate font-medium">{l.merchant ?? l.description}</span>
+                      <span className="block truncate font-medium">{privateName("merchant", l.merchant ?? l.description)}</span>
                       <span className="block truncate text-xs text-muted-foreground">
-                        {day(l.date)} · {l.accountName} · {l.categoryName}
+                        {day(l.date)} · {privateName("account", l.accountName)} · {l.categoryName}
                       </span>
                     </span>
                     <span className="shrink-0 tabular-nums">{formatCents(l.spentCents)}</span>
@@ -257,16 +258,16 @@ export default async function BudgetItemPage(props: PageProps<"/budgets/[target]
             <>
               <div className="grid gap-4 md:grid-cols-2">
                 {breakdown.byCategory.length > 1 ? <Shares title="By category" shares={breakdown.byCategory} total={breakdown.spentCents} /> : null}
-                <Shares title="By merchant" shares={breakdown.byMerchant.slice(0, 8)} total={breakdown.spentCents} />
+                <Shares title="By merchant" shares={breakdown.byMerchant.slice(0, 8)} total={breakdown.spentCents} names="merchant" />
               </div>
               <ul className="divide-y rounded-lg border text-sm">
                 {txns.lines.map((l, i) => (
                   <li key={`${l.transactionId}-${i}`}>
                     <Link href={`/transactions/${l.transactionId}`} className="flex items-start justify-between gap-3 px-3 py-2 hover:bg-accent">
                       <span className="min-w-0">
-                        <span className="block truncate font-medium">{l.merchant ?? l.description}</span>
+                        <span className="block truncate font-medium">{privateName("merchant", l.merchant ?? l.description)}</span>
                         <span className="block truncate text-xs text-muted-foreground">
-                          {day(l.date)} · {l.accountName} · {l.categoryName}
+                          {day(l.date)} · {privateName("account", l.accountName)} · {l.categoryName}
                           {l.splitPart ? " · part of a split" : ""}
                         </span>
                       </span>

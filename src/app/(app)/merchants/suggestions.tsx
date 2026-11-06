@@ -6,6 +6,8 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { formatCents } from "@/lib/money";
 import { dismissMerge, mergeMerchants } from "./actions";
+import { privateName } from "@/lib/privacy/names";
+import { privateText } from "@/lib/privacy/names";
 
 // Possible duplicates (#287), above the list: each pair with the evidence
 // side by side (names, how the bank wrote them, where and how much), and a
@@ -31,7 +33,7 @@ function Evidence({ side }: { side: Side }) {
   return (
     <div className="min-w-0 space-y-1">
       <Link href={`/merchants/${side.id}`} className="block truncate font-medium underline-offset-2 hover:underline">
-        {side.name}
+        {privateName("merchant", side.name)}
       </Link>
       <ul className="space-y-0.5 font-mono text-[11px] text-muted-foreground">
         {side.descriptions.map((d) => (
@@ -67,7 +69,7 @@ function Pair({ s }: { s: Suggestion }) {
     });
   return (
     <li className="space-y-2 px-3 py-3 text-sm">
-      <p className="text-xs text-muted-foreground">{s.reason}</p>
+      <p className="text-xs text-muted-foreground">{privateText(s.reason)}</p>
       <fieldset className="grid gap-3 sm:grid-cols-2">
         <legend className="sr-only">Which to keep</legend>
         {[s.a, s.b].map((side) => (

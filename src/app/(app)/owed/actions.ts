@@ -1,10 +1,15 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { formatCents } from "@/lib/money";
 import { executeAsOwner } from "@/operations/server";
 
 // Shared expenses and reimbursements (#8), as the owner. Every action is one
 // logged, undoable operation. Used by the Owed page and the transaction page.
+//
+// A reason with an amount in it is written here, from the figure, not by
+// the page (#364): a page in privacy mode shows `$•••`, and that mustn't
+// be what Activity keeps. Here, outside a render, amounts are always exact.
 
 type Result = { error: string } | { ok: true; output?: unknown };
 
@@ -36,8 +41,9 @@ export async function setShares(transactionId: string, shares: { personId: strin
   return run("reimbursements.setShares", { transactionId, shares }, summary, [`/transactions/${transactionId}`]);
 }
 
-export async function confirmMatch(transactionId: string, allocations: { reimbursementId: string; amountCents: number }[], summary: string) {
-  return run("reimbursements.match", { transactionId, allocations }, summary, [`/transactions/${transactionId}`]);
+export async function confirmMatch(transactionId: string, allocations: { reimbursementId: string; amountCents: number }[], personName: string) {
+  const total = allocations.reduce((s, a) => s + a.amountCents, 0);
+  return run("reimbursements.match", { transactionId, allocations }, `Matched ${formatCents(total)} from ${personName}`, [`/transactions/${transactionId}`]);
 }
 
 export async function unmatchPayment(transactionId: string) {
@@ -48,6 +54,7 @@ export async function dismissPayment(transactionId: string) {
   return run("reimbursements.dismiss", { transactionId }, "Not a reimbursement");
 }
 
-export async function forgive(reimbursementId: string, summary: string) {
-  return run("reimbursements.forgive", { reimbursementId }, summary);
+export async function forgive(reimbursementId: string, about: { personName: string; remainingCents: number; merchant?: string | null }) {
+  const reason = `Forgave ${about.personName}'s remaining ${formatCents(about.remainingCents)}${about.merchant ? ` for ${about.merchant}` : ""}`;
+  return run("reimbursements.forgive", { reimbursementId }, reason);
 }

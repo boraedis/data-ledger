@@ -26,6 +26,7 @@ import { listMerchants, similarTransactions } from "@/operations/merchants";
 import { listTradesRead } from "@/operations/trades";
 import { TradeNote } from "./trade-note";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 export default async function TransactionPage(props: PageProps<"/transactions/[id]">) {
   await privacyMode();
@@ -69,10 +70,10 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
       </Link>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="truncate text-2xl font-semibold">{txn.merchant ?? txn.description}</h1>
-          <p className="break-words text-sm text-muted-foreground">{txn.description}</p>
+          <h1 className="truncate text-2xl font-semibold">{privateName("merchant", txn.merchant ?? txn.description)}</h1>
+          <p className="break-words text-sm text-muted-foreground">{privateName("description", txn.description)}</p>
           <p className="text-sm text-muted-foreground">
-            {txn.postedOn} · {txn.accountName}
+            {txn.postedOn} · {privateName("account", txn.accountName)}
             {txn.pending ? " · pending" : ""}
             {txn.investmentActivity ? ` · ${ACTIVITY_LABELS[txn.investmentActivity]}` : ""}
           </p>
@@ -111,7 +112,7 @@ export default async function TransactionPage(props: PageProps<"/transactions/[i
       ) : null}
       {txn.payStub ? (
         <p className="rounded-lg border px-3 py-2 text-sm text-muted-foreground">
-          The deposit of the {txn.payStub.employer} pay stub dated {txn.payStub.payDate}: budgets count it as this amount, and the stub&apos;s
+          The deposit of the {privateName("employer", txn.payStub.employer)} pay stub dated {txn.payStub.payDate}: budgets count it as this amount, and the stub&apos;s
           deductions show on Cash flow.{" "}
           <Link href="/pay" className="underline">
             See it on Pay

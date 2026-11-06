@@ -15,6 +15,7 @@ import { rebuiltHistory, type RebuiltHistory } from "@/lib/prices/rebuilt";
 import { hourlyNetWorth } from "@/lib/net-worth-hourly";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Net worth today and over time (#25), and a forecast on the owner's own
 // assumptions (#233). Read-only: balances come from syncs, how each kind
@@ -149,11 +150,11 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
             <li key={a.id} className="flex items-center justify-between gap-3 px-3 py-2">
               <span className="min-w-0">
                 <span className="block truncate">
-                  {a.name} {a.manual ? <ManualBadge /> : null}
+                  {privateName("account", a.name)} {a.manual ? <ManualBadge /> : null}
                 </span>
                 <span className="block truncate text-xs text-muted-foreground">
                   {KIND_LABELS[a.kind]}
-                  {a.manual && a.institution === "Manual" ? "" : ` · ${a.institution}`}
+                  {a.manual && a.institution === "Manual" ? "" : ` · ${privateName("institution", a.institution)}`}
                   {a.balanceAt ? ` · ${a.live ? "balance " : ""}as of ${a.balanceAt.toISOString().slice(0, 10)}` : ""}
                   {pricesNote(a.live)}
                 </span>
@@ -164,7 +165,7 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
           {summary.excluded.map(({ account, reason }) => (
             <li key={account.id} className="flex items-center justify-between gap-3 px-3 py-2 text-muted-foreground">
               <span className="min-w-0">
-                <span className="block truncate">{account.name}</span>
+                <span className="block truncate">{privateName("account", account.name)}</span>
                 <span className="block truncate text-xs">
                   Not counted: {reason === "currency" ? `balance is in ${account.currency}` : "no balance reported yet"}
                 </span>

@@ -9,6 +9,7 @@ import { updateAccount } from "./actions";
 import type { PositionWithMarket } from "./positions";
 import { ManualValueControls } from "./manual-account";
 import { Positions } from "./positions";
+import { privateName } from "@/lib/privacy/names";
 
 export type AccountRowData = {
   id: string;
@@ -57,7 +58,7 @@ export function AccountRow({ account }: { account: AccountRowData }) {
             className="h-8 max-w-xs"
           />
           {account.displayName && !account.manual ? (
-            <p className="mt-1 text-xs text-muted-foreground">Bank name: {account.name}</p>
+            <p className="mt-1 text-xs text-muted-foreground">Bank name: {privateName("account", account.name)}</p>
           ) : null}
         </div>
         <span className="text-right text-muted-foreground">

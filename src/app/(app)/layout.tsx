@@ -4,7 +4,7 @@ import { PrivacyProvider } from "@/components/privacy/privacy-provider";
 import { requireOwner } from "@/lib/auth/session";
 import { getDb } from "@/lib/db";
 import { modelIsConfigured } from "@/lib/model/client";
-import { privacyMode } from "@/lib/privacy/server";
+import { privacyState } from "@/lib/privacy/server";
 import { getConnectionHealth, healthProblems } from "@/lib/sync/health";
 import { draftTotal } from "@/operations/trades";
 import { inboxCount } from "@/operations/transactions";
@@ -24,10 +24,10 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   // On every page, not just Settings: a broken bank connection silently
   // stops the ledger being current, which is exactly what goes unnoticed.
   const db = getDb();
-  const [problems, inbox, trades, privacy] = await Promise.all([getConnectionHealth(db).then(healthProblems), inboxCount(db), draftTotal(db), privacyMode()]);
+  const [problems, inbox, trades, privacy] = await Promise.all([getConnectionHealth(db).then(healthProblems), inboxCount(db), draftTotal(db), privacyState()]);
   // Privacy mode (#363) wraps everything: its bar shows above every page, and any component can ask.
   return (
-    <PrivacyProvider on={privacy}>
+    <PrivacyProvider on={privacy.on} salt={privacy.salt}>
     <div className="flex min-h-svh flex-col">
       <TopBar inbox={inbox} counts={{ "/trades": trades }} />
       {problems.length ? (

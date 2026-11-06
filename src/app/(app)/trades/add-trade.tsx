@@ -7,6 +7,7 @@ import { SIDE_LABELS, type TradeSide } from "@/lib/holdings/replay";
 import { holdingsOn } from "@/lib/holdings/replay";
 import { addTrade } from "./actions";
 import { localToday, positive, select, SIDES, validSymbol } from "./fields";
+import { privateName } from "@/lib/privacy/names";
 
 // Adding a trade by hand (#319), for what nothing could infer: any account
 // that takes trades, synced or manual. A manual account's positions follow
@@ -76,7 +77,7 @@ export function AddTrade({ accounts, fill = {}, held = {} }: { accounts: TradeAc
         <select aria-label="Account" value={accountId} onChange={(e) => setAccountId(e.target.value)} className={`${select} max-w-full`}>
           {accounts.map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {privateName("account", a.name)}
             </option>
           ))}
         </select>
