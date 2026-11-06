@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { DATE_FORMATS, type DateFormat } from "@/lib/history/csv";
 import { dollarFigure, formatCents } from "@/lib/money";
-import { ACTION_CATEGORIES, ACTION_LABELS, type ActionCategory, type BrokerageMapping } from "@/lib/trades/import-csv";
+import { ACTION_CATEGORIES, ACTION_LABELS, bySign, type ActionCategory, type BrokerageMapping } from "@/lib/trades/import-csv";
 import { draftHeadline } from "../fields";
 import { applyTradeImport, previewTradeImport, type Applied, type Preview, type PreviewRow } from "./actions";
 import { privateName } from "@/lib/privacy/names";
@@ -248,6 +248,18 @@ export function TradeImportForm({ accounts, initialAccountId }: { accounts: { id
                 <li key={a.key} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                   <span className="min-w-0 break-words">
                     {a.key} <span className="text-xs text-muted-foreground">· {a.rows} row{a.rows === 1 ? "" : "s"}</span>
+                    {/* Why a by-sign meaning is offered, and what it does: the
+                        file's own quantities, so the owner can check the guess. */}
+                    {a.signs.positive + a.signs.negative > 0 ? (
+                      <span className="block text-xs text-muted-foreground">
+                        Quantities: {a.signs.positive} positive, {a.signs.negative} negative
+                        {bySign(a.category)
+                          ? a.category === "trade_by_sign"
+                            ? ". Positive is a buy, negative a sell."
+                            : ". Positive is shares in, negative shares out."
+                          : ""}
+                      </span>
+                    ) : null}
                   </span>
                   <select
                     aria-label={`What "${a.key}" means`}
@@ -271,7 +283,7 @@ export function TradeImportForm({ accounts, initialAccountId }: { accounts: { id
             <h2 className="font-medium">What this adds</h2>
             <p>
               {preview.rows.length} row{preview.rows.length === 1 ? "" : "s"} read; <strong>{ticked.length}</strong> ticked to import.
-              {preview.reimported ? ` ${preview.reimported} imported before; skipped.` : ""} Unticked ones look like they&apos;re already here.
+              {preview.reimported ? ` ${preview.reimported} imported before; skipped.` : ""} Unticked ones look like they&apos;re already here, or say what to check.
             </p>
             {preview.baseline && !conflicts.length ? (
               <p className="rounded-md border border-dashed p-2">
@@ -304,6 +316,7 @@ export function TradeImportForm({ accounts, initialAccountId }: { accounts: { id
                           {l}
                         </span>
                       ))}
+                      {r.warning ? <span className="block text-warning">{r.warning}</span> : null}
                     </span>
                   </li>
                 );
