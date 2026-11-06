@@ -19,6 +19,7 @@ import { PayPeriods } from "./pay-periods";
 import { Sankey } from "./sankey";
 import { privacyMode } from "@/lib/privacy/server";
 import { privateName } from "@/lib/privacy/names";
+import { showProportions } from "@/lib/privacy/share";
 
 // Cash flow (#62, #168): Annual (the default), Monthly and Weekly tabs, each
 // first saying whether money came in faster than it went out
@@ -59,7 +60,8 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
   const period = parseView(sp, today);
   const by: Grouping = GROUPINGS.some((g) => g.id === one(sp.by)) ? (one(sp.by) as Grouping) : "category";
   const gross = one(sp.gross) === "1";
-  const percent = one(sp.show) === "percent";
+  // In privacy mode (#366), always its "% of income" view: amounts are masked, shares show the shape.
+  const percent = showProportions() || one(sp.show) === "percent";
   // Annual's chart: the year by month (the default), or by day as running totals.
   const chart: AnnualChart = one(sp.chart) === "day" ? "day" : "month";
 
@@ -297,9 +299,12 @@ export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
           </h2>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
           <nav aria-label="Show amounts as" className="flex gap-3">
-            <Link href={href({ percent: false })} aria-current={!percent ? "page" : undefined} className={tab(!percent)}>
-              $
-            </Link>
+            {/* Not while privacy mode is on: it's "% of income" then (#366). */}
+            {showProportions() ? null : (
+              <Link href={href({ percent: false })} aria-current={!percent ? "page" : undefined} className={tab(!percent)}>
+                $
+              </Link>
+            )}
             <Link href={href({ percent: true })} aria-current={percent ? "page" : undefined} className={tab(percent)}>
               %
             </Link>

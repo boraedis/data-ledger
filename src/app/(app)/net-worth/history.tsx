@@ -19,6 +19,7 @@ import {
   type GroupBy,
   type RangeKey,
 } from "@/lib/net-worth-breakdown";
+import { percentOf, pointsOf, showProportions } from "@/lib/privacy/share";
 
 // Net worth over time, broken down (#134). Opens on the plain line of net
 // worth (#195); the stacked view is one toggle away: a stack of each group's
@@ -99,6 +100,13 @@ export function NetWorthHistory({ accounts, daily, hourly }: { accounts: Breakdo
   const domain = lead + visibleDays.length;
   const shown = useMemo(() => (selected ? groups.filter((g) => g.key === selected) : groups), [groups, selected]);
   const line = useMemo(() => (selected ? (shown[0]?.values ?? []) : total), [selected, shown, total]);
+  // In privacy mode (#366), a percent of today's net worth: today is 100%,
+  // and a change is points of it. Below zero there's no such base, so masked.
+  const today = total.at(-1) ?? 0;
+  const proportions = showProportions();
+  const figure = (cents: number) => (proportions ? percentOf(cents, today) : formatCents(cents));
+  const changeText = (cents: number) => (proportions ? pointsOf(cents, today) : signed(cents));
+  const tick = (cents: number) => (proportions ? percentOf(cents, today) : compact(cents));
 
   const geometry = useMemo(() => {
     if (width === 0 || visibleDays.length === 0) return null;
@@ -221,10 +229,10 @@ export function NetWorthHistory({ accounts, daily, hourly }: { accounts: Breakdo
           {selected ? ` · ${shown[0]?.label}` : ""}
         </div>
         <div className="flex flex-wrap items-baseline gap-x-3 text-sm">
-          <span className="text-lg font-semibold tabular-nums">{beforeHistory || line[at] === null ? "—" : formatCents(line[at] ?? 0)}</span>
+          <span className="text-lg font-semibold tabular-nums">{beforeHistory || line[at] === null ? "—" : figure(line[at] ?? 0)}</span>
           {lineChange ? (
             <span className={`tabular-nums ${lineChange.changeCents < 0 ? "text-negative" : "text-muted-foreground"}`}>
-              {signed(lineChange.changeCents)} since {formatDay(lineChange.since)}
+              {changeText(lineChange.changeCents)} since {formatDay(lineChange.since)}
             </span>
           ) : null}
         </div>
@@ -263,7 +271,7 @@ export function NetWorthHistory({ accounts, daily, hourly }: { accounts: Breakdo
             <path d={geometry.netPath} fill="none" className="stroke-foreground" strokeWidth={2} strokeLinejoin="round" />
             {geometry.ticks.map((t) => (
               <text key={t} x={PAD.left + 2} y={geometry.y(t) - 3} className="fill-muted-foreground stroke-background text-[10px] tabular-nums" strokeWidth={3} paintOrder="stroke">
-                {compact(t)}
+                {tick(t)}
               </text>
             ))}
             {hover !== null ? <line x1={geometry.x(hover)} x2={geometry.x(hover)} y1={PAD.top} y2={HEIGHT - PAD.bottom} className="stroke-foreground/40" /> : null}
@@ -298,9 +306,9 @@ export function NetWorthHistory({ accounts, daily, hourly }: { accounts: Breakdo
                 <span className="size-3 rounded-sm" style={{ background: g.color }} aria-hidden />
                 <span className="truncate">{g.label}</span>
                 <span className="text-right tabular-nums">
-                  {beforeHistory || g.values[at] === null ? "—" : formatCents(g.values[at] ?? 0)}
+                  {beforeHistory || g.values[at] === null ? "—" : figure(g.values[at] ?? 0)}
                   {change ? (
-                    <span className={`ml-2 text-xs ${change.changeCents < 0 ? "text-negative" : "text-muted-foreground"}`}>{signed(change.changeCents)}</span>
+                    <span className={`ml-2 text-xs ${change.changeCents < 0 ? "text-negative" : "text-muted-foreground"}`}>{changeText(change.changeCents)}</span>
                   ) : null}
                 </span>
               </button>

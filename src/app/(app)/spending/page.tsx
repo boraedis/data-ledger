@@ -28,6 +28,7 @@ import { PaceChart } from "./pace-chart";
 import { SplitChart } from "./split-chart";
 import { privacyMode } from "@/lib/privacy/server";
 import { privateName } from "@/lib/privacy/names";
+import { percentOf, showProportions } from "@/lib/privacy/share";
 
 // Spending (#66): where the money went over a period, by category, merchant
 // or account, each against the period before. The lines are
@@ -62,8 +63,15 @@ function Change({ spent, prev }: { spent: number; prev: number }) {
   return (
     <span className={diff > 0 ? "text-negative" : "text-positive"}>
       {diff > 0 ? "+" : "−"}
-      {formatCents(Math.abs(diff))}
-      <span className="hidden text-xs sm:inline"> ({Math.round((Math.abs(diff) / prev) * 100)}%)</span>
+      {/* In privacy mode (#366), the change as a percent of the last period, with no amount. */}
+      {showProportions() ? (
+        `${Math.round((Math.abs(diff) / prev) * 100)}%`
+      ) : (
+        <>
+          {formatCents(Math.abs(diff))}
+          <span className="hidden text-xs sm:inline"> ({Math.round((Math.abs(diff) / prev) * 100)}%)</span>
+        </>
+      )}
     </span>
   );
 }
@@ -192,7 +200,8 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
             <span className="text-xs text-muted-foreground">{Math.round(share * 100)}%</span>
           </div>
         </td>
-        <td className="py-2 pr-2 text-right align-top tabular-nums">{formatCents(row.spentCents)}</td>
+        {/* In privacy mode (#366), each row's share of the period's spending. */}
+        <td className="py-2 pr-2 text-right align-top tabular-nums">{showProportions() ? percentOf(row.spentCents, totalCents) : formatCents(row.spentCents)}</td>
         <td className="py-2 text-right align-top text-sm tabular-nums">
           <Change spent={row.spentCents} prev={row.prevCents} />
         </td>
@@ -318,7 +327,14 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
 
       {rows.length === 0 ? null : (
         <div className="space-y-2">
-          <SplitChart rows={rows} label={period.label} prevLabel={period.prev.label} hrefFor={(key) => href({ sel: key }, "#behind")} />
+          <SplitChart
+            rows={rows}
+            label={period.label}
+            prevLabel={period.prev.label}
+            hrefFor={(key) => href({ sel: key }, "#behind")}
+            totalCents={totalCents}
+            prevTotalCents={prevTotalCents}
+          />
           <DonutModal
             donut={donut(
               donutRows(rows, by, (id) => {
@@ -361,7 +377,9 @@ export default async function SpendingPage(props: PageProps<"/spending">) {
                 <td className="py-2 pr-2">
                   {rest.length} more {by === "merchant" ? "merchants" : by === "type" ? "types" : by === "account" ? "accounts" : "categories"}
                 </td>
-                <td className="py-2 pr-2 text-right tabular-nums">{formatCents(rest.reduce((s, r) => s + r.spentCents, 0))}</td>
+                <td className="py-2 pr-2 text-right tabular-nums">
+                  {showProportions() ? percentOf(rest.reduce((s, r) => s + r.spentCents, 0), totalCents) : formatCents(rest.reduce((s, r) => s + r.spentCents, 0))}
+                </td>
                 <td />
               </tr>
             ) : null}
