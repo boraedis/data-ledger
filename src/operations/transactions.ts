@@ -19,6 +19,7 @@ import {
 } from "@/db/schema";
 import { canonicalMerchant, linkUnlinked, merchantFields, merchantTypeName } from "@/operations/merchants";
 import { merchantMemory } from "@/lib/categorize/match";
+import { merchantExpected, merchantExpectedSql } from "@/lib/merchants/expected";
 import { FLAG_KINDS } from "@/lib/suspicious/checks";
 import { searchTerms } from "@/lib/transactions/search";
 import { isInvestmentKind, investmentActivity, type InvestmentActivity } from "@/lib/investments/activity";
@@ -132,12 +133,12 @@ export function transactionFilters(db: Db, input: TransactionFilter): SQL[] {
   if (input.payStubLinked)
     filters.push(inArray(transactions.id, db.select({ id: payStubDeposits.transactionId }).from(payStubDeposits)));
   if (input.flagged) filters.push(flaggedSql(db));
-  // The rows the list badges "No type" and "No merchant" (#333). A paired
-  // transfer between the owner's own accounts has no merchant by nature, so
-  // it isn't one, as it isn't uncategorized.
+  // The rows the list badges "No type" and "No merchant" (#333): only rows
+  // that are a merchant's business (#349). A transfer, a brokerage or
+  // retirement row and a $0 row have no merchant by nature.
   if (input.noMerchantType)
-    filters.push(inArray(transactions.merchantId, db.select({ id: merchants.id }).from(merchants).where(isNull(merchants.typeId))));
-  if (input.noMerchant) filters.push(isNull(transactions.merchantId), isNull(transactions.transferPairId));
+    filters.push(inArray(transactions.merchantId, db.select({ id: merchants.id }).from(merchants).where(isNull(merchants.typeId))), merchantExpectedSql(db));
+  if (input.noMerchant) filters.push(isNull(transactions.merchantId), merchantExpectedSql(db));
   // An amount range is on the size of the amount unless it's signed, so
   // "$10 to $50" finds charges and refunds alike, as the search does.
   const amount = input.amountSigned ? sql`${transactions.amountCents}` : sql`abs(${transactions.amountCents})`;
@@ -218,8 +219,8 @@ export const listTransactions = defineRead({
     "is money out only), uncategorized only (no category and no transfer or " +
     "reimbursement that explains it), unmatchedTransfers (transfers with no other half) or payStubLinked " +
     "(paycheck deposits linked to a pay stub) or flagged (a suspicious-charge alert waiting for a verdict or " +
-    "marked suspicious), or noMerchantType (linked to a merchant with no type yet) or noMerchant (no merchant, " +
-    "paired transfers aside). Also: amountMinCents/amountMaxCents (on the amount's size, or signed with " +
+    "marked suspicious), or noMerchantType (linked to a merchant with no type yet) or noMerchant (no merchant); both " +
+    "skip transfers, brokerage and retirement rows and $0 rows, which need no merchant. Also: amountMinCents/amountMaxCents (on the amount's size, or signed with " +
     "amountSigned), transferAccountId (paired transfers whose other side is that account), hasTags, split, " +
     "pending, and source (bank, manual or provisional). budgetOnly limits to accounts " +
     "that count toward budgets (excludes investment, retirement, loan and asset accounts) — use it for " +
@@ -357,6 +358,7 @@ async function transferAndActivity(
     payStub: { payStubId: string; payDate: string; employer: string } | null;
     paycheckWithoutStub: boolean;
     investmentActivity: InvestmentActivity | null;
+    merchantExpected: boolean;
   } => {
     const kind = kindOf.get(row.accountId);
     const payStub = stubOf.get(row.id) ?? null;
@@ -375,6 +377,13 @@ async function transferAndActivity(
         row.amountCents > 0 &&
         ((row.categoryId !== null && paycheckCategories.has(row.categoryId)) || (row.merchant !== null && paycheckPayers.has(row.merchant))),
       investmentActivity: kind && isInvestmentKind(kind) ? investmentActivity(row.description) : null,
+      // Whether "No merchant" or "No type" applies to it at all (#349).
+      merchantExpected: merchantExpected({
+        amountCents: row.amountCents,
+        transfer: Boolean(transferPairId),
+        transferCategory,
+        investmentAccount: Boolean(kind && isInvestmentKind(kind)),
+      }),
     };
   };
 }

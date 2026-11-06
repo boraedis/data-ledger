@@ -1,6 +1,7 @@
 import { and, count, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
 import { categories, commandLog, merchants, merchantTypes, transactions } from "@/db/schema";
 import type { Db } from "@/db/types";
+import { merchantsOutOfScope } from "@/lib/merchants/expected";
 import { chat } from "@/lib/model/client";
 import { consistentCategory, MIN_CONFIDENCE, parseTypeReply, typeFromCategory, typeRequest, type TypeAnswer, type TypeOption } from "@/lib/merchants/types";
 import { execute } from "@/operations/runtime";
@@ -32,7 +33,7 @@ export async function suggestMerchantTypes(
   db: Db,
   { ask = askModelForTypes, limit = 120, deadline, model = true }: { ask?: AskTypes; limit?: number; deadline?: number; model?: boolean } = {},
 ): Promise<TypeSuggestionResult> {
-  const [untyped, types, answered] = await Promise.all([
+  const [untyped, types, answered, outOfScope] = await Promise.all([
     db.select({ id: merchants.id, name: merchants.name, askedAt: merchants.typeAskedAt }).from(merchants).where(isNull(merchants.typeId)),
     db.select({ id: merchantTypes.id, name: merchantTypes.name }).from(merchantTypes),
     // Waiting for the owner, or turned down by them: not proposed again.
@@ -40,8 +41,10 @@ export async function suggestMerchantTypes(
       .select({ merchantId: sql<string>`${commandLog.input}->>'merchantId'` })
       .from(commandLog)
       .where(and(eq(commandLog.operation, "merchants.setType"), inArray(commandLog.status, ["proposed", "rejected"]))),
+    // Made only of transfers, brokerage rows or $0 rows (#349): nothing to type.
+    merchantsOutOfScope(db),
   ]);
-  const skip = new Set(answered.map((a) => a.merchantId));
+  const skip = new Set([...answered.map((a) => a.merchantId), ...outOfScope]);
   const open = untyped.filter((m) => !skip.has(m.id));
   if (open.length === 0 || types.length === 0) return { fromCategory: 0, fromModel: 0, asked: 0 };
 
@@ -104,15 +107,17 @@ export async function pendingTypeSuggestions(db: Db) {
     .where(and(eq(commandLog.operation, "merchants.setType"), eq(commandLog.status, "proposed")))
     .orderBy(sql`${commandLog.createdAt} desc`);
   if (!rows.length) return [];
-  const [names, types] = await Promise.all([
+  const [names, types, outOfScope] = await Promise.all([
     db.select({ id: merchants.id, name: merchants.name, typeId: merchants.typeId }).from(merchants).where(inArray(merchants.id, rows.map((r) => r.merchantId))),
     db.select({ id: merchantTypes.id, name: merchantTypes.name }).from(merchantTypes),
+    merchantsOutOfScope(db),
   ]);
   const merchant = new Map(names.map((m) => [m.id, m]));
   const typeName = new Map(types.map((t) => [t.id, t.name]));
-  // A merchant since merged away, or typed by the owner meanwhile, has nothing left to approve.
+  // A merchant since merged away, or typed by the owner meanwhile, has
+  // nothing left to approve; one the page no longer lists (#349) isn't shown.
   return rows
-    .filter((r) => merchant.get(r.merchantId) && !merchant.get(r.merchantId)!.typeId)
+    .filter((r) => merchant.get(r.merchantId) && !merchant.get(r.merchantId)!.typeId && !outOfScope.has(r.merchantId))
     .map((r) => ({
       commandId: r.commandId,
       merchantId: r.merchantId,
