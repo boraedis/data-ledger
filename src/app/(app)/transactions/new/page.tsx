@@ -5,12 +5,14 @@ import { listAccounts } from "@/operations/accounts";
 import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { AddForm } from "./add-form";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Adding a transaction by hand (#64): money the bank feed doesn't show, such
 // as a payment-app payment or cash. Into the accounts the money moves
 // through: not manual accounts (balance only). Investment accounts take them
 // too, for history the brokerage feed can't reach.
 export default async function NewTransactionPage() {
+  await privacyMode();
   const db = getDb();
   const [accts, cats] = await Promise.all([read(db, listAccounts, {}), read(db, listCategories, {})]);
   // Everyday accounts first, checking at the top: where most of these go.

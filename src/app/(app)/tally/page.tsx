@@ -5,11 +5,13 @@ import { modelIsConfigured } from "@/lib/model/client";
 import { listConversations } from "@/lib/tally/agent";
 import { conversationItems } from "@/lib/tally/history";
 import { Chat } from "./chat";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Tally (#11): chat with the app's own self-hosted model, whose tools are
 // the operations registry. ?c=<id> opens an earlier conversation.
 
 export default async function TallyPage(props: PageProps<"/tally">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const db = getDb();
   const conversations = await listConversations(db);

@@ -11,6 +11,7 @@ import { budgetStatus } from "@/operations/budgets";
 import { listGoals } from "@/operations/goals";
 import { read } from "@/operations/runtime";
 import { GoalEditor, GoalForm, RestoreGoal } from "./goal-form";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Savings goals (#10): targets to build toward, with progress from linked
 // balances and tagged transfers, and pace against the target date. Budget
@@ -37,6 +38,7 @@ function statusLine(g: GoalProgress): { text: string; tone: string } {
 }
 
 export default async function GoalsPage() {
+  await privacyMode();
   const db = getDb();
   const [active, archived, definitions, accts, budgets] = await Promise.all([
     loadGoalProgress(db),

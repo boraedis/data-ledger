@@ -11,6 +11,7 @@ import { listCategories } from "@/operations/categories";
 import { read } from "@/operations/runtime";
 import { RebalanceForm, TargetForm, type TargetChoice } from "../forms";
 import { BudgetTabs } from "../tabs";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Targets (#145): every target and its amount, ended ones too, plus adding
 // a target and moving budget between them — moved here from the Month view,
@@ -23,6 +24,7 @@ const monthLabel = (date: string) =>
   new Date(`${date.slice(0, 7)}-01T00:00:00Z`).toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 
 export default async function BudgetTargetsPage(props: PageProps<"/budgets/targets">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
   const view = budgetView(sp, today);

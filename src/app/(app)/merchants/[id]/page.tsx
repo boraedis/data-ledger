@@ -7,6 +7,7 @@ import { listMerchants, listMerchantTypes } from "@/operations/merchants";
 import { read } from "@/operations/runtime";
 import { NotFoundError } from "@/operations/tracked";
 import { MerchantControls, SplitButton } from "./controls";
+import { privacyMode } from "@/lib/privacy/server";
 
 // One merchant (#286): what it's cost by month, its names (the cleaned
 // spellings that belong to it) and the raw bank descriptions behind them,
@@ -19,6 +20,7 @@ const monthLabel = (m: string, style: "short" | "long" = "short") =>
   new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-US", { month: style, ...(style === "long" ? { year: "numeric" } : {}), timeZone: "UTC" });
 
 export default async function MerchantPage(props: PageProps<"/merchants/[id]">) {
+  await privacyMode();
   const { id } = await props.params;
   const gross = one((await props.searchParams).gross) === "1";
   const db = getDb();

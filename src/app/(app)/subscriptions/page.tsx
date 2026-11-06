@@ -6,12 +6,14 @@ import { isFlagKind } from "@/lib/suspicious/checks";
 import { read } from "@/operations/runtime";
 import { AlertList } from "./alert-list";
 import { CancelButton, CheckNow, StatusButtons, StillActiveButton } from "./controls";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Subscriptions and recurring bills (#9): what's tracked, what was
 // detected, and the alerts. Detection is rule-based and runs on read; the
 // nightly sync raises alerts, and "Check now" does the same on demand.
 
 export default async function SubscriptionsPage() {
+  await privacyMode();
   const db = getDb();
   const today = new Date().toISOString().slice(0, 10);
   const [series, alerts, cancelled] = await Promise.all([read(db, listRecurring, {}), read(db, listAlerts, {}), read(db, listCancelled, {})]);

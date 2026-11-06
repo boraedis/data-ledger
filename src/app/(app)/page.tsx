@@ -15,6 +15,7 @@ import { owedToMe } from "@/operations/reimbursements";
 import { read } from "@/operations/runtime";
 import { inboxCount } from "@/operations/transactions";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Home is the dashboard (#71): where things stand today, one card per
 // area, each with its key figure and a link to the full page. Every figure
@@ -50,6 +51,7 @@ const Figure = ({ children }: { children: React.ReactNode }) => <p className="te
 const Note = ({ children }: { children: React.ReactNode }) => <p className="text-sm text-muted-foreground">{children}</p>;
 
 export default async function HomePage() {
+  await privacyMode();
   const db = getDb();
   const today = new Date();
   const on = isoDay(today);

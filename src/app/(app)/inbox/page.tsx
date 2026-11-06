@@ -19,6 +19,7 @@ import { Inbox } from "./inbox";
 import { ProvisionalList } from "./provisional";
 import { MergeSuggestions } from "../merchants/suggestions";
 import { TypeSuggestions } from "../merchants/type-suggestions";
+import { privacyMode } from "@/lib/privacy/server";
 
 const LIMIT = 200;
 // A few pairs at a time here; the rest are a click away on Merchants.
@@ -32,6 +33,7 @@ export const maxDuration = 300;
 // the same operations Tally will use, so what the owner sees here is what
 // the assistant sees.
 export default async function InboxPage() {
+  await privacyMode();
   const db = getDb();
   const [inbox, cats, accts, alerted, flags, digest, merchants, tradeDrafts] = await Promise.all([
     read(db, listInbox, { limit: LIMIT }),

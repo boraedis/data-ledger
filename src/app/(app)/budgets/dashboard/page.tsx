@@ -10,6 +10,7 @@ import { budgetMonthly, budgetPay, budgetPayYear } from "@/operations/budgets";
 import { read } from "@/operations/runtime";
 import type { Summary } from "../pay-strip";
 import { BudgetTabs } from "../tabs";
+import { privacyMode } from "@/lib/privacy/server";
 
 // The budgets dashboard (#146): how the month and the year so far are going,
 // and the biggest overspends in each, linking into the Month and Year views.
@@ -134,6 +135,7 @@ function Overspends({ title, items, href, none }: { title: string; items: Oversp
 }
 
 export default async function BudgetDashboardPage(props: PageProps<"/budgets/dashboard">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
   const view = budgetView(sp, today);

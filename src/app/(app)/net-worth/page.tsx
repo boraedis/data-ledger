@@ -14,12 +14,14 @@ import { GROUP_LABELS, forecast, forecastStart, parseAssumptions, type ForecastG
 import { rebuiltHistory, type RebuiltHistory } from "@/lib/prices/rebuilt";
 import { hourlyNetWorth } from "@/lib/net-worth-hourly";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Net worth today and over time (#25), and a forecast on the owner's own
 // assumptions (#233). Read-only: balances come from syncs, how each kind
 // counts is explained in src/lib/net-worth.ts, and the forecast's
 // assumptions are only in the URL.
 export default async function NetWorthPage(props: PageProps<"/net-worth">) {
+  await privacyMode();
   const assumptions = parseAssumptions(await props.searchParams);
   const db = getDb();
   // The trailing twelve months, from the first of the month eleven months ago.

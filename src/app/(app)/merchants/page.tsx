@@ -10,6 +10,7 @@ import { MergeSelection, SelectBox } from "./merge-selection";
 import { QuickType } from "./quick-type";
 import { MergeSuggestions } from "./suggestions";
 import { TypeSuggestions } from "./type-suggestions";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Merchants (#286): every merchant, with what it's cost over all history,
 // how often and how lately it's been seen, its usual category, whether it
@@ -29,6 +30,7 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 const day = (on: string) => new Date(`${on}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 
 export default async function MerchantsPage(props: PageProps<"/merchants">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const q = one(sp.q) ?? "";
   const type = one(sp.type) || null;

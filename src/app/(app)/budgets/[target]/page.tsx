@@ -25,6 +25,7 @@ import { MonthBars } from "../month-bars";
 import { BudgetTabs } from "../tabs";
 import { TargetSettings } from "./settings";
 import { ItemStatus } from "./status";
+import { privacyMode } from "@/lib/privacy/server";
 
 // One budget item (#174): a category's target, or the buffer's, judged as
 // a whole over time (#206) rather than a month at a time. This month and
@@ -79,6 +80,7 @@ function Shares({ title, shares, total }: { title: string; shares: Share[]; tota
 }
 
 export default async function BudgetItemPage(props: PageProps<"/budgets/[target]">) {
+  await privacyMode();
   const [{ target }, sp] = await Promise.all([props.params, props.searchParams]);
   if (target !== "buffer" && !/^[0-9a-f-]{36}$/.test(target)) notFound();
   const categoryId = target === "buffer" ? null : target;

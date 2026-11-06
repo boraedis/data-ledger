@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import type { EvalSummary } from "@/lib/model/evaluate";
 import type { ModelStatus } from "@/lib/model/status";
 import { evaluateOnHistory, testModel } from "./model-actions";
+import { moneyText } from "@/lib/money";
 
 const when = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
@@ -98,7 +99,7 @@ export function ModelStatusPanel({ status, evaluation, threshold }: { status: Mo
         <span className="text-xs text-muted-foreground">Starts the GPU if it&apos;s asleep, which takes about 3–4 minutes.</span>
       </div>
       {result ? (
-        "error" in result ? <p className="text-destructive">{result.error}</p> : <p className="text-muted-foreground">{result.message}</p>
+        "error" in result ? <p className="text-destructive">{moneyText(result.error)}</p> : <p className="text-muted-foreground">{moneyText(result.message)}</p>
       ) : null}
       <div className="space-y-2 border-t pt-3">
         <p className="font-medium">How well does it categorize your transactions?</p>

@@ -1,4 +1,4 @@
-import { formatCents } from "@/lib/money";
+import { dollarFigure, formatCents } from "@/lib/money";
 
 // Scale and labels shared by the Over time charts: daily (./history.tsx) and hourly (./hourly-chart.tsx).
 
@@ -16,9 +16,9 @@ export function compact(cents: number) {
   const dollars = cents / 100;
   const sign = dollars < 0 ? "−" : "";
   const abs = Math.abs(dollars);
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(abs >= 100_000 ? 0 : 1).replace(/\.0$/, "")}k`;
-  return `${sign}$${abs.toFixed(0)}`;
+  if (abs >= 1_000_000) return dollarFigure(`${sign}$${(abs / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`);
+  if (abs >= 1_000) return dollarFigure(`${sign}$${(abs / 1_000).toFixed(abs >= 100_000 ? 0 : 1).replace(/\.0$/, "")}k`);
+  return dollarFigure(`${sign}$${abs.toFixed(0)}`);
 }
 
 export const signed = (cents: number) => `${cents > 0 ? "+" : cents < 0 ? "−" : ""}${formatCents(Math.abs(cents))}`;

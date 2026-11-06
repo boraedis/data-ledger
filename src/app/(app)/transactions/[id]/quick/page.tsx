@@ -7,11 +7,13 @@ import { read } from "@/operations/runtime";
 import { getTransaction } from "@/operations/transactions";
 import { NotFoundError } from "@/operations/tracked";
 import { QuickFile } from "./quick-file";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Where a purchase notification lands (#34): one transaction, its likely
 // categories as big buttons, filed in one tap. The full page
 // (/transactions/[id]) has everything else.
 export default async function QuickFilePage(props: PageProps<"/transactions/[id]/quick">) {
+  await privacyMode();
   const { id } = await props.params;
   const db = getDb();
   const txn = await read(db, getTransaction, { transactionId: id }).catch((error) => {

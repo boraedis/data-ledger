@@ -26,6 +26,7 @@ import { MisfiledTransfers } from "../cash-flow/misfiled-transfers";
 import { DonutModal } from "./donut-modal";
 import { PaceChart } from "./pace-chart";
 import { SplitChart } from "./split-chart";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Spending (#66): where the money went over a period, by category, merchant
 // or account, each against the period before. The lines are
@@ -67,6 +68,7 @@ function Change({ spent, prev }: { spent: number; prev: number }) {
 }
 
 export default async function SpendingPage(props: PageProps<"/spending">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
   const params: PeriodParams = { month: one(sp.month), year: one(sp.year), from: one(sp.from), to: one(sp.to) };

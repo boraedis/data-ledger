@@ -4,6 +4,7 @@ import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { listAccounts } from "@/operations/accounts";
 import { read } from "@/operations/runtime";
 import { ImportForm } from "./import-form";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Backfilling older history from a bank's CSV export (#35): a one-time
 // fill-in before the sync's window, not a way of keeping the ledger
@@ -13,6 +14,7 @@ import { ImportForm } from "./import-form";
 export const maxDuration = 120;
 
 export default async function ImportHistoryPage(props: PageProps<"/accounts/import">) {
+  await privacyMode();
   const sp = await props.searchParams;
   // Checking first: it's where most history (and most of a year) lives.
   const order = ["checking", "credit", "savings", "payment_app", "loan", "other_asset"];

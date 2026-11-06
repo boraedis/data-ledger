@@ -1,4 +1,5 @@
 import type { employerPayKind, payLineKind } from "@/db/schema";
+import { dollarFigure } from "@/lib/money";
 
 // Pay stubs (#60), the parts with no database: what each deduction kind
 // is, the check that a stub adds up, and which deposit is its net pay.
@@ -52,7 +53,7 @@ export function stubMismatch(grossCents: number, lines: { amountCents: number }[
   const withheld = lines.reduce((sum, l) => sum + l.amountCents, 0);
   const expected = grossCents - withheld;
   if (expected === netCents) return null;
-  const cents = (n: number) => `$${(n / 100).toFixed(2)}`;
+  const cents = (n: number) => dollarFigure(`$${(n / 100).toFixed(2)}`);
   return `Gross ${cents(grossCents)} less ${cents(withheld)} withheld is ${cents(expected)}, not the net ${cents(netCents)} (off by ${cents(Math.abs(expected - netCents))})`;
 }
 

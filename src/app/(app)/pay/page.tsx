@@ -7,6 +7,7 @@ import { listPayStubs } from "@/operations/pay";
 import { read } from "@/operations/runtime";
 import { PayChart } from "./pay-chart";
 import { PayStubs } from "./pay-stubs";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Pay stubs (#60): what each paycheck really was, gross to net. This
 // year's totals on top, then each paycheck over time against its typical
@@ -15,6 +16,7 @@ import { PayStubs } from "./pay-stubs";
 const GROUPS: PayLineGroup[] = ["tax", "insurance", "retirement", "other"];
 
 export default async function PayPage() {
+  await privacyMode();
   const db = getDb();
   const today = new Date().toISOString().slice(0, 10);
   const year = Number(today.slice(0, 4));

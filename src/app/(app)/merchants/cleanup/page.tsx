@@ -3,6 +3,7 @@ import { getDb } from "@/lib/db";
 import { rederivePreviewRead } from "@/operations/merchants";
 import { read } from "@/operations/runtime";
 import { ChoiceList, CleanupForm } from "./apply";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Re-running the merchant name cleanup over history (#288): what it would
 // change, read before applying. Only the cleaned name moves (and with it the
@@ -14,6 +15,7 @@ import { ChoiceList, CleanupForm } from "./apply";
 const MATCH: Record<string, string> = { equals: "is", contains: "contains", starts_with: "starts with" };
 
 export default async function MerchantCleanupPage() {
+  await privacyMode();
   const preview = await read(getDb(), rederivePreviewRead, {});
 
   return (

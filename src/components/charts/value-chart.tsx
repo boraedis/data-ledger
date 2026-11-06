@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { formatCents } from "@/lib/money";
+import { dollarFigure, formatCents } from "@/lib/money";
 // A value over time — net worth, an account's balance: one line, drawn in
 // SVG at the container's real pixel
 // width (measured, not a stretched viewBox) so text and strokes stay crisp
@@ -47,9 +47,9 @@ function compact(cents: number): string {
   const dollars = cents / 100;
   const sign = dollars < 0 ? "−" : "";
   const abs = Math.abs(dollars);
-  if (abs >= 1_000_000) return `${sign}$${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`;
-  if (abs >= 1_000) return `${sign}$${(abs / 1_000).toFixed(abs >= 100_000 ? 0 : 1).replace(/\.0$/, "")}k`;
-  return `${sign}$${abs.toFixed(0)}`;
+  if (abs >= 1_000_000) return dollarFigure(`${sign}$${(abs / 1_000_000).toFixed(abs >= 10_000_000 ? 0 : 1)}M`);
+  if (abs >= 1_000) return dollarFigure(`${sign}$${(abs / 1_000).toFixed(abs >= 100_000 ? 0 : 1).replace(/\.0$/, "")}k`);
+  return dollarFigure(`${sign}$${abs.toFixed(0)}`);
 }
 
 function formatDay(on: string, withYear = true): string {

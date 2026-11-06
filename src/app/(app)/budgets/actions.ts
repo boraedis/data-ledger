@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { executeAsOwner } from "@/operations/server";
+import { dollarFigure } from "@/lib/money";
 
 // Each budget edit is one operation as the owner: validated, logged in
 // Activity, undoable there.
@@ -31,7 +32,7 @@ export type TargetInput = {
 };
 
 export async function setTarget(input: TargetInput, name: string) {
-  return run("budgets.setTarget", { ...input }, `Set the ${name} target to $${(input.amountCents / 100).toFixed(2)}`);
+  return run("budgets.setTarget", { ...input }, `Set the ${name} target to ${dollarFigure(`$${(input.amountCents / 100).toFixed(2)}`)}`);
 }
 
 export type BackdateMonth = { month: string; before: { targetCents: number; periodMonths: number } | null; after: { targetCents: number; periodMonths: number } | null };
@@ -53,7 +54,7 @@ export async function backdateTarget(input: TargetInput & { fromMonth: string },
   return run(
     "budgets.backdateTarget",
     { ...input },
-    `Backdated the ${name} target to ${input.fromMonth}: $${(input.amountCents / 100).toFixed(2)} until its next version`,
+    `Backdated the ${name} target to ${input.fromMonth}: ${dollarFigure(`$${(input.amountCents / 100).toFixed(2)}`)} until its next version`,
   );
 }
 
@@ -103,6 +104,6 @@ export async function rebalance(fromCategoryId: string | null, toCategoryId: str
   return run(
     "budgets.rebalance",
     { fromCategoryId, toCategoryId, amountCents },
-    `Moved $${(amountCents / 100).toFixed(2)} from ${fromName} to ${toName} for this period`,
+    `Moved ${dollarFigure(`$${(amountCents / 100).toFixed(2)}`)} from ${fromName} to ${toName} for this period`,
   );
 }

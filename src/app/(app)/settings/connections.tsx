@@ -4,7 +4,7 @@ import { useState, useTransition, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { formatCents } from "@/lib/money";
+import { formatCents, moneyText } from "@/lib/money";
 import type { ConnectionHealth } from "@/lib/sync/health";
 import { addConnection, syncNow } from "./connection-actions";
 
@@ -12,8 +12,8 @@ const when = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: 
 
 function Feedback({ result }: { result: { error: string } | { ok: true; message?: string } | null }) {
   if (!result) return null;
-  if ("error" in result) return <p className="text-sm text-destructive">{result.error}</p>;
-  return result.message ? <p className="text-sm text-muted-foreground">{result.message}</p> : null;
+  if ("error" in result) return <p className="text-sm text-destructive">{moneyText(result.error)}</p>;
+  return result.message ? <p className="text-sm text-muted-foreground">{moneyText(result.message)}</p> : null;
 }
 
 function ConnectionCard({ connection }: { connection: ConnectionHealth }) {
