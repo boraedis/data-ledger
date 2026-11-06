@@ -12,6 +12,7 @@ import { listGoals } from "@/operations/goals";
 import { read } from "@/operations/runtime";
 import { GoalEditor, GoalForm, RestoreGoal } from "./goal-form";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Savings goals (#10): targets to build toward, with progress from linked
 // balances and tagged transfers, and pace against the target date. Budget
@@ -70,7 +71,7 @@ export default async function GoalsPage() {
         return (
           <section key={g.id} className="space-y-3 rounded-lg border p-3 text-sm">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
-              <h2 className="text-lg font-medium">{g.name}</h2>
+              <h2 className="text-lg font-medium">{privateName("goal", g.name)}</h2>
               <p className="tabular-nums">
                 {formatCents(g.currentCents)} <span className="text-muted-foreground">of {formatCents(g.targetCents)}</span>
                 {g.targetDate ? <span className="text-muted-foreground"> by {g.targetDate}</span> : null}
@@ -97,7 +98,7 @@ export default async function GoalsPage() {
             </div>
             {g.series.length > 1 ? (
               <ValueChart
-                label={`${g.name} progress`}
+                label={`${privateName("goal", g.name)} progress`}
                 height={140}
                 series={g.series.map((p) => ({ on: p.on, cents: p.cents }))}
                 guide={g.pace?.map((p) => ({ on: p.on, cents: p.cents })) ?? undefined}
@@ -155,7 +156,7 @@ export default async function GoalsPage() {
             {archivedOnly.map((g) => (
               <li key={g.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <span className="text-muted-foreground">
-                  {g.name} · {formatCents(g.currentCents)} of {formatCents(g.targetCents)}
+                  {privateName("goal", g.name)} · {formatCents(g.currentCents)} of {formatCents(g.targetCents)}
                 </span>
                 <RestoreGoal goalId={g.id} name={g.name} />
               </li>

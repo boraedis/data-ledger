@@ -6,6 +6,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { filterOptions, type CategoryOption } from "@/lib/categorize/labels";
 import { formatCents, parseAmountCents } from "@/lib/money";
 import { fileAs, splitInto, undo, type QuickResult } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // The quick-file screen (#34). Built for a phone held in one hand, seconds
 // after paying: the likely categories as big buttons, anything else a
@@ -141,9 +142,9 @@ export function QuickFile({ txn, choices, options }: { txn: Txn; choices: Choice
     <div className="mx-auto max-w-md space-y-5">
       <div className="space-y-1">
         <p className="text-3xl font-semibold tabular-nums">{formatCents(Math.abs(txn.amountCents))}</p>
-        <h1 className="truncate text-xl">{txn.merchant}</h1>
+        <h1 className="truncate text-xl">{privateName("merchant", txn.merchant)}</h1>
         <p className="text-sm text-muted-foreground">
-          {txn.postedOn} · {txn.accountName}
+          {txn.postedOn} · {privateName("account", txn.accountName)}
           {txn.provisional ? ` · from ${txn.provisional === "apple_pay" ? "Apple Pay" : "an email alert"}` : ""}
           {txn.amountCents > 0 ? " · money in" : ""}
         </p>

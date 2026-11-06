@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { categoryOptions, type CategoryRow } from "@/lib/categorize/labels";
 import * as actions from "./actions";
 import { moneyText } from "@/lib/money";
+import { privateName } from "@/lib/privacy/names";
 
 type Result = Awaited<ReturnType<typeof actions.runRulesNow>>;
 
@@ -52,7 +53,7 @@ function RulePreviewLine({ match, pattern }: { match: string; pattern: string })
     <p role="status" className="text-sm text-muted-foreground">
       {p.merchant ? (
         <>
-          For the merchant <span className="font-medium text-foreground">{p.merchant.name}</span>
+          For the merchant <span className="font-medium text-foreground">{privateName("merchant", p.merchant.name)}</span>
           {others.length ? `, every spelling of it (${others.slice(0, 3).join(", ")}${others.length > 3 ? ` and ${others.length - 3} more` : ""})` : ""}.{" "}
         </>
       ) : match === "merchant:equals" ? (
@@ -198,7 +199,7 @@ export function ManageCategories({ categories, rules }: { categories: CategoryRo
                 <span>
                   {r.merchantName ? (
                     <>
-                      merchant <span className="font-medium">{r.merchantName}</span>
+                      merchant <span className="font-medium">{privateName("merchant", r.merchantName)}</span>
                       <span className="text-xs text-muted-foreground"> (every spelling)</span>
                     </>
                   ) : (

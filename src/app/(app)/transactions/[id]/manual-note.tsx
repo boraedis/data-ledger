@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { formatCents } from "@/lib/money";
 import { toCents } from "../new/add-form";
 import { deleteManual, keepManual, mergeManual, updateManual } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // On a transaction added by hand (#64): that it was, a way to correct or
 // delete it, and, when the bank seems to have reported it too, the choice
@@ -53,7 +54,7 @@ export function ManualNote({
             {candidates.map((c) => (
               <li key={c.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                 <Link href={`/transactions/${c.id}`} className="min-w-0 flex-1 truncate hover:underline">
-                  {c.postedOn} · {c.description}
+                  {c.postedOn} · {privateName("description", c.description)}
                 </Link>
                 <span className="tabular-nums">{formatCents(c.amountCents)}</span>
                 <Button size="sm" variant="outline" disabled={pending} onClick={() => act(() => mergeManual(txn.id, c.id), () => router.push(`/transactions/${c.id}`))}>

@@ -13,8 +13,17 @@ export const PRIVACY_COOKIE = "privacy_mode";
 // A year: it stays until it's turned off, in this browser.
 export const PRIVACY_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
-/** Whether a cookie value means on: only "on" does. While it's on, a bar on every page says so; the top bar's button shows it either way. */
-export const privacyFromCookie = (value: string | undefined) => value === "on";
+/**
+ * Whether a cookie value means on: "on", with this browser's salt for name
+ * labels after a dot (#365), "on.k3j9…". Nothing else is. While it's on, a
+ * bar on every page says so; the top bar's button shows it either way.
+ */
+export const privacyFromCookie = (value: string | undefined) => value === "on" || Boolean(value?.startsWith("on."));
+
+/** The salt name labels are made with (#365): random, set each time the mode is turned on. */
+export const saltFromCookie = (value: string | undefined) => (value?.startsWith("on.") ? value.slice(3) : "");
+
+export const cookieFor = (salt: string) => `on.${salt}`;
 
 /**
  * The shortcut: Option+Shift+P (Alt+Shift+P). Matched on the key's code,

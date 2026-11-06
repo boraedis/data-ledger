@@ -15,6 +15,8 @@ import { rebuiltHistory, type RebuiltHistory } from "@/lib/prices/rebuilt";
 import { hourlyNetWorth } from "@/lib/net-worth-hourly";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
+import { percentOf, showProportions } from "@/lib/privacy/share";
 
 // Net worth today and over time (#25), and a forecast on the owner's own
 // assumptions (#233). Read-only: balances come from syncs, how each kind
@@ -22,6 +24,8 @@ import { privacyMode } from "@/lib/privacy/server";
 // assumptions are only in the URL.
 export default async function NetWorthPage(props: PageProps<"/net-worth">) {
   await privacyMode();
+  // Shares of today's net worth while privacy mode is on (#366).
+  const proportions = showProportions();
   const assumptions = parseAssumptions(await props.searchParams);
   const db = getDb();
   // The trailing twelve months, from the first of the month eleven months ago.
@@ -43,9 +47,17 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
     <div className="space-y-8">
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold">Net worth</h1>
-        <p className="text-3xl font-semibold tabular-nums">{formatCents(summary.netCents)}</p>
+        <p className="text-3xl font-semibold tabular-nums">{proportions ? "100%" : formatCents(summary.netCents)}</p>
         <p className="text-sm text-muted-foreground tabular-nums">
-          {formatCents(summary.assetsCents)} in assets − {formatCents(summary.liabilitiesCents)} owed
+          {proportions ? (
+            <>
+              Today&apos;s net worth is 100%, and every share below is of it: {percentOf(summary.assetsCents, summary.netCents)} in assets − {percentOf(summary.liabilitiesCents, summary.netCents)} owed
+            </>
+          ) : (
+            <>
+              {formatCents(summary.assetsCents)} in assets − {formatCents(summary.liabilitiesCents)} owed
+            </>
+          )}
         </p>
       </div>
 
@@ -101,7 +113,7 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
                     style={{ width: `${(Math.abs(k.cents) / largest) * 100}%` }}
                   />
                 </span>
-                <span className="text-right tabular-nums">{formatCents(k.cents)}</span>
+                <span className="text-right tabular-nums">{proportions ? percentOf(k.cents, summary.netCents) : formatCents(k.cents)}</span>
               </li>
             ))}
           </ul>
@@ -149,22 +161,22 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
             <li key={a.id} className="flex items-center justify-between gap-3 px-3 py-2">
               <span className="min-w-0">
                 <span className="block truncate">
-                  {a.name} {a.manual ? <ManualBadge /> : null}
+                  {privateName("account", a.name)} {a.manual ? <ManualBadge /> : null}
                 </span>
                 <span className="block truncate text-xs text-muted-foreground">
                   {KIND_LABELS[a.kind]}
-                  {a.manual && a.institution === "Manual" ? "" : ` · ${a.institution}`}
+                  {a.manual && a.institution === "Manual" ? "" : ` · ${privateName("institution", a.institution)}`}
                   {a.balanceAt ? ` · ${a.live ? "balance " : ""}as of ${a.balanceAt.toISOString().slice(0, 10)}` : ""}
                   {pricesNote(a.live)}
                 </span>
               </span>
-              <span className="shrink-0 tabular-nums">{formatCents(a.contributionCents!)}</span>
+              <span className="shrink-0 tabular-nums">{proportions ? percentOf(a.contributionCents!, summary.netCents) : formatCents(a.contributionCents!)}</span>
             </li>
           ))}
           {summary.excluded.map(({ account, reason }) => (
             <li key={account.id} className="flex items-center justify-between gap-3 px-3 py-2 text-muted-foreground">
               <span className="min-w-0">
-                <span className="block truncate">{account.name}</span>
+                <span className="block truncate">{privateName("account", account.name)}</span>
                 <span className="block truncate text-xs">
                   Not counted: {reason === "currency" ? `balance is in ${account.currency}` : "no balance reported yet"}
                 </span>

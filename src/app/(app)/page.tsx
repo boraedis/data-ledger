@@ -16,6 +16,7 @@ import { read } from "@/operations/runtime";
 import { inboxCount } from "@/operations/transactions";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Home is the dashboard (#71): where things stand today, one card per
 // area, each with its key figure and a link to the full page. Every figure
@@ -180,7 +181,7 @@ export default async function HomePage() {
                 {upcoming.slice(0, 5).map((r) => (
                   <li key={`${r.merchant}|${r.accountId}`} className="flex justify-between gap-3 py-1.5">
                     <span className="min-w-0 truncate">
-                      <span className="text-muted-foreground">{fmtDay(r.nextExpectedOn)}</span> · {r.merchant}
+                      <span className="text-muted-foreground">{fmtDay(r.nextExpectedOn)}</span> · {privateName("merchant", r.merchant)}
                     </span>
                     <span className="shrink-0">{formatCents(r.latestCents)}</span>
                   </li>
@@ -218,7 +219,7 @@ export default async function HomePage() {
               <Figure>{formatCents(owed.totalCents)}</Figure>
               <Note>
                 from {owed.people.length} {owed.people.length === 1 ? "person" : "people"}
-                {owed.people[0] ? ` · most from ${owed.people[0].personName} (${formatCents(owed.people[0].totalCents)})` : ""}
+                {owed.people[0] ? ` · most from ${privateName("person", owed.people[0].personName)} (${formatCents(owed.people[0].totalCents)})` : ""}
               </Note>
             </>
           ) : (

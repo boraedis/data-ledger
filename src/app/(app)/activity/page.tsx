@@ -4,7 +4,7 @@ import { merchantChanges } from "@/lib/merchants/trail";
 import { listCommands } from "@/operations/runtime";
 import { CommandActions } from "./command-actions";
 import { privacyMode } from "@/lib/privacy/server";
-import { moneyText } from "@/lib/money";
+import { privateText } from "@/lib/privacy/names";
 
 const when = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" });
 
@@ -60,7 +60,7 @@ export default async function ActivityPage(props: PageProps<"/activity">) {
                   <span className={`rounded px-1.5 py-0.5 text-xs ${statusStyle[c.status]}`}>{c.status}</span>
                   {c.autoApplied ? <span className="rounded border border-dashed px-1.5 py-0.5 text-xs text-muted-foreground">auto-applied by Tally</span> : null}
                 </div>
-                <p>{moneyText(c.reason)}</p>
+                <p>{privateText(c.reason)}</p>
                 <p className="text-xs text-muted-foreground">
                   {c.actor} · {when.format(c.createdAt)}
                   {c.changes.length ? ` · ${c.changes.length} row${c.changes.length === 1 ? "" : "s"} changed` : ""}

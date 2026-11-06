@@ -8,6 +8,7 @@
 // to that day's net worth whichever way it's sliced.
 
 import { KIND_LABELS, type AccountKind } from "@/lib/account-kinds";
+import { privateName } from "@/lib/privacy/names";
 
 export type GroupBy = "kind" | "account" | "institution";
 export type BreakdownAccount = { id: string; name: string; institution: string; kind: AccountKind };
@@ -37,7 +38,7 @@ export function sumSeries(series: (number | null)[][], length: number): (number 
 
 export function groupSeries(accounts: BreakdownAccount[], daily: Daily, groupBy: GroupBy): Group[] {
   const keyOf = (a: BreakdownAccount) => (groupBy === "kind" ? a.kind : groupBy === "account" ? a.id : a.institution);
-  const labelOf = (a: BreakdownAccount) => (groupBy === "kind" ? KIND_LABELS[a.kind] : groupBy === "account" ? a.name : a.institution);
+  const labelOf = (a: BreakdownAccount) => (groupBy === "kind" ? KIND_LABELS[a.kind] : groupBy === "account" ? privateName("account", a.name) : privateName("institution", a.institution));
   const members = new Map<string, { label: string; kind?: AccountKind; series: (number | null)[][] }>();
   for (const a of accounts) {
     const series = daily.byAccount[a.id];

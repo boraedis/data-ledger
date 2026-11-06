@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatCents } from "@/lib/money";
 import { addPerson, confirmMatch, dismissPayment, forgive, updatePerson } from "./actions";
 
 type Result = { error: string } | { ok: true; output?: unknown };
@@ -40,14 +39,13 @@ export function ProposalActions({
   allocations: { reimbursementId: string; amountCents: number }[];
 }) {
   const { pending, error, act } = useAction();
-  const total = allocations.reduce((s, a) => s + a.amountCents, 0);
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span className="rounded border px-1.5 text-xs text-muted-foreground">{KIND_LABEL[kind]}</span>
       <Button
         size="sm"
         disabled={pending}
-        onClick={() => act(() => confirmMatch(transactionId, allocations, `Matched ${formatCents(total)} from ${personName}`))}
+        onClick={() => act(() => confirmMatch(transactionId, allocations, personName))}
       >
         Confirm
       </Button>
@@ -59,11 +57,11 @@ export function ProposalActions({
   );
 }
 
-export function ForgiveButton({ reimbursementId, summary }: { reimbursementId: string; summary: string }) {
+export function ForgiveButton({ reimbursementId, about }: { reimbursementId: string; about: Parameters<typeof forgive>[1] }) {
   const { pending, error, act } = useAction();
   return (
     <>
-      <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={pending} onClick={() => act(() => forgive(reimbursementId, summary))}>
+      <Button size="xs" variant="ghost" className="text-muted-foreground" disabled={pending} onClick={() => act(() => forgive(reimbursementId, about))}>
         Forgive
       </Button>
       {error ? <span className="text-xs text-destructive">{error}</span> : null}

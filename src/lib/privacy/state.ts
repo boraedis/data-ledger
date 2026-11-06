@@ -20,22 +20,32 @@ import { cache, cacheSignal } from "react";
 //   rendered in the browser, by the first rule. That's also why no module
 //   value is shared between two requests on the server.
 
-let browserOn = false;
+// The salt is for name labels (#365): the same rules decide which one applies.
+let browser = { on: false, salt: "" };
 
-/** The provider's mode, for figures formatted in the browser. */
-export function setBrowserPrivacy(on: boolean) {
-  browserOn = on;
+/** The provider's mode, for figures and names formatted in the browser. */
+export function setBrowserPrivacy(on: boolean, salt = "") {
+  browser = { on, salt };
 }
 
-const request = cache((): { on: boolean | null } => ({ on: null }));
+const request = cache((): { on: boolean | null; salt: string } => ({ on: null, salt: "" }));
 
-/** This request's mode, for figures formatted in its Server Components. */
-export function setRequestPrivacy(on: boolean) {
-  if (cacheSignal()) request().on = on;
+/** This request's mode, for figures and names formatted in its Server Components. */
+export function setRequestPrivacy(on: boolean, salt = "") {
+  if (!cacheSignal()) return;
+  const r = request();
+  r.on = on;
+  r.salt = salt;
+}
+
+/** The salt for name labels, by the same rules as privacyOn. */
+export function privacySalt(): string {
+  if (typeof window !== "undefined") return browser.salt;
+  return cacheSignal() ? request().salt : "";
 }
 
 export function privacyOn(): boolean {
-  if (typeof window !== "undefined") return browserOn;
+  if (typeof window !== "undefined") return browser.on;
   // Not in a Server Component render: see above.
   if (!cacheSignal()) return false;
   return request().on ?? true;

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { decideTypeSuggestion, suggestTypes } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // Merchant types (#293): suggestions waiting for the owner, each with where
 // it came from (the usual category, or the model from the name, with its
@@ -75,7 +76,7 @@ export function TypeSuggestions({ suggestions, untyped }: { suggestions: TypeSug
           {suggestions.map((s) => (
             <li key={s.commandId} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
               <span className="min-w-0">
-                <span className="font-medium">{s.merchantName}</span> → {s.typeName}
+                <span className="font-medium">{privateName("merchant", s.merchantName)}</span> → {s.typeName}
                 <span className="block text-xs text-muted-foreground">{s.reason.replace(/^Suggested type for .*?: /, "")}</span>
               </span>
               <span className="flex shrink-0 gap-1">

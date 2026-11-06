@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { parseAmountCents } from "@/lib/money";
 import { archiveGoal, createGoal, updateGoal } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // Add or edit a savings goal. Progress needs a source: linked accounts
 // (their balance counts), a tag (transfers with it count), or both.
@@ -85,7 +86,7 @@ export function GoalForm({
                 onChange={(e) => setLinked(e.target.checked ? [...linked, a.id] : linked.filter((id) => id !== a.id))}
               />
               <span>
-                {a.name} <span className="text-muted-foreground">({a.kindLabel})</span>
+                {privateName("account", a.name)} <span className="text-muted-foreground">({a.kindLabel})</span>
               </span>
             </label>
           ))}

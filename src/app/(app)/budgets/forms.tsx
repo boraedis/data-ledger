@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { historyLabel, scheduleLabel, suggestedTargetCents, type HistorySummary } from "@/lib/budgets/format";
 import { formatCents, parseAmountCents } from "@/lib/money";
 import { backdateTarget, previewBackdate, rebalance, removeTarget, setTarget, type BackdateMonth } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // The budget forms. Amounts are typed as dollars and become integer cents
 // here; everything else is validated by the operations.
@@ -173,7 +174,7 @@ export function TargetForm({
             {bill.charges.map((c, i) => (
               <span key={c.merchant}>
                 {i ? "; " : ""}
-                {c.merchant} charges {formatCents(c.latestCents)} a year, last on {day(c.lastOn)}, next around {day(c.nextExpectedOn)}
+                {privateName("merchant", c.merchant)} charges {formatCents(c.latestCents)} a year, last on {day(c.lastOn)}, next around {day(c.nextExpectedOn)}
               </span>
             ))}
             . Setting aside <span className="font-medium tabular-nums">{formatCents(bill.setAsideMonthlyCents)}/month</span> covers it

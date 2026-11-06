@@ -3,7 +3,7 @@
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { hasValidSession } from "@/lib/auth/session";
-import { PRIVACY_COOKIE, PRIVACY_COOKIE_MAX_AGE } from "@/lib/privacy/mode";
+import { cookieFor, PRIVACY_COOKIE, PRIVACY_COOKIE_MAX_AGE } from "@/lib/privacy/mode";
 
 /**
  * Turns privacy mode on or off in this browser (#363). Signed in only, like
@@ -14,7 +14,9 @@ export async function setPrivacyMode(on: boolean): Promise<{ error: string } | {
   if (!(await hasValidSession())) return { error: "Not signed in" };
   const jar = await cookies();
   if (on)
-    jar.set(PRIVACY_COOKIE, "on", {
+    // A new salt each time it's turned on (#365): labels from one sharing
+    // session can't be lined up with another's to learn a name.
+    jar.set(PRIVACY_COOKIE, cookieFor(crypto.randomUUID().replaceAll("-", "").slice(0, 16)), {
       // Read on the server only: client components get it from the layout.
       httpOnly: true,
       secure: process.env.NODE_ENV === "production",

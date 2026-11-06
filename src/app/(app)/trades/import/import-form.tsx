@@ -8,6 +8,7 @@ import { dollarFigure, formatCents } from "@/lib/money";
 import { ACTION_CATEGORIES, ACTION_LABELS, bySign, type ActionCategory, type BrokerageMapping } from "@/lib/trades/import-csv";
 import { draftHeadline } from "../fields";
 import { applyTradeImport, previewTradeImport, type Applied, type Preview, type PreviewRow } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // The brokerage import's steps on one screen (#357), as the bank import's:
 // pick the account and file; check the columns and what each action means
@@ -123,7 +124,7 @@ export function TradeImportForm({ accounts, initialAccountId }: { accounts: { id
           >
             {accounts.map((a) => (
               <option key={a.id} value={a.id}>
-                {a.name}
+                {privateName("account", a.name)}
               </option>
             ))}
           </select>

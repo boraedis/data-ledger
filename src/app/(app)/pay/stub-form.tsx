@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { formatCents, parseAmountCents } from "@/lib/money";
 import { EMPLOYER_PAY_KINDS, PAY_LINE_KINDS } from "@/lib/pay/stubs";
 import { createStub, findDeposits, updateStub, type DepositMatch, type StubFields } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // Adding or editing a pay stub (#60). Pay stubs repeat, so a new one starts
 // from the last one: the same deductions, dates moved on by one period.
@@ -23,7 +24,7 @@ const dollars = (cents: number) => (cents / 100).toFixed(2);
 /** "$2,450.00 on 2026-06-12", or for pay split across accounts, each part and where it went. */
 function matchLabel(match: DepositMatch): string {
   if (match.parts.length === 1) return `${formatCents(match.parts[0].amountCents)} on ${match.parts[0].postedOn}`;
-  return `${match.parts.map((p) => `${formatCents(p.amountCents)} to ${p.accountName}`).join(" + ")} (${match.parts[0].postedOn})`;
+  return `${match.parts.map((p) => `${formatCents(p.amountCents)} to ${privateName("account", p.accountName)}`).join(" + ")} (${match.parts[0].postedOn})`;
 }
 
 function centsOf(text: string): number | null {

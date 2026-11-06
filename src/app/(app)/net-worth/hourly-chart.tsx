@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { formatCents } from "@/lib/money";
 import type { HourlyNetWorth } from "@/lib/net-worth-hourly";
 import { compact, HEIGHT, niceStep, PAD, signed } from "./chart-scale";
+import { percentOf, pointsOf, showProportions } from "@/lib/privacy/share";
 
 // Net worth by the hour (#338), on the Over time chart's short ranges in the
 // line view. Crypto moves by the hour; everything else steps at day
@@ -63,6 +64,9 @@ export function HourlyChart({ hourly, range }: { hourly: HourlyNetWorth; range: 
   if (!points.length) return null;
   const at = hover ?? points.length - 1;
   const change = points.at(-1)!.cents - points[0].cents;
+  // In privacy mode (#366), a percent of now, the live net worth, as the daily chart's is of today.
+  const now = points.at(-1)!.cents;
+  const proportions = showProportions();
 
   function pointAt(clientX: number) {
     if (!plot || !geometry) return;
@@ -75,9 +79,9 @@ export function HourlyChart({ hourly, range }: { hourly: HourlyNetWorth; range: 
       <div aria-live="polite" className="min-h-12">
         <div className="text-sm text-muted-foreground">{hover === null ? "Now" : formatHour(points[at].at)}</div>
         <div className="flex flex-wrap items-baseline gap-x-3 text-sm">
-          <span className="text-lg font-semibold tabular-nums">{formatCents(points[at].cents)}</span>
+          <span className="text-lg font-semibold tabular-nums">{proportions ? percentOf(points[at].cents, now) : formatCents(points[at].cents)}</span>
           <span className={`tabular-nums ${change < 0 ? "text-negative" : "text-muted-foreground"}`}>
-            {signed(change)} since {formatHour(points[0].at)}
+            {proportions ? pointsOf(change, now) : signed(change)} since {formatHour(points[0].at)}
           </span>
         </div>
       </div>
@@ -97,7 +101,7 @@ export function HourlyChart({ hourly, range }: { hourly: HourlyNetWorth; range: 
             <path d={geometry.path} fill="none" className="stroke-foreground" strokeWidth={2} strokeLinejoin="round" />
             {geometry.ticks.map((t) => (
               <text key={t} x={PAD.left + 2} y={geometry.y(t) - 3} className="fill-muted-foreground stroke-background text-[10px] tabular-nums" strokeWidth={3} paintOrder="stroke">
-                {compact(t)}
+                {proportions ? percentOf(t, now) : compact(t)}
               </text>
             ))}
             {hover !== null ? <line x1={geometry.x(hover)} x2={geometry.x(hover)} y1={PAD.top} y2={HEIGHT - PAD.bottom} className="stroke-foreground/40" /> : null}

@@ -5,10 +5,25 @@ import { paceFor } from "@/lib/budgets/pace-colour";
 import { itemHref, type BudgetView } from "@/lib/budgets/tabs";
 import { formatCents } from "@/lib/money";
 import { PaceBar } from "./pace-bar";
+import { percentOf, showProportions } from "@/lib/privacy/share";
 
 // The Month view's list (#122, #174): every target once, each row its bar,
 // spent of available, and left or over, and a link to the target's own
 // page, where the detail and the changes are. Server-rendered.
+
+// In privacy mode (#366), each figure is a percent of what the target
+// makes available: spent, left and over all read against that one base.
+const spentOf = (spent: number, available: number) =>
+  showProportions() ? (
+    <>
+      {percentOf(spent, available)} <span className="text-muted-foreground">of target</span>
+    </>
+  ) : (
+    <>
+      {formatCents(spent)} <span className="text-muted-foreground">of {formatCents(available)}</span>
+    </>
+  );
+const ofTarget = (cents: number, available: number) => (showProportions() ? percentOf(cents, available) : formatCents(cents));
 
 function Row({ row, period, view, inProgress }: { row: OverviewRow; period?: string; view: BudgetView; inProgress: boolean }) {
   const over = row.remainingCents < 0;
@@ -26,7 +41,7 @@ function Row({ row, period, view, inProgress }: { row: OverviewRow; period?: str
           {period ? <span className="ml-1.5 text-xs font-normal text-muted-foreground">{period}</span> : null}
         </span>
         <span className="text-right tabular-nums">
-          {formatCents(row.spentCents)} <span className="text-muted-foreground">of {formatCents(row.availableCents)}</span>
+          {spentOf(row.spentCents, row.availableCents)}
         </span>
         {/* The row opens the target's page. */}
         <span aria-hidden className="row-span-2 text-muted-foreground">
@@ -41,8 +56,8 @@ function Row({ row, period, view, inProgress }: { row: OverviewRow; period?: str
           rounded="rounded-full"
         />
         <span className={`text-right text-xs tabular-nums ${over ? "font-medium text-negative" : "text-muted-foreground"}`}>
-          {over ? `${formatCents(-row.remainingCents)} over` : `${formatCents(row.remainingCents)} left`}
-          {projectedOver !== null ? <span className="text-negative"> · heading {formatCents(projectedOver)} over</span> : null}
+          {over ? `${ofTarget(-row.remainingCents, row.availableCents)} over` : `${ofTarget(row.remainingCents, row.availableCents)} left`}
+          {projectedOver !== null ? <span className="text-negative"> · heading {ofTarget(projectedOver, row.availableCents)} over</span> : null}
         </span>
       </Link>
     </li>
@@ -61,14 +76,22 @@ export function BudgetOverview({ targets, view, inProgress }: { targets: Overvie
           <li className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 bg-muted/40 px-3 py-2 font-medium">
             <span>Total this month</span>
             <span className="text-right tabular-nums">
-              {formatCents(total.spentCents)} <span className="font-normal text-muted-foreground">of {formatCents(total.availableCents)}</span>
+              {showProportions() ? (
+                <>
+                  {percentOf(total.spentCents, total.availableCents)} <span className="font-normal text-muted-foreground">of target</span>
+                </>
+              ) : (
+                <>
+                  {formatCents(total.spentCents)} <span className="font-normal text-muted-foreground">of {formatCents(total.availableCents)}</span>
+                </>
+              )}
             </span>
             <span aria-hidden className="invisible row-span-2">
               ›
             </span>
             <span />
             <span className={`text-right text-xs tabular-nums ${total.remainingCents < 0 ? "text-negative" : "font-normal text-muted-foreground"}`}>
-              {total.remainingCents < 0 ? `${formatCents(-total.remainingCents)} over` : `${formatCents(total.remainingCents)} left`}
+              {total.remainingCents < 0 ? `${ofTarget(-total.remainingCents, total.availableCents)} over` : `${ofTarget(total.remainingCents, total.availableCents)} left`}
             </span>
           </li>
         ) : null}

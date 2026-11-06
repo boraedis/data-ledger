@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { formatCents } from "@/lib/money";
 import { dismissTransfer, pairAsTransfer } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // Pairs that look like a transfer between the owner's own accounts but are
 // filed as spending or income (#102), so they count twice: a card payment
@@ -45,7 +46,7 @@ function Pair({ pair }: { pair: { out: Side; in: Side } }) {
   const side = (s: Side, dir: string) => (
     <Link href={`/transactions/${s.transactionId}`} className="flex justify-between gap-3 hover:underline">
       <span className="min-w-0 truncate">
-        {dir} {s.accountName} · {s.postedOn} · {s.description}
+        {dir} {privateName("account", s.accountName)} · {s.postedOn} · {privateName("description", s.description)}
         <span className="text-muted-foreground"> · {s.categoryName ?? "uncategorized"}</span>
       </span>
       <span className="shrink-0 tabular-nums">{formatCents(s.amountCents)}</span>

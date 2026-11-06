@@ -21,9 +21,9 @@ export const usePrivacy = () => useContext(PrivacyContext);
 const subscribeNever = () => () => {};
 const useInBrowser = () => useSyncExternalStore(subscribeNever, () => true, () => false);
 
-export function PrivacyProvider({ on, children }: { on: boolean; children: React.ReactNode }) {
+export function PrivacyProvider({ on, salt = "", children }: { on: boolean; salt?: string; children: React.ReactNode }) {
   // Before any child renders, so every figure formatted in this tab masks or doesn't (#364).
-  if (typeof window !== "undefined") setBrowserPrivacy(on);
+  if (typeof window !== "undefined") setBrowserPrivacy(on, salt);
   const inBrowser = useInBrowser();
   const router = useRouter();
   const [pending, startTransition] = useTransition();

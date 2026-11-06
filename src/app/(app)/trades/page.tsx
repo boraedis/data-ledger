@@ -15,6 +15,7 @@ import { DraftCard } from "./draft-card";
 import { TradeItem } from "./trade-item";
 import type { CashRowView } from "./fields";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Trades (#319), in the Wealth section: every trade across accounts, with
 // the drafts that need the owner first. A draft is a trade inferred from what
@@ -163,7 +164,7 @@ export default async function TradesPage(props: PageProps<"/trades">) {
               <option value="">All accounts</option>
               {tradeAccounts.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.name}
+                  {privateName("account", a.name)}
                 </option>
               ))}
             </select>

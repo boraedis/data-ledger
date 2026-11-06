@@ -7,6 +7,7 @@ import { read } from "@/operations/runtime";
 import { AlertList } from "./alert-list";
 import { CancelButton, CheckNow, StatusButtons, StillActiveButton } from "./controls";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Subscriptions and recurring bills (#9): what's tracked, what was
 // detected, and the alerts. Detection is rule-based and runs on read; the
@@ -75,9 +76,9 @@ export default async function SubscriptionsPage() {
             {ended.map((s) => (
               <li key={`${s.merchant}|${s.accountId}`} id={billAnchor(s.merchant, s.accountId)} className="flex scroll-mt-4 flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <span className="min-w-0">
-                  <span className="block truncate">{s.merchant}</span>
+                  <span className="block truncate">{privateName("merchant", s.merchant)}</span>
                   <span className="block text-xs text-muted-foreground">
-                    Last {formatCents(s.latestCents)} on {s.lastOn} · {s.accountName} · next was due around {s.nextExpectedOn}
+                    Last {formatCents(s.latestCents)} on {s.lastOn} · {privateName("account", s.accountName)} · next was due around {s.nextExpectedOn}
                   </span>
                 </span>
                 <span className="flex flex-wrap items-center justify-end gap-1">
@@ -106,9 +107,9 @@ export default async function SubscriptionsPage() {
                 className="flex scroll-mt-4 flex-wrap items-center justify-between gap-2 px-3 py-2 target:bg-primary/10"
               >
                 <span className="min-w-0">
-                  <span className="block truncate font-medium">{s.merchant}</span>
+                  <span className="block truncate font-medium">{privateName("merchant", s.merchant)}</span>
                   <span className="block text-xs text-muted-foreground">
-                    {amount(s)} {s.cadence} · {s.accountName} ·{" "}
+                    {amount(s)} {s.cadence} · {privateName("account", s.accountName)} ·{" "}
                     {s.overdue ? `no charge since ${s.lastOn}, kept as still active` : `next around ${s.nextExpectedOn}`}
                   </span>
                 </span>
@@ -134,9 +135,9 @@ export default async function SubscriptionsPage() {
             {suggested.map((s) => (
               <li key={`${s.merchant}|${s.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <span className="min-w-0">
-                  <span className="block truncate">{s.merchant}</span>
+                  <span className="block truncate">{privateName("merchant", s.merchant)}</span>
                   <span className="block text-xs text-muted-foreground">
-                    {amount(s)} {s.cadence} · {s.accountName} · {s.charges} charges since {s.firstOn}
+                    {amount(s)} {s.cadence} · {privateName("account", s.accountName)} · {s.charges} charges since {s.firstOn}
                   </span>
                 </span>
                 <span className="flex flex-wrap items-center gap-1">
@@ -158,9 +159,9 @@ export default async function SubscriptionsPage() {
             {cancelled.map((c) => (
               <li key={`${c.merchant}|${c.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <span className="min-w-0">
-                  <span className="block truncate">{c.merchant}</span>
+                  <span className="block truncate">{privateName("merchant", c.merchant)}</span>
                   <span className="block text-xs text-muted-foreground">
-                    {c.accountName} · cancelled {c.cancelledOn}
+                    {privateName("account", c.accountName)} · cancelled {c.cancelledOn}
                   </span>
                 </span>
                 <span className="flex items-center gap-2">
@@ -180,7 +181,7 @@ export default async function SubscriptionsPage() {
             {dismissed.map((s) => (
               <li key={`${s.merchant}|${s.accountId}`} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2">
                 <span className="text-muted-foreground">
-                  {s.merchant} · {s.accountName}
+                  {privateName("merchant", s.merchant)} · {privateName("account", s.accountName)}
                 </span>
                 <StatusButtons merchant={s.merchant} accountId={s.accountId} options={[{ label: "Undo", status: null }]} />
               </li>

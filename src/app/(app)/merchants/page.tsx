@@ -11,6 +11,7 @@ import { QuickType } from "./quick-type";
 import { MergeSuggestions } from "./suggestions";
 import { TypeSuggestions } from "./type-suggestions";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // Merchants (#286): every merchant, with what it's cost over all history,
 // how often and how lately it's been seen, its usual category, whether it
@@ -196,7 +197,7 @@ export default async function MerchantsPage(props: PageProps<"/merchants">) {
                   </td>
                   <td className="py-2 pr-2">
                     <Link href={withGross(`/merchants/${m.id}`)} className="block truncate font-medium underline-offset-2 hover:underline">
-                      {m.name}
+                      {privateName("merchant", m.name)}
                     </Link>
                     {/* Filling in types a row at a time, when the list is the untyped ones. */}
                     {type === "none" ? <QuickType merchantId={m.id} name={m.name} types={types} /> : null}

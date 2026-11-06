@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { formatCents, moneyText } from "@/lib/money";
+import { formatCents } from "@/lib/money";
 import { reviewFlag } from "./actions";
+import { privateText } from "@/lib/privacy/names";
 
 // Charges the suspicious-transaction checks flagged (#33), waiting for the
 // owner to say whether each is theirs. "Fine" teaches the checks; the rule
@@ -54,7 +55,7 @@ function Row({ flag }: { flag: FlagRow }) {
         ) : (
           <span className="font-medium">{flag.title}</span>
         )}
-        <span className="mt-0.5 block text-xs text-muted-foreground">{moneyText(flag.detail)}</span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">{privateText(flag.detail)}</span>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <Button size="sm" variant="outline" disabled={pending} onClick={() => answer("fine")}>

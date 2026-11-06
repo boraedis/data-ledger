@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { OddStub, PayPeriod } from "@/lib/cashflow/pay-periods";
 import { formatCents } from "@/lib/money";
+import { privateName } from "@/lib/privacy/names";
 
 // The Pay periods tab (#175): how far each paycheck went. A bar per
 // paycheck of what was left over (green) or overspent (red) against the
@@ -131,7 +132,7 @@ export function PayPeriods({ periods, oneTime, needsGross, year }: { periods: Pa
             {oneTime.map((s) => (
               <li key={`${s.payDate}-${s.employer}`} className="flex justify-between gap-3 px-3 py-1.5 tabular-nums">
                 <span>
-                  {day(s.payDate)} · {s.employer}
+                  {day(s.payDate)} · {privateName("employer", s.employer)}
                 </span>
                 <span>{formatCents(s.netCents)}</span>
               </li>

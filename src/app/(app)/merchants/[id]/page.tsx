@@ -8,6 +8,7 @@ import { read } from "@/operations/runtime";
 import { NotFoundError } from "@/operations/tracked";
 import { MerchantControls, SplitButton } from "./controls";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 // One merchant (#286): what it's cost by month, its names (the cleaned
 // spellings that belong to it) and the raw bank descriptions behind them,
@@ -39,7 +40,7 @@ export default async function MerchantPage(props: PageProps<"/merchants/[id]">) 
         <Link href={gross ? "/merchants?gross=1" : "/merchants"} className="text-sm text-muted-foreground hover:text-foreground">
           ← Merchants
         </Link>
-        <h1 className="text-2xl font-semibold">{detail.name}</h1>
+        <h1 className="text-2xl font-semibold">{privateName("merchant", detail.name)}</h1>
         <p className="text-sm text-muted-foreground">
           {detail.type ?? "No type"} · {formatCents(detail.spentCents)} spent in all, {gross ? "gross" : "net of what friends owe"} ·{" "}
           <Link href={gross ? `/merchants/${id}` : `/merchants/${id}?gross=1`} className="underline">
@@ -83,7 +84,7 @@ export default async function MerchantPage(props: PageProps<"/merchants/[id]">) 
           <ul className="divide-y rounded-lg border text-sm">
             {detail.aliases.map((a) => (
               <li key={a.id} className="flex items-center justify-between gap-3 px-3 py-1.5">
-                <span className="min-w-0 truncate">{a.alias}</span>
+                <span className="min-w-0 truncate">{privateName("merchant", a.alias)}</span>
                 <span className="flex shrink-0 items-center gap-3">
                   <span className="text-xs text-muted-foreground tabular-nums">{a.transactions}</span>
                   {detail.aliases.length > 1 ? <SplitButton aliasId={a.id} alias={a.alias} /> : null}
@@ -99,7 +100,7 @@ export default async function MerchantPage(props: PageProps<"/merchants/[id]">) 
             <ul className="divide-y rounded-lg border font-mono text-xs">
               {detail.descriptors.map((d) => (
                 <li key={d.description} className="flex justify-between gap-3 px-3 py-1.5">
-                  <span className="min-w-0 break-all">{d.description}</span>
+                  <span className="min-w-0 break-all">{privateName("description", d.description)}</span>
                   <span className="shrink-0 text-muted-foreground tabular-nums">{d.n}</span>
                 </li>
               ))}
@@ -118,9 +119,9 @@ export default async function MerchantPage(props: PageProps<"/merchants/[id]">) 
               <li key={t.id}>
                 <Link href={`/transactions/${t.id}`} className="flex items-center justify-between gap-3 px-3 py-2 hover:bg-muted/50">
                   <span className="min-w-0">
-                    <span className="block truncate">{t.description}</span>
+                    <span className="block truncate">{privateName("description", t.description)}</span>
                     <span className="block text-xs text-muted-foreground">
-                      {day(t.postedOn)} · {t.accountName} · {t.category ?? "Uncategorized"}
+                      {day(t.postedOn)} · {privateName("account", t.accountName)} · {t.category ?? "Uncategorized"}
                     </span>
                   </span>
                   <span className={`shrink-0 tabular-nums ${t.amountCents > 0 ? "text-positive" : ""}`}>{formatCents(t.amountCents)}</span>

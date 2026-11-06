@@ -13,6 +13,7 @@ import { MerchantChip } from "./merchant-chip";
 import { SubmitOnChange } from "./submit-on-change";
 import { MORE_FILTERS, SOURCE_LABELS, TYPES, datePresets, dollars, parseView, viewHref } from "./view";
 import { privacyMode } from "@/lib/privacy/server";
+import { privateName } from "@/lib/privacy/names";
 
 const PAGE_SIZE = 100;
 const select = "h-9 rounded-md border bg-background px-2 text-sm";
@@ -75,7 +76,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
               <li key={m.id}>
                 <Link href={`/transactions/${m.id}`} className="flex justify-between gap-3 py-1.5 hover:underline">
                   <span className="min-w-0 truncate">
-                    {m.postedOn} · {m.accountName} · {m.description}
+                    {m.postedOn} · {privateName("account", m.accountName)} · {privateName("description", m.description)}
                   </span>
                   <span className="shrink-0 tabular-nums">{formatCents(m.amountCents)}</span>
                 </Link>
@@ -105,7 +106,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
           <option value="">All tags</option>
           {tagList.map((t) => (
             <option key={t.id} value={t.id}>
-              #{t.name}
+              #{privateName("tag", t.name)}
             </option>
           ))}
         </select>
@@ -114,7 +115,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
           {/* Manual accounts hold a value, never transactions. */}
           {accts.filter((a) => !a.manual).map((a) => (
             <option key={a.id} value={a.id}>
-              {a.name}
+              {privateName("account", a.name)}
             </option>
           ))}
         </select>
@@ -204,7 +205,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                 <option value="">Any account</option>
                 {accts.filter((a) => !a.manual).map((a) => (
                   <option key={a.id} value={a.id}>
-                    {a.name}
+                    {privateName("account", a.name)}
                   </option>
                 ))}
               </select>
@@ -253,7 +254,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                 className={`flex min-w-0 items-start justify-between gap-3 px-3 py-2 text-sm hover:bg-accent ${t.pending ? "text-muted-foreground" : ""}`}
               >
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate font-medium">{t.merchant ?? t.description}</span>
+                  <span className="block truncate font-medium">{privateName("merchant", t.merchant ?? t.description)}</span>
                   <span className="block truncate text-xs text-muted-foreground">
                     {t.postedOn}
                     {t.experiencedOn ? ` (for ${t.experiencedOn})` : ""} · {accountName.get(t.accountId)}
@@ -283,7 +284,7 @@ export default async function TransactionsPage(props: PageProps<"/transactions">
                     ) : null}
                     {t.payStub ? (
                       <span className="rounded border border-dashed px-1.5 text-muted-foreground">
-                        Pay stub {t.payStub.payDate} · {t.payStub.employer}
+                        Pay stub {t.payStub.payDate} · {privateName("employer", t.payStub.employer)}
                       </span>
                     ) : t.paycheckWithoutStub ? (
                       <span className="rounded bg-warning/15 px-1.5 text-warning">No pay stub</span>

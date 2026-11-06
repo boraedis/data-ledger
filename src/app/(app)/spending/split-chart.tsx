@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Row } from "@/lib/spending/analyze";
 import { barShare, splitRows } from "@/lib/spending/split";
 import { formatCents } from "@/lib/money";
+import { percentOf, showProportions } from "@/lib/privacy/share";
 
 // The split (#265): the grouping's biggest rows, this period's bar over the
 // last period's lighter one, on one scale, each labelled with its amount.
@@ -10,7 +11,22 @@ import { formatCents } from "@/lib/money";
 // the text alternative, so nothing rests on the bars or their colour.
 // Server-rendered.
 
-export function SplitChart({ rows, label, prevLabel, hrefFor }: { rows: Row[]; label: string; prevLabel: string; hrefFor: (key: string) => string }) {
+export function SplitChart({
+  rows,
+  label,
+  prevLabel,
+  hrefFor,
+  totalCents,
+  prevTotalCents,
+}: {
+  rows: Row[];
+  label: string;
+  prevLabel: string;
+  hrefFor: (key: string) => string;
+  // Each period's spending, for shares of it in privacy mode (#366).
+  totalCents: number;
+  prevTotalCents: number;
+}) {
   const { shown, rest, scaleCents } = splitRows(rows);
   const bars = (spent: number, prev: number) => (
     <span className="col-span-2 space-y-0.5" aria-hidden>
@@ -20,7 +36,8 @@ export function SplitChart({ rows, label, prevLabel, hrefFor }: { rows: Row[]; l
   );
   const amounts = (spent: number, prev: number) => (
     <span className="text-right tabular-nums">
-      {formatCents(spent)} <span className="text-xs text-muted-foreground">was {formatCents(prev)}</span>
+      {showProportions() ? percentOf(spent, totalCents) : formatCents(spent)}{" "}
+      <span className="text-xs text-muted-foreground">was {showProportions() ? percentOf(prev, prevTotalCents) : formatCents(prev)}</span>
     </span>
   );
   return (

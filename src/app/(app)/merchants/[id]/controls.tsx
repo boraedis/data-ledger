@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { addMerchantType, mergeMerchants, renameMerchant, setMerchantType, splitAlias } from "../actions";
+import { privateName } from "@/lib/privacy/names";
 
 // The changes a merchant page offers (#286), each one operation, undoable
 // in Activity: rename, set or clear its type (or add a type to the list),
@@ -115,7 +116,7 @@ export function MerchantControls({
               <option value="">Pick a merchant…</option>
               {others.map((o) => (
                 <option key={o.id} value={o.id}>
-                  {o.name}
+                  {privateName("merchant", o.name)}
                 </option>
               ))}
             </select>
@@ -143,7 +144,7 @@ export function MerchantControls({
             disabled={pending || !other || !finalName}
             onClick={() => {
               if (!other || !finalName) return;
-              if (!window.confirm(`Merge "${other.name}" into "${merchant.name}" as "${finalName}"? Its names and transactions move here. You can undo it in Activity.`)) return;
+              if (!window.confirm(`Merge "${privateName("merchant", other.name)}" into "${privateName("merchant", merchant.name)}" as "${privateName("merchant", finalName)}"? Its names and transactions move here. You can undo it in Activity.`)) return;
               go(
                 () => mergeMerchants(merchant.id, other.id, finalName === merchant.name ? undefined : finalName),
                 () => {

@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { ACCOUNT_KINDS, KIND_LABELS, type AccountKind } from "@/lib/account-kinds";
 import { parseAmountCents } from "@/lib/money";
 import { createManualAccount, deleteManualAccount, setManualValue } from "./actions";
+import { privateName } from "@/lib/privacy/names";
 
 // Manual accounts (#26): things no bank sync covers. Values are entered as
 // positive amounts; for a loan or credit kind that's the amount owed, and
@@ -141,7 +142,7 @@ export function ManualValueControls({
   };
 
   const remove = () => {
-    if (!confirm(`Remove "${account.name}" and its value history? You can undo this from Activity.`)) return;
+    if (!confirm(`Remove "${privateName("account", account.name)}" and its value history? You can undo this from Activity.`)) return;
     startTransition(async () => setError((await deleteManualAccount(account.id, account.name))?.error ?? null));
   };
 

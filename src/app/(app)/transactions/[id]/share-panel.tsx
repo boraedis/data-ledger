@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { formatCents, parseAmountCents } from "@/lib/money";
 import { addPerson, forgive, setShares, unmatchPayment } from "../../owed/actions";
+import { privateName } from "@/lib/privacy/names";
 
 // Shared expenses (#8) on the transaction page. For money spent: who owes
 // what, and the owner's share, which is all that counts in budgets. For money
@@ -64,9 +65,9 @@ export function SharePanel({
           {covers.map((c, i) => (
             <li key={i} className="flex justify-between gap-3">
               <span className="min-w-0 truncate">
-                {c.personName} for{" "}
+                {privateName("person", c.personName)} for{" "}
                 <Link href={`/transactions/${c.expenseId}`} className="underline">
-                  {c.merchant}
+                  {privateName("merchant", c.merchant)}
                 </Link>{" "}
                 <span className="text-muted-foreground">({c.expenseDate})</span>
               </span>
@@ -106,7 +107,7 @@ export function SharePanel({
               return (
                 <li key={s.id} className="flex flex-wrap items-center justify-between gap-2 py-1.5">
                   <span>
-                    {s.personName} owes {formatCents(s.amountCents)}
+                    {privateName("person", s.personName)} owes {formatCents(s.amountCents)}
                   </span>
                   <span className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
                     {s.forgiven
@@ -121,7 +122,7 @@ export function SharePanel({
                         size="xs"
                         variant="ghost"
                         disabled={pending}
-                        onClick={() => act(() => forgive(s.id, `Forgave ${s.personName}'s remaining ${formatCents(left)}`))}
+                        onClick={() => act(() => forgive(s.id, { personName: s.personName, remainingCents: left }))}
                       >
                         Forgive
                       </Button>
@@ -179,7 +180,7 @@ export function SharePanel({
             <option value="">Choose…</option>
             {unused(row.personId).map((p) => (
               <option key={p.id} value={p.id}>
-                {p.name}
+                {privateName("person", p.name)}
               </option>
             ))}
           </select>
