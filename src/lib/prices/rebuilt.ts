@@ -5,6 +5,7 @@ import { positionValueCents } from "@/lib/holdings/value";
 import { holdingsOn, inOrder, type Trade } from "@/lib/holdings/replay";
 import { OWNER_PRICE_SOURCE } from "@/lib/prices/owner";
 import type { AssetClass } from "@/lib/prices/source";
+import { accountCash, pastBalances } from "@/lib/investments/cash-history";
 import { isConfirmed, type ConfirmedTrade } from "@/lib/trades/confirmed";
 
 // History rebuilt from trades (#232): what each account's positions were
@@ -177,16 +178,21 @@ export type DaySnapshot = { accountId: string; on: string; balanceCents: number 
  * charts that draw recorded values (#343): Net worth's Over time and each
  * account's chart on Investments. Such an account records a value only on
  * the days it changes, so its past (held since, back-dated trades and the
- * owner's own prices, #340) is only here. Synced accounts aren't: their
- * recorded balances include cash their trades don't know about.
+ * owner's own prices, #340) is only here. A synced account keeps its
+ * recorded balances, which include cash its trades don't know about; only the
+ * days before its first one are replayed, with cash walked back (#375).
  */
 export async function replayedSnapshots(db: Db, through: string): Promise<DaySnapshot[]> {
   const manual = new Set((await db.select({ id: accounts.id }).from(accounts).where(eq(accounts.source, "manual"))).map((a) => a.id));
-  if (!manual.size) return [];
   const history = await rebuiltHistory(db, through);
-  return history.accounts
+  if (!history.days.length) return [];
+  const replayed = history.accounts
     .filter((a) => manual.has(a.accountId))
     .flatMap((a) => a.values.flatMap((cents, i) => (cents === null ? [] : [{ accountId: a.accountId, on: history.days[i], balanceCents: cents }])));
+  // A synced brokerage's past before its first recorded balance (#375): the
+  // positions its trades give, plus the cash walked back from its balance.
+  const cash = await accountCash(db, history.days[0], history.accounts.filter((a) => !manual.has(a.accountId)).map((a) => a.accountId));
+  return [...replayed, ...pastBalances(cash, history.accounts.map((a) => ({ accountId: a.accountId, days: history.days, values: a.values })))];
 }
 
 /**

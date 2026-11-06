@@ -11,6 +11,7 @@ import { NetWorthHistory } from "./history";
 import { pricesNote } from "@/lib/prices/describe";
 import { ValueChart } from "@/components/charts/value-chart";
 import { GROUP_LABELS, forecast, forecastStart, parseAssumptions, type ForecastGroup } from "@/lib/forecast";
+import { accountCash, type AccountCash } from "@/lib/investments/cash-history";
 import { rebuiltHistory, type RebuiltHistory } from "@/lib/prices/rebuilt";
 import { hourlyNetWorth } from "@/lib/net-worth-hourly";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
@@ -36,6 +37,8 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
     read(db, investmentIncome, { from: yearAgo }),
     rebuiltHistory(db, now.toISOString().slice(0, 10)),
   ]);
+  // A synced brokerage's cash walked back from its balance (#375), for the notes under the rebuilt section.
+  const cash = rebuilt.days.length ? await accountCash(db, rebuilt.days[0]) : [];
   // Net worth by the hour for the chart's short ranges (#338), from the same summary.
   const hourly = await hourlyNetWorth(db, summary, { now });
   // Values move with prices (#230): refresh them after this page is sent, if due.
@@ -85,6 +88,7 @@ export default async function NetWorthPage(props: PageProps<"/net-worth">) {
           history={rebuilt}
           names={new Map([...summary.accounts, ...summary.excluded.map((e) => e.account)].map((a) => [a.id, a.name]))}
           balancesFrom={historyStart ?? null}
+          cash={cash}
         />
       ) : null}
 
@@ -331,7 +335,24 @@ function whyUncovered(blocker: RebuiltHistory["accounts"][number]["blocker"]): s
   return process.env.TIINGO_API_KEY ? `no past prices for ${blocker.symbol} yet` : `no past prices for ${blocker.symbol}: TIINGO_API_KEY isn't set`;
 }
 
-function Rebuilt({ history, names, balancesFrom }: { history: RebuiltHistory; names: Map<string, string>; balancesFrom: string | null }) {
+// What the cash walk can and can't say about an account (#375): a withdrawal
+// it doesn't know of (the walk goes below zero), or a deposit it doesn't know
+// of (more cash at the start than the account can have held).
+function cashNote(c: AccountCash): string | null {
+  const { missing, start } = c.projection;
+  if (missing)
+    return `Its cash would be below zero on ${missing.by}: at least ${formatCents(missing.cents)} left before then that isn't recorded. Add the withdrawals or transfers out as transactions; earlier days aren't drawn until then.`;
+  if (start)
+    return `Walked back to ${formatCents(start.cents)} in cash on ${start.on}. If it held less then, deposits are missing: add them as transactions on this account.`;
+  return null;
+}
+
+const cashNoteFor = (cash: AccountCash[], id: string) => {
+  const c = cash.find((x) => x.accountId === id);
+  return c ? cashNote(c) : null;
+};
+
+function Rebuilt({ history, names, balancesFrom, cash }: { history: RebuiltHistory; names: Map<string, string>; balancesFrom: string | null; cash: AccountCash[] }) {
   const n = history.accounts.length;
   const series = history.total
     .filter((p) => p.counted > 0)
@@ -340,8 +361,10 @@ function Rebuilt({ history, names, balancesFrom }: { history: RebuiltHistory; na
     <section className="space-y-2" aria-label="Rebuilt from your trades">
       <h2 className="text-lg font-medium">Rebuilt from your trades</h2>
       <p className="text-sm text-muted-foreground">
-        What your positions were worth each day: the quantity your trades say you held, at that day&apos;s closing price. Positions
-        only, not cash{balancesFrom ? `; your full net worth history above starts ${balancesFrom}` : ""}.
+        What your positions were worth each day: the quantity your trades say you held, at that day&apos;s closing price. This chart is
+        positions only; for a synced brokerage the history above adds its cash before its first synced balance, walked back from that
+        balance through its transactions{balancesFrom ? `; your full net worth history above starts ${balancesFrom}` : ""}. A brokerage&apos;s
+        export has no deposits or withdrawals, so <Link href="/transactions/new" className="underline underline-offset-2">add them by hand</Link>.
         {history.completeFrom ? ` Every traded account is covered from ${history.completeFrom}; before that it's partial.` : ""}
       </p>
       {series.length > 1 ? (
@@ -351,11 +374,17 @@ function Rebuilt({ history, names, balancesFrom }: { history: RebuiltHistory; na
       )}
       <ul className="divide-y rounded-lg border text-sm">
         {history.accounts.map((a) => (
-          <li key={a.accountId} className="flex justify-between gap-3 px-3 py-1.5">
-            <span className="truncate">{names.get(a.accountId) ?? "Account"}</span>
-            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-              {a.coverageStart ? `from ${a.coverageStart}` : whyUncovered(a.blocker)}
-            </span>
+          <li key={a.accountId} className="px-3 py-1.5">
+            <div className="flex justify-between gap-3">
+              <span className="truncate">{names.get(a.accountId) ?? "Account"}</span>
+              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+                {a.coverageStart ? `from ${a.coverageStart}` : whyUncovered(a.blocker)}
+              </span>
+            </div>
+            {(() => {
+              const note = cashNoteFor(cash, a.accountId);
+              return note ? <p className="text-xs text-muted-foreground">{note}</p> : null;
+            })()}
           </li>
         ))}
       </ul>
