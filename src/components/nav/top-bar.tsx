@@ -4,12 +4,32 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { SignOutButton } from "@/components/auth/sign-out-button";
+import { usePrivacy } from "@/components/privacy/privacy-provider";
+import { PRIVACY_SHORTCUT_LABEL } from "@/lib/privacy/mode";
 import { ACCOUNT_PAGES, SECTIONS, pageFor, sectionFor, type NavSection } from "@/lib/nav";
 
 // The top bar (#68): the six sections, the current one marked, and an
 // account menu. The current section's own pages are tabs underneath. On a
 // phone the sections collapse into one Menu, and the bar names where you
 // are instead of listing everywhere you could go.
+
+// Privacy mode's switch (#363), always in the bar: on a shared screen it
+// has to be one click away, and pressed while it's on.
+function PrivacyButton({ className = "" }: { className?: string }) {
+  const { on, pending, toggle } = usePrivacy();
+  return (
+    <button
+      type="button"
+      aria-pressed={on}
+      disabled={pending}
+      title={`${on ? "Show" : "Hide"} amounts and names (${PRIVACY_SHORTCUT_LABEL})`}
+      onClick={toggle}
+      className={`rounded-md px-2.5 py-1 text-sm ${on ? "bg-primary/15 font-medium text-foreground" : "text-muted-foreground hover:text-foreground"} ${className}`}
+    >
+      {on ? "Private" : "Privacy"}
+    </button>
+  );
+}
 
 function Badge({ count }: { count: number }) {
   return count ? <span className="ml-1 rounded-full bg-primary px-1.5 text-xs text-primary-foreground tabular-nums">{count}</span> : null;
@@ -63,6 +83,7 @@ export function TopBar({ inbox, counts = {} }: { inbox: number; counts?: Record<
               <Badge count={inbox} />
             </Link>
           ) : null}
+          <PrivacyButton />
           <button
             type="button"
             className="rounded-md px-2.5 py-1 text-sm text-muted-foreground hover:text-foreground md:hidden"

@@ -1,8 +1,10 @@
 import Link from "next/link";
 import { TopBar } from "@/components/nav/top-bar";
+import { PrivacyProvider } from "@/components/privacy/privacy-provider";
 import { requireOwner } from "@/lib/auth/session";
 import { getDb } from "@/lib/db";
 import { modelIsConfigured } from "@/lib/model/client";
+import { privacyMode } from "@/lib/privacy/server";
 import { getConnectionHealth, healthProblems } from "@/lib/sync/health";
 import { draftTotal } from "@/operations/trades";
 import { inboxCount } from "@/operations/transactions";
@@ -22,8 +24,10 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   // On every page, not just Settings: a broken bank connection silently
   // stops the ledger being current, which is exactly what goes unnoticed.
   const db = getDb();
-  const [problems, inbox, trades] = await Promise.all([getConnectionHealth(db).then(healthProblems), inboxCount(db), draftTotal(db)]);
+  const [problems, inbox, trades, privacy] = await Promise.all([getConnectionHealth(db).then(healthProblems), inboxCount(db), draftTotal(db), privacyMode()]);
+  // Privacy mode (#363) wraps everything: its bar shows above every page, and any component can ask.
   return (
+    <PrivacyProvider on={privacy}>
     <div className="flex min-h-svh flex-col">
       <TopBar inbox={inbox} counts={{ "/trades": trades }} />
       {problems.length ? (
@@ -39,5 +43,6 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       <main className="mx-auto w-full max-w-4xl flex-1 px-4 pt-6 pb-24">{children}</main>
       <TallyBubble configured={modelIsConfigured()} />
     </div>
+    </PrivacyProvider>
   );
 }
