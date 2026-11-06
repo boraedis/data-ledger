@@ -324,6 +324,13 @@ function Forecast({
 // back than balance history, which starts when syncing did, but it's only
 // positions: each account names where its coverage starts, and any day not
 // every account covers is labelled partial. Nothing is guessed.
+function whyUncovered(blocker: RebuiltHistory["accounts"][number]["blocker"]): string {
+  if (!blocker) return "no prices for its holdings yet";
+  if (blocker.reason === "sold short") return `its trades sell more ${blocker.symbol} than they buy`;
+  // Equity history comes only from Tiingo (src/lib/prices/refresh.ts); without a key none is ever fetched.
+  return process.env.TIINGO_API_KEY ? `no past prices for ${blocker.symbol} yet` : `no past prices for ${blocker.symbol}: TIINGO_API_KEY isn't set`;
+}
+
 function Rebuilt({ history, names, balancesFrom }: { history: RebuiltHistory; names: Map<string, string>; balancesFrom: string | null }) {
   const n = history.accounts.length;
   const series = history.total
@@ -347,7 +354,7 @@ function Rebuilt({ history, names, balancesFrom }: { history: RebuiltHistory; na
           <li key={a.accountId} className="flex justify-between gap-3 px-3 py-1.5">
             <span className="truncate">{names.get(a.accountId) ?? "Account"}</span>
             <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-              {a.coverageStart ? `from ${a.coverageStart}` : "no prices for its holdings yet"}
+              {a.coverageStart ? `from ${a.coverageStart}` : whyUncovered(a.blocker)}
             </span>
           </li>
         ))}

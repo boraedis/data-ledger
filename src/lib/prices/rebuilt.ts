@@ -41,6 +41,10 @@ export type RebuiltAccount = {
   coverageStart: string | null;
   // One entry per day from the account's first trade through `through`; null where unknown.
   values: (number | null)[];
+  // Why the latest day couldn't be valued, so an account with no coverage can
+  // say so: the first held symbol with no price, or one the trades show sold
+  // short (a log missing its buys). Null when that day was valued.
+  blocker: { symbol: string; reason: "no price" | "sold short" } | null;
 };
 
 export type RebuiltHistory = {
@@ -76,6 +80,7 @@ export function rebuild(tradesByAccount: Map<string, PricedTrade[]>, closes: Map
     const held = new Map<string, Trade[]>();
     let next = 0;
     let coverageStart: string | null = null;
+    let blocker: RebuiltAccount["blocker"] = null;
     for (const day of days) {
       while (next < ordered.length && ordered[next].on <= day) {
         const t = ordered[next++];
@@ -87,6 +92,7 @@ export function rebuild(tradesByAccount: Map<string, PricedTrade[]>, closes: Map
       }
       let cents = 0;
       let known = true;
+      blocker = null;
       for (const [symbol, ts] of held) {
         // Quantity at the end of this day, exactly (a short sale, which a
         // partial log can show, is unknown, not negative wealth).
@@ -95,6 +101,8 @@ export function rebuild(tradesByAccount: Map<string, PricedTrade[]>, closes: Map
         const price = priceOn(symbol, day, cursor);
         if (price === null || quantity.startsWith("-")) {
           known = false;
+          // Keys are "class:SYMBOL" (rebuiltHistory); the owner knows the ticker.
+          blocker = { symbol: symbol.replace(/^[a-z]+:/, ""), reason: price === null ? "no price" : "sold short" };
           break;
         }
         cents += positionValueCents(quantity, price);
@@ -102,7 +110,7 @@ export function rebuild(tradesByAccount: Map<string, PricedTrade[]>, closes: Map
       values.push(known ? cents : null);
       if (known && coverageStart === null) coverageStart = day;
     }
-    rebuilt.push({ accountId, coverageStart, values });
+    rebuilt.push({ accountId, coverageStart, values, blocker });
   }
 
   const total = days.map((on, i) => {
