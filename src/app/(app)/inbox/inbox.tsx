@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { filterOptions, type CategoryOption } from "@/lib/categorize/labels";
-import { formatCents } from "@/lib/money";
+import { formatCents, moneyText } from "@/lib/money";
 import { askModel, categorize, confirmSuggestions, createMerchantRule } from "./actions";
 
 export type InboxRow = {
@@ -118,7 +118,7 @@ function AskModel() {
         {pending ? "Asking the model… (can take a few minutes to wake)" : "Ask the model"}
       </Button>
       {result ? (
-        "error" in result ? <span className="text-destructive">{result.error}</span> : <span className="text-muted-foreground">{result.message}</span>
+        "error" in result ? <span className="text-destructive">{moneyText(result.error)}</span> : <span className="text-muted-foreground">{moneyText(result.message)}</span>
       ) : null}
     </div>
   );

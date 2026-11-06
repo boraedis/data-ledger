@@ -11,6 +11,7 @@ import { Burndown } from "../daily";
 import { BudgetTabs } from "../tabs";
 import { Topline } from "../topline";
 import { yearPay } from "./pay-year";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Every target's spend against target, month by month (#108): one row per
 // target (the buffer first), one column per month for the last 12, so a
@@ -48,6 +49,7 @@ const monthName = (month: string, style: "narrow" | "short" | "long") =>
   });
 
 export default async function BudgetYearPage(props: PageProps<"/budgets/year">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
   const view = budgetView(sp, today);

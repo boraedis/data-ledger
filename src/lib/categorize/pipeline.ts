@@ -19,6 +19,7 @@ import { misLinked } from "@/operations/merchants";
 import { openDeposits } from "@/operations/pay";
 import { execute } from "@/operations/runtime";
 import { awaitingCategory } from "@/operations/transactions";
+import { dollarFigure } from "@/lib/money";
 
 // The categorization pipeline (README, "Categorization pipeline"):
 //
@@ -105,8 +106,8 @@ const MIN_MS_FOR_A_BATCH = 75_000;
 function describeRule(rule: RuleLike, categoryName: string): string {
   const verb = { equals: "is", contains: "contains", starts_with: "starts with" }[rule.matchType];
   const limits = [
-    rule.minAmountCents != null ? `≥ $${(rule.minAmountCents / 100).toFixed(2)}` : null,
-    rule.maxAmountCents != null ? `≤ $${(rule.maxAmountCents / 100).toFixed(2)}` : null,
+    rule.minAmountCents != null ? `≥ ${dollarFigure(`$${(rule.minAmountCents / 100).toFixed(2)}`)}` : null,
+    rule.maxAmountCents != null ? `≤ ${dollarFigure(`$${(rule.maxAmountCents / 100).toFixed(2)}`)}` : null,
     rule.accountId ? "one account" : null,
   ].filter(Boolean);
   return `Rule: ${rule.matchField} ${verb} "${rule.pattern}"${limits.length ? ` (${limits.join(", ")})` : ""} → ${categoryName}`;

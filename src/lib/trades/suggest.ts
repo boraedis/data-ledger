@@ -1,4 +1,5 @@
 import type { TradeSide } from "@/lib/holdings/replay";
+import { dollarFigure } from "@/lib/money";
 
 // Suggesting what a draft trade lacks (#323), from what's already known:
 // arithmetic on the snapshots, the cash row and the price cache, never a
@@ -39,7 +40,7 @@ export type DraftFacts = {
 };
 
 const fixed = (n: number) => n.toFixed(4).replace(/\.?0+$/, "");
-const dollars = (n: number) => `$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;
+const dollars = (n: number) => dollarFigure(`$${n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`);
 const shortDay = (day: string) => new Date(`${day}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
 /** A commission is a few dollars either way; more than this and it's a different price. */
 const COMMISSION_CENTS = 2_500;

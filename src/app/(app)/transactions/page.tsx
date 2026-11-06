@@ -12,6 +12,7 @@ import { categoryBadge } from "./category-badge";
 import { MerchantChip } from "./merchant-chip";
 import { SubmitOnChange } from "./submit-on-change";
 import { MORE_FILTERS, SOURCE_LABELS, TYPES, datePresets, dollars, parseView, viewHref } from "./view";
+import { privacyMode } from "@/lib/privacy/server";
 
 const PAGE_SIZE = 100;
 const select = "h-9 rounded-md border bg-background px-2 text-sm";
@@ -25,6 +26,7 @@ const select = "h-9 rounded-md border bg-background px-2 text-sm";
 // flow page links to its own period), amounts, transfers with one account,
 // and what a row has or where it came from. view.ts reads and writes them.
 export default async function TransactionsPage(props: PageProps<"/transactions">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const view = parseView(sp);
   const { filters, type } = view;

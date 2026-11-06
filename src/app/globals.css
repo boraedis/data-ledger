@@ -219,3 +219,10 @@
     border-bottom: 3px double var(--border);
   }
 }
+/* Privacy mode (#364): an amount field is blurred while the mode is on,
+   not emptied, so a form still works on a shared screen. Every amount
+   field takes inputMode="decimal"; so do share quantities, which say as
+   much. The attribute is set by components/privacy/privacy-provider.tsx. */
+[data-privacy="on"] input[inputmode="decimal"] {
+  filter: blur(5px);
+}

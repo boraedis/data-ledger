@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { formatCents } from "@/lib/money";
+import { formatCents, moneyText } from "@/lib/money";
 
 // A preview of recategorizing many transactions (#100 re-applying a rule,
 // #116 moving them to one category): every transaction that would change,
@@ -88,7 +88,7 @@ export function ChangePreview({ changes, onApply }: { changes: Change[]; onApply
       </div>
       <p className="text-xs text-muted-foreground">One entry in Activity, undone together.</p>
       {result ? (
-        "error" in result ? <p className="text-sm text-destructive">{result.error}</p> : <p className="text-sm text-muted-foreground">{result.message}</p>
+        "error" in result ? <p className="text-sm text-destructive">{moneyText(result.error)}</p> : <p className="text-sm text-muted-foreground">{moneyText(result.message)}</p>
       ) : null}
     </div>
   );

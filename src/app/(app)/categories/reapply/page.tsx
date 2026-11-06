@@ -5,6 +5,7 @@ import { read } from "@/operations/runtime";
 import { misfiledTransfers } from "@/operations/transactions";
 import { MisfiledTransfers } from "../../cash-flow/misfiled-transfers";
 import { ReapplyPreview } from "./preview";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Fixing past transactions (#100): rules and transfer matching only ever
 // fill in what's uncategorized, so a rule fixed later, or a payment filed
@@ -20,6 +21,7 @@ function ruleLabel(r: Rule): string {
 }
 
 export default async function ReapplyPage(props: PageProps<"/categories/reapply">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const ruleId = typeof sp.rule === "string" ? sp.rule : undefined;
   const db = getDb();

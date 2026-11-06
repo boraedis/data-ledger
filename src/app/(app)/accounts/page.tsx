@@ -9,11 +9,13 @@ import { confirmedTrades } from "@/lib/trades/confirmed";
 import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { AccountRow } from "./account-row";
 import { AddManualAccount } from "./manual-account";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Every account, grouped by institution, with the controls that decide what
 // counts as spending. Edits go through the accounts.update operation, so
 // each one is in Activity and can be undone there.
 export default async function AccountsPage() {
+  await privacyMode();
   const db = getDb();
   const [rows, positions, quotes, confirmed, drafts] = await Promise.all([
     db.select().from(accountsTable).orderBy(accountsTable.institution, accountsTable.name),

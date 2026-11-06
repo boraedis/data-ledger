@@ -7,6 +7,7 @@ import { MAX_MOVE, moveToCategoryPreview } from "@/operations/recategorize";
 import { read } from "@/operations/runtime";
 import { listTags } from "@/operations/tags";
 import { MovePreview } from "./move-preview";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Move many transactions to one category (#116): the Transactions list's
 // filter (same query parameters) picks the rows, ?to= the category, and the
@@ -21,6 +22,7 @@ function param(value: string | string[] | undefined): string | undefined {
 }
 
 export default async function MovePage(props: PageProps<"/transactions/move">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const filter = { search: param(sp.q), categoryId: param(sp.category), tagId: param(sp.tag), accountId: param(sp.account) };
   const to = param(sp.to);

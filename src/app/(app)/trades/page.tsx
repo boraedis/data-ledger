@@ -14,6 +14,7 @@ import { CashHints } from "./cash-hints";
 import { DraftCard } from "./draft-card";
 import { TradeItem } from "./trade-item";
 import type { CashRowView } from "./fields";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Trades (#319), in the Wealth section: every trade across accounts, with
 // the drafts that need the owner first. A draft is a trade inferred from what
@@ -31,6 +32,7 @@ const isDay = (v: string | undefined) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v
 const STATUSES = ["confirmed", "dismissed", "draft"] as const;
 
 export default async function TradesPage(props: PageProps<"/trades">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const db = getDb();
   const all = await db.select().from(accountsTable).orderBy(accountsTable.institution, accountsTable.name);

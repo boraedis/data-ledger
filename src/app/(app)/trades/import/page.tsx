@@ -4,6 +4,7 @@ import { INVESTMENT_KINDS } from "@/lib/investments/activity";
 import { listAccounts } from "@/operations/accounts";
 import { read } from "@/operations/runtime";
 import { TradeImportForm } from "./import-form";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Importing a brokerage's CSV export (#357, epic #353): an investment
 // account's trades and cash rows, linked, for the history before the sync
@@ -12,6 +13,7 @@ import { TradeImportForm } from "./import-form";
 export const maxDuration = 120;
 
 export default async function TradeImportPage(props: PageProps<"/trades/import">) {
+  await privacyMode();
   const sp = await props.searchParams;
   // Investment accounts, synced or manual: the ones that take trades from a brokerage export.
   const accts = (await read(getDb(), listAccounts, {}))

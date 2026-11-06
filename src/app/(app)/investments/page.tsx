@@ -9,6 +9,7 @@ import { formatCents } from "@/lib/money";
 import { pricesNote } from "@/lib/prices/describe";
 import { refreshPricesAfterResponse } from "@/lib/prices/after-response";
 import { draftCounts } from "@/operations/trades";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Investments (#27): what's held, how it's split, and how it's done against
 // what was paid — display only. Data comes from balance and holding
@@ -160,6 +161,7 @@ function HoldingsAcross({ combined }: { combined: ReturnType<typeof combineHoldi
 }
 
 export default async function InvestmentsPage() {
+  await privacyMode();
   const db = getDb();
   const [summary, drafts] = await Promise.all([investmentsSummary(db), draftCounts(db)]);
   // Values move with prices (#230): refresh them after this page is sent, if due.

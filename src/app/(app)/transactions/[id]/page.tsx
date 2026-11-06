@@ -25,8 +25,10 @@ import { MerchantNote } from "./merchant-note";
 import { listMerchants, similarTransactions } from "@/operations/merchants";
 import { listTradesRead } from "@/operations/trades";
 import { TradeNote } from "./trade-note";
+import { privacyMode } from "@/lib/privacy/server";
 
 export default async function TransactionPage(props: PageProps<"/transactions/[id]">) {
+  await privacyMode();
   const { id } = await props.params;
   const db = getDb();
   // A malformed id fails the operation's own uuid validation; treat that

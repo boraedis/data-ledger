@@ -5,7 +5,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { normalizeQuantity } from "@/lib/holdings/value";
-import { formatCents, parseAmountCents } from "@/lib/money";
+import { dollarFigure, formatCents, parseAmountCents } from "@/lib/money";
 import { priceTime } from "@/lib/prices/describe";
 import type { ManualPosition } from "@/operations/holdings";
 import { addPosition, removePastPrice, removePosition, setHeldSince, setPastPrice, setPositionAssetClass, setPositionPrice } from "./actions";
@@ -33,7 +33,7 @@ function localToday(): string {
 /** "61234.5" → "$61,234.50"; a price finer than a cent keeps its places ("$0.00001234"). */
 function formatPrice(price: string): string {
   const [whole, fraction = ""] = price.split(".");
-  return `$${Number(whole).toLocaleString("en-US")}.${fraction.padEnd(2, "0")}`;
+  return dollarFigure(`$${Number(whole).toLocaleString("en-US")}.${fraction.padEnd(2, "0")}`);
 }
 
 const formatQuantity = (q: string) => {

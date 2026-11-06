@@ -17,6 +17,7 @@ import { FlowChart, type FlowSlot } from "./flow-chart";
 import { MisfiledTransfers } from "./misfiled-transfers";
 import { PayPeriods } from "./pay-periods";
 import { Sankey } from "./sankey";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Cash flow (#62, #168): Annual (the default), Monthly and Weekly tabs, each
 // first saying whether money came in faster than it went out
@@ -51,6 +52,7 @@ function totals(graph: FlowGraph) {
 }
 
 export default async function CashFlowPage(props: PageProps<"/cash-flow">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
   const period = parseView(sp, today);

@@ -6,6 +6,7 @@ import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { categoryOptions, type CategoryRow } from "@/lib/categorize/labels";
 import * as actions from "./actions";
+import { moneyText } from "@/lib/money";
 
 type Result = Awaited<ReturnType<typeof actions.runRulesNow>>;
 
@@ -68,9 +69,9 @@ function useAction() {
   const [result, setResult] = useState<Result | null>(null);
   const run = (fn: () => Promise<Result>) => startTransition(async () => setResult(await fn()));
   const feedback = !result ? null : "error" in result ? (
-    <p className="text-sm text-destructive">{result.error}</p>
+    <p className="text-sm text-destructive">{moneyText(result.error)}</p>
   ) : result.message ? (
-    <p className="text-sm text-muted-foreground">{result.message}</p>
+    <p className="text-sm text-muted-foreground">{moneyText(result.message)}</p>
   ) : null;
   return { pending, run, feedback };
 }

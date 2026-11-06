@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { netBands } from "@/lib/cashflow/chart";
 import type { TypicalLine, TypicalSlot } from "@/lib/cashflow/typical";
-import { formatCents } from "@/lib/money";
+import { dollarFigure, formatCents } from "@/lib/money";
 
 // Cash in against cash out over a period (#171, and #172 by day): one axis,
 // two lines in the Sankey's own colours for money in and spending, and the
@@ -23,8 +23,8 @@ export type FlowSlot = { label: string; title: string; inCents: number; outCents
 
 const compact = (cents: number) => {
   const d = Math.abs(cents) / 100;
-  const s = d >= 1_000 ? `$${(d / 1_000).toFixed(d >= 10_000 ? 0 : 1).replace(/\.0$/, "")}k` : `$${Math.round(d)}`;
-  return cents < 0 ? `−${s}` : s;
+  const s = d >= 1_000 ? `${(d / 1_000).toFixed(d >= 10_000 ? 0 : 1).replace(/\.0$/, "")}k` : `${Math.round(d)}`;
+  return dollarFigure(`${cents < 0 ? "−" : ""}$${s}`);
 };
 
 export function FlowChart({

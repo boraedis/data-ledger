@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { DATE_FORMATS, type DateFormat } from "@/lib/history/csv";
-import { formatCents } from "@/lib/money";
+import { dollarFigure, formatCents } from "@/lib/money";
 import { ACTION_CATEGORIES, ACTION_LABELS, bySign, type ActionCategory, type BrokerageMapping } from "@/lib/trades/import-csv";
 import { draftHeadline } from "../fields";
 import { applyTradeImport, previewTradeImport, type Applied, type Preview, type PreviewRow } from "./actions";
@@ -34,7 +34,7 @@ function rowWords(r: PreviewRow): { lines: string[]; adds: boolean } {
   const lines: string[] = [];
   if (r.trade && r.tradePlan) {
     const what = draftHeadline({ ...r.trade, onFrom: null });
-    const priced = r.trade.price ? ` at $${r.trade.price}` : "";
+    const priced = r.trade.price ? ` at ${dollarFigure(`$${r.trade.price}`)}` : "";
     lines.push(
       r.tradePlan.status === "new"
         ? `Trade: ${what}${priced}`

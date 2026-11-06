@@ -7,7 +7,7 @@ import { scheduleLabel, periodLabel } from "@/lib/budgets/format";
 import { paceFor, paceTone } from "@/lib/budgets/pace-colour";
 import { elapsedShare, projectAtEnd } from "@/lib/pace";
 import { gridSegments, periodBudget, type Segment, type YearTotal } from "@/lib/budgets/year";
-import { formatCents } from "@/lib/money";
+import { dollarFigure, formatCents } from "@/lib/money";
 
 // The Year view's grid (#108, #124) with a tooltip on every square (#139):
 // what the square is made of, styled, on hover, on keyboard focus and on a
@@ -65,8 +65,8 @@ const monthName = (month: string, style: "narrow" | "short" | "long") =>
 /** "$42", "$1.2k": short enough for a column. */
 function compact(cents: number): string {
   const dollars = Math.abs(cents) / 100;
-  if (dollars >= 1_000) return `$${(dollars / 1_000).toFixed(dollars >= 10_000 ? 0 : 1).replace(/\.0$/, "")}k`;
-  return `$${Math.round(dollars)}`;
+  if (dollars >= 1_000) return dollarFigure(`$${(dollars / 1_000).toFixed(dollars >= 10_000 ? 0 : 1).replace(/\.0$/, "")}k`);
+  return dollarFigure(`$${Math.round(dollars)}`);
 }
 
 /** "+$42", "−$1.2k": the cell's over (+) or under (−). */

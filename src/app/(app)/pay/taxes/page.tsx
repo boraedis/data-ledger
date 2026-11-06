@@ -5,6 +5,7 @@ import { GROUP_LABELS } from "@/lib/pay/stubs";
 import { read } from "@/operations/runtime";
 import { taxEstimate } from "@/operations/taxes";
 import { AssumptionsForm } from "./assumptions-form";
+import { privacyMode } from "@/lib/privacy/server";
 
 // The year's tax position from pay stubs (#61): withholding so far, where
 // it's heading at the current pace, and roughly what that leaves owed or
@@ -34,6 +35,7 @@ function Line({ label, cents, sign = "" }: { label: string; cents: number; sign?
 }
 
 export default async function TaxesPage(props: PageProps<"/pay/taxes">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const thisYear = new Date().getUTCFullYear();
   const asked = Number(Array.isArray(sp.year) ? sp.year[0] : sp.year);

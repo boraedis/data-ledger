@@ -4,11 +4,13 @@ import { formatCents } from "@/lib/money";
 import { AGING_BUCKETS, listPeople, owedToMe, proposals } from "@/operations/reimbursements";
 import { read } from "@/operations/runtime";
 import { AddPerson, ForgiveButton, PersonRow, ProposalActions } from "./controls";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Owed to me (#8): payments that look like friends paying back (to
 // confirm), what each person still owes with aging, and the people list.
 
 export default async function OwedPage() {
+  await privacyMode();
   const db = getDb();
   const [owed, proposed, people] = await Promise.all([read(db, owedToMe, {}), read(db, proposals, {}), read(db, listPeople, {})]);
 

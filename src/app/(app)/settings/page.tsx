@@ -18,6 +18,7 @@ import { ModelStatusPanel } from "./model-status";
 import { Notifications } from "./notifications";
 import { SETTINGS_TABS, settingsHref, settingsTab, type SettingsTab } from "./tabs";
 import { TallyPromotions } from "./tally-promotions";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Settings (#69): one page, one tab per area, the tab in the URL. Each tab
 // loads only its own data. What each setting does is unchanged; only where
@@ -133,6 +134,7 @@ const CONTENT: Record<SettingsTab, () => Promise<React.ReactNode>> = {
 };
 
 export default async function SettingsPage(props: PageProps<"/settings">) {
+  await privacyMode();
   const tab = settingsTab((await props.searchParams).tab);
   const Content = CONTENT[tab];
   return (

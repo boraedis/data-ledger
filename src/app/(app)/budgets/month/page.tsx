@@ -17,6 +17,7 @@ import { BudgetOverview } from "../overview";
 import { monthPay } from "../pay-strip";
 import { BudgetTabs } from "../tabs";
 import { Topline } from "../topline";
+import { privacyMode } from "@/lib/privacy/server";
 
 // Budgets (#7), the Month view: how the month is going. Laid out as the
 // Year view is (#268): the topline (targets, spent, under or over, and pay,
@@ -37,6 +38,7 @@ function shiftMonth(month: string, by: number): string {
 }
 
 export default async function BudgetMonthPage(props: PageProps<"/budgets/month">) {
+  await privacyMode();
   const sp = await props.searchParams;
   const today = new Date().toISOString().slice(0, 10);
   const view = budgetView(sp, today);

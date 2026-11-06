@@ -3,8 +3,10 @@ import { listCategories } from "@/operations/categories";
 import { listRules } from "@/operations/rules";
 import { read } from "@/operations/runtime";
 import { ManageCategories } from "./manage";
+import { privacyMode } from "@/lib/privacy/server";
 
 export default async function CategoriesPage() {
+  await privacyMode();
   const db = getDb();
   const [categories, rules] = await Promise.all([read(db, listCategories, {}), read(db, listRules, {})]);
   return (

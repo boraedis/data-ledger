@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { TradeRow } from "@/operations/trades";
 import { draftHeadline } from "../../trades/fields";
 import { StatusChip } from "../../trades/trade-item";
+import { dollarFigure } from "@/lib/money";
 
 // On a brokerage cash row that settled a trade (#321, #351): which trade,
 // in words, and a way to it on the Trades page, where it's edited or a
@@ -25,7 +26,7 @@ export function TradeNote({ trade: t }: { trade: TradeRow }) {
       </p>
       <p>
         {headline.charAt(0).toUpperCase() + headline.slice(1)}
-        {t.price ? ` at $${t.price} each` : ""}. This row is the cash side of it, so it isn&apos;t spending.{" "}
+        {t.price ? ` at ${dollarFigure(`$${t.price}`)} each` : ""}. This row is the cash side of it, so it isn&apos;t spending.{" "}
         <Link href={href} className="underline">
           {t.status === "draft" ? "Finish it on Trades" : "See it on Trades"}
         </Link>
