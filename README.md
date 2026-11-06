@@ -804,6 +804,7 @@ holdings never go to a model.
 - **Suggestions** (#323): a missing price, day or symbol, worked out from cost basis, the cash row and the price cache, never a model, and saved only when used.
 - **Where the owner hears about them** (#325): a count on the Trades tab, a line in the Inbox, and a count in Tally's summary. Trades are owner-only operations, never offered to Tally, and no symbol, quantity or value reaches a model.
 - **The survey** (#316): `npm run trades:survey` is a read-only report, run by the owner, on what each brokerage actually returns.
+- **Importing a brokerage's CSV** (#353, `/trades/import`): the owner maps the file's columns and says what each value of its action column means. Some exports' action column says only what kind of thing a row is about ("Trades", "Securities") and not which way it went (#369). For those there are two meanings, *Trade: buy or sell by the sign of the quantity* and *Shares moved: in or out by the sign*: positive is a buy (or shares in), negative a sell (or out), as a split's quantity already was. An action whose quantities run both ways and that no word explains is guessed to be the first, and the import page shows the file's own positive and negative counts beside it. For trades, the cash is a second opinion: a buy's amount should be money out and a sell's money in, and a row where the two disagree is read but starts unticked, with what to check.
 
 ## Operations layer
 
