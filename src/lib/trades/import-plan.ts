@@ -53,7 +53,8 @@ export type PlannedRow = BrokerageRow & {
   // existing one it matched. Null when it has none, or the existing one is
   // already another trade's (one trade per cash row, #321).
   linkTo: { kind: "new" } | { kind: "existing"; transactionId: string } | null;
-  // What the preview ticks to start with: anything that adds something.
+  // What the preview ticks to start with: anything that adds something,
+  // unless the reader flagged the row (BrokerageRow.warning).
   ticked: boolean;
 };
 
@@ -128,7 +129,9 @@ export function planImport({
               ? null
               : { kind: "existing", transactionId: cashPlan.existingId };
       const adds = cashPlan?.status === "new" || tradePlan?.status === "new" || tradePlan?.status === "fills_draft";
-      return { ...r, reimported: false, cashPlan, tradePlan, linkTo, ticked: adds };
+      // A row the reader had doubts about (its quantity and its cash disagree
+      // about which way it went) adds something but waits for the owner's tick.
+      return { ...r, reimported: false, cashPlan, tradePlan, linkTo, ticked: adds && !r.warning };
     })
     .sort((a, b) => a.row - b.row);
 }

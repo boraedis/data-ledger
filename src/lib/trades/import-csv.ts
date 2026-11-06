@@ -17,12 +17,34 @@ import { normalizeQuantity } from "@/lib/holdings/value";
 
 // --- What an action means ---------------------------------------------------------
 
-export const ACTION_CATEGORIES = ["buy", "sell", "reinvest", "income", "split", "shares_in", "shares_out", "fee_shares", "cash", "ignore"] as const;
+export const ACTION_CATEGORIES = [
+  "buy",
+  "sell",
+  "trade_by_sign",
+  "reinvest",
+  "income",
+  "split",
+  "shares_in",
+  "shares_out",
+  "shares_by_sign",
+  "fee_shares",
+  "cash",
+  "ignore",
+] as const;
 export type ActionCategory = (typeof ACTION_CATEGORIES)[number];
+
+// Two meanings for a file whose action column names the kind of thing a row
+// is about ("Trades", "Securities") and not which way it went: the way is the
+// sign of the quantity, as it already is for a split. Positive shares came
+// in, negative went out, and a buy's cash is the opposite sign (money left).
+export const SIGN_CATEGORIES = ["trade_by_sign", "shares_by_sign"] as const;
+export const bySign = (c: ActionCategory | null | undefined): c is (typeof SIGN_CATEGORIES)[number] => c === "trade_by_sign" || c === "shares_by_sign";
 
 export const ACTION_LABELS: Record<ActionCategory, string> = {
   buy: "Buy",
   sell: "Sell",
+  trade_by_sign: "Trade: buy or sell by the sign of the quantity",
+  shares_by_sign: "Shares moved: in or out by the sign of the quantity",
   reinvest: "Reinvested dividend",
   income: "Dividend or interest (cash)",
   split: "Split",
@@ -39,6 +61,8 @@ export const ACTION_LABELS: Record<ActionCategory, string> = {
 const WRITES: Record<ActionCategory, { cash: boolean; trade: boolean }> = {
   buy: { cash: true, trade: true },
   sell: { cash: true, trade: true },
+  trade_by_sign: { cash: true, trade: true },
+  shares_by_sign: { cash: false, trade: true },
   reinvest: { cash: true, trade: true },
   income: { cash: true, trade: false },
   split: { cash: false, trade: true },
@@ -155,11 +179,43 @@ export function guessBrokerageMapping(all: string[][]): BrokerageMapping {
     description: description >= 0 && description !== action ? description : null,
     actions: {},
   };
-  for (const key of distinctActions(all, mapping)) {
-    const guess = guessAction(key);
-    if (guess) mapping.actions[key] = guess;
-  }
+  Object.assign(mapping.actions, guessActions(all, mapping, {}));
   return mapping;
+}
+
+/** How many of each action's rows have a positive and a negative quantity, for the owner to see and for the guess below. */
+export function quantitySigns(all: string[][], mapping: Pick<BrokerageMapping, "skipRows" | "hasHeader" | "action" | "quantity">): Map<string, { positive: number; negative: number }> {
+  const signs = new Map<string, { positive: number; negative: number }>();
+  for (const { cells } of dataRows(all, mapping)) {
+    const key = actionKey(cells[mapping.action] ?? "");
+    const qty = parseSignedDecimal(cells[mapping.quantity] ?? "");
+    if (!key || !qty || qty.value === "0") continue;
+    const s = signs.get(key) ?? { positive: 0, negative: 0 };
+    if (qty.negative) s.negative++;
+    else s.positive++;
+    signs.set(key, s);
+  }
+  return signs;
+}
+
+/**
+ * A first guess for each of the file's actions that isn't mapped yet: from
+ * the words (a buy says bought), and failing that, for an action whose
+ * quantities run both ways, the by-sign meaning — "Trades" with +5 and -2
+ * is buys and sells, whatever it's called. An action with quantities of one
+ * sign only is left for the owner: nothing says which way it went.
+ */
+export function guessActions(all: string[][], mapping: BrokerageMapping, known: Record<string, ActionCategory>): Record<string, ActionCategory> {
+  const out: Record<string, ActionCategory> = {};
+  const signs = quantitySigns(all, mapping);
+  for (const key of distinctActions(all, mapping)) {
+    if (known[key]) continue;
+    const words = guessAction(key);
+    const s = signs.get(key);
+    if (words) out[key] = words;
+    else if (s && s.positive > 0 && s.negative > 0) out[key] = "trade_by_sign";
+  }
+  return out;
 }
 
 const dataRows = (all: string[][], m: Pick<BrokerageMapping, "skipRows" | "hasHeader">) => {
@@ -198,6 +254,10 @@ export type BrokerageRow = {
   category: Exclude<ActionCategory, "ignore">;
   cash: ImportedCash | null;
   trade: ImportedTrade | null;
+  // Something about the row the owner should look at before importing it:
+  // its quantity and its cash disagree about which way it went. The row is
+  // still read, and starts unticked.
+  warning?: string | null;
 };
 
 /** A signed decimal from a quantity or price cell: "1,234.5", "-3", "(2.5)", "$101.25". Null for blank or anything else. */
@@ -287,8 +347,16 @@ export function applyBrokerageMapping(all: string[][], mapping: BrokerageMapping
         errors.push({ row, message: `${ACTION_LABELS[category]} of ${symbol} with no quantity` });
         continue;
       }
-      // A split's quantity is the change in shares: its sign is the way.
-      const shape = category === "split" ? { kind: "split" as const, side: qty.negative ? ("sell" as const) : ("buy" as const) } : TRADE_SHAPE[category as keyof typeof TRADE_SHAPE];
+      // A split's quantity is the change in shares: its sign is the way. So
+      // is it for the two by-sign meanings, for files that don't say which.
+      const shape =
+        category === "split"
+          ? { kind: "split" as const, side: qty.negative ? ("sell" as const) : ("buy" as const) }
+          : category === "trade_by_sign"
+            ? { kind: "trade" as const, side: qty.negative ? ("sell" as const) : ("buy" as const) }
+            : category === "shares_by_sign"
+              ? { kind: "transfer" as const, side: qty.negative ? ("transfer_out" as const) : ("transfer_in" as const) }
+              : TRADE_SHAPE[category as keyof typeof TRADE_SHAPE];
       const priced = mapping.price === null ? null : parseSignedDecimal(cell(mapping.price));
       const price =
         category === "split" || shape.kind === "transfer"
@@ -312,10 +380,18 @@ export function applyBrokerageMapping(all: string[][], mapping: BrokerageMapping
       continue;
     }
 
+    // A buy's cash leaves and a sell's arrives. When the sign came from the
+    // quantity alone, the cash is the only second opinion there is: if it
+    // says the opposite, the row isn't guessed at, it waits for the owner.
+    let warning: string | null = null;
+    if (category === "trade_by_sign" && trade && cash && (trade.side === "buy") !== cash.amountCents < 0) {
+      warning = `The quantity is ${qty!.negative ? "negative, a sell" : "positive, a buy"}, but the amount is ${cash.amountCents < 0 ? "money out" : "money in"}. Check which way it went.`;
+    }
+
     const idKey = `${on}|${key}|${symbol ?? ""}|${qty ? `${qty.negative ? "-" : ""}${qty.value}` : ""}|${amountCents ?? ""}`;
     const n = seen.get(idKey) ?? 0;
     seen.set(idKey, n + 1);
-    rows.push({ row, id: `brk:${on}:${fingerprint(idKey)}:${n}`, action: actionText, category, cash, trade });
+    rows.push({ row, id: `brk:${on}:${fingerprint(idKey)}:${n}`, action: actionText, category, cash, trade, warning });
   }
   return { rows, errors };
 }
