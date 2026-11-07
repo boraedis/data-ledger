@@ -156,10 +156,15 @@ export const mergeSuggestions = defineRead({
   input: z.object({}),
   run: async (db) => {
     // Names and descriptions only (#287): what goes to the model when Tally reads this.
-    const [all, dismissed] = await Promise.all([
+    const [everyone, dismissed, outOfScope] = await Promise.all([
       listMerchants.run(db, {}),
       db.select({ a: merchantMergeDismissals.merchantAId, b: merchantMergeDismissals.merchantBId }).from(merchantMergeDismissals),
+      merchantsOutOfScope(db),
     ]);
+    // Not the merchants the Merchants page leaves out (#349): ones made only
+    // of brokerage rows ("DIVIDEND ZQXV" and "DIVIDEND ZQXV FUND" are two
+    // descriptions of one fund, not a business to merge), transfers or $0 rows.
+    const all = everyone.filter((m) => !outOfScope.has(m.id));
     const pairs = nearDuplicates(
       all.map((m) => ({ id: m.id, name: m.name, aliases: m.aliases.map((a) => a.alias) })),
       new Set(dismissed.map((d) => `${d.a}|${d.b}`)),
