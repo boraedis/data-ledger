@@ -35,6 +35,23 @@ describe("merchant review", () => {
     expect(pair.a.descriptions.length).toBeGreaterThan(0);
   });
 
+  it("leaves out pairs made only of brokerage rows, which have no merchant by nature (#349)", async () => {
+    const [{ id: broker }] = await db.select({ id: accounts.id }).from(accounts).where(eq(accounts.type, "brokerage"));
+    const [{ id: p2p }] = await db.select({ id: accounts.id }).from(accounts).where(eq(accounts.type, "payment_app"));
+    const add = (accountId: string, description: string) =>
+      execute(db, { operation: "transactions.createManual", input: { accountId, postedOn: "2026-06-21", amountCents: 1_200, description }, actor: "user", reason: "test" });
+    // Two spellings of one fund's dividend, in the brokerage: not a business to merge.
+    await add(broker, "Dividend Harbor Fund");
+    await add(broker, "Dividend Harbor Fund Payout");
+    // The same shape of pair in a payment app is a real suggestion.
+    await add(p2p, "Lumen Market");
+    await add(p2p, "Lumen Market Downtown");
+    const r = await merchantReview(db, { pairs: 1000 });
+    const names = r.pairs.flatMap((p) => [p.a.name, p.b.name]);
+    expect(names).toContain("Lumen Market Downtown");
+    expect(names.some((n) => n.startsWith("Dividend Harbor"))).toBe(false);
+  });
+
   it("is counted the same by the nightly summary, and a rejected pair leaves both; undo brings it back", async () => {
     const before = await merchantReview(db, { pairs: 100 });
     const facts = await gatherFacts(db, "2026-06-30");
